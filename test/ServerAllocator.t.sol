@@ -8,7 +8,7 @@ import { ServerAllocator } from "src/allocators/ServerAllocator.sol";
 import { IServerAllocator } from "src/interfaces/IServerAllocator.sol";
 import { Compact, COMPACT_TYPEHASH } from "@uniswap/the-compact/types/EIP712Types.sol";
 import { TheCompactMock } from "src/test/TheCompactMock.sol";
-import { ERC20Mock } from "test/ERC20Mock.sol";
+import { ERC20Mock } from "src/test/ERC20Mock.sol";
 import { console } from "forge-std/console.sol";
 import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
