@@ -8,8 +8,8 @@ import { Ownable, Ownable2Step } from "@openzeppelin/contracts/access/Ownable2St
 import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
-import { IAllocator } from "src/interfaces/IAllocator.sol";
-import { IServerAllocator } from "src/interfaces/IServerAllocator.sol";
+import { IAllocator } from "../interfaces/IAllocator.sol";
+import { IServerAllocator } from "../interfaces/IServerAllocator.sol";
 
 contract ServerAllocator is Ownable2Step, EIP712, IServerAllocator {
     using ECDSA for bytes32;

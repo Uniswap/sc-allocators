@@ -2,7 +2,7 @@
 
 pragma solidity ^0.8.27;
 
-import { IAllocator } from "src/interfaces/IAllocator.sol";
+import { IAllocator } from "../interfaces/IAllocator.sol";
 
 interface IServerAllocator is IAllocator {
     struct RegisterAttestation {
