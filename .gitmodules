@@ -10,3 +10,6 @@
 [submodule "lib/the-compact"]
 	path = lib/the-compact
 	url = https://github.com/uniswap/the-compact
+[submodule "lib/openzeppelin-contracts"]
+	path = lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
