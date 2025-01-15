@@ -18,6 +18,9 @@ contract SimpleERC7683Allocator is SimpleAllocator, IOriginSettler {
         Settlement[] settlements;
         address arbiter;
         bytes sponsorSignature;
+        /// TODO: add baselinePriorityFee?
+        /// TODO: add scalingFactor?
+        /// TODO: add salt?
     }
 
     struct OrderDataGasless {
@@ -103,15 +106,11 @@ contract SimpleERC7683Allocator is SimpleAllocator, IOriginSettler {
 
     /// TODO: batch compacts witness
     
-    // The block interval on the deployed chain
-    uint32 immutable BLOCK_INTERVAL;
-
     // The nonce of the allocator
     mapping(uint256 identifier => bool nonceUsed)  private _userNonce;
 
-    constructor(address compactContract_, address arbiter_, uint256 minWithdrawalDelay_, uint256 maxWithdrawalDelay_, uint32 blockInterval_)
+    constructor(address compactContract_, address arbiter_, uint256 minWithdrawalDelay_, uint256 maxWithdrawalDelay_)
         SimpleAllocator(compactContract_, arbiter_, minWithdrawalDelay_, maxWithdrawalDelay_) {
-            BLOCK_INTERVAL = blockInterval_;
     }
 
     /// @notice Opens a gasless cross-chain order on behalf of a user.
