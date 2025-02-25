@@ -88,7 +88,7 @@ interface IOriginSettler {
 	/// @dev Provides all the origin-generated information required to produce a valid fill leg
 	struct FillInstruction {
 		/// @dev The contract address that the order is meant to be settled by
-		uint64 destinationChainId;
+		uint256 destinationChainId;
 		/// @dev The contract address that the order is meant to be filled on
 		bytes32 destinationSettler;
 		/// @dev The data generated on the origin chain needed by the destinationSettler to process the fill

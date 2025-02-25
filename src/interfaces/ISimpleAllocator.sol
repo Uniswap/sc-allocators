@@ -12,9 +12,6 @@ interface ISimpleAllocator is IAllocator {
     /// @notice Thrown if the caller is invalid
     error InvalidCaller(address caller, address expected);
 
-    /// @notice Thrown if the suggested arbiter is not the arbiter of the allocator
-    error InvalidArbiter(address arbiter);
-
     /// @notice Thrown if the nonce has already been consumed on the compact contract
     error NonceAlreadyConsumed(uint256 nonce);
 
@@ -26,6 +23,9 @@ interface ISimpleAllocator is IAllocator {
 
     /// @notice Thrown if the expiration is longer then the tokens forced withdrawal time
     error ForceWithdrawalAvailable(uint256 expires, uint256 forcedWithdrawalExpiration);
+
+    /// @notice Thrown if the allocator is not the one expected
+    error InvalidAllocator(address allocator);
 
     /// @notice Thrown if the provided lock is not available or expired
     /// @dev The expiration will be '0' if no lock is available

@@ -89,8 +89,8 @@ contract RoutingAllocatorERC7683 is SimpleAllocator, IOriginSettler {
     
     mapping(uint256 identifier => bool nonceUsed)  private _userNonce;
 
-    constructor(address compactContract_, address arbiter_, uint256 minWithdrawalDelay_, uint256 maxWithdrawalDelay_)
-        SimpleAllocator(compactContract_, arbiter_, minWithdrawalDelay_, maxWithdrawalDelay_) {
+    constructor(address compactContract_, uint256 minWithdrawalDelay_, uint256 maxWithdrawalDelay_)
+        SimpleAllocator(compactContract_, minWithdrawalDelay_, maxWithdrawalDelay_) {
         ALLOCATOR_ID_PREFIX = bytes32(IdLib.toId(Lock({
             token: address(0),
             allocator: address(this),
@@ -266,10 +266,6 @@ contract RoutingAllocatorERC7683 is SimpleAllocator, IOriginSettler {
         // Check the user
         if(!delegated_ && orderData_.sponsor != msg.sender) { 
             revert InvalidCaller(msg.sender, orderData_.sponsor);
-        }
-        // Check the arbiter
-        if (orderData_.arbiter != ARBITER) {
-            revert InvalidArbiter(orderData_.arbiter);
         }
 
         uint256 identifier = _createIdentifier(orderData_.sponsor, orderData_.nonce);
@@ -453,6 +449,8 @@ contract RoutingAllocatorERC7683 is SimpleAllocator, IOriginSettler {
 
             /// TODO: FILL THE MANDATE
             Mandate memory mandate = Mandate({
+                chainId: orderData.settlements[i].input.chainId,
+                tribunal: orderData.arbiter,
                 recipient: _castToAddress(orderData.settlements[i].output.recipient),
                 expires: fillDeadline, // TODO: is this correct? Or do we ignore the fill deadline and only care about the claim deadline?
                 token: _castToAddress(orderData.settlements[i].output.token),

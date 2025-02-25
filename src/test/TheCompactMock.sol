@@ -34,7 +34,7 @@ contract TheCompactMock is ERC6909 {
         return 0;
     }
 
-    function deposit(address token, uint256 amount, address allocator) external {
+    function deposit(address token, address allocator, uint256 amount) external {
         ERC20(token).transferFrom(msg.sender, address(this), amount);
         uint256 id = _getTokenId(token, allocator);
         tokens[id] = token;
@@ -125,7 +125,10 @@ contract TheCompactMock is ERC6909 {
         return "";
     }
 
-    function _getTokenId(address token, address allocator) internal pure returns (uint256) {
-        return uint256(keccak256(abi.encode(token, allocator)));
+    function _getTokenId(address token, address allocator) internal pure returns (uint256 tokenId) {
+        assembly ("memory-safe") {
+            tokenId := or(shl(160, allocator),shr(96,shl(96,token)))
+        }
+        return tokenId;
     }
 }

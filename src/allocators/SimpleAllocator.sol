@@ -7,6 +7,7 @@ import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import { ITheCompact } from "@uniswap/the-compact/interfaces/ITheCompact.sol";
 import { Compact } from "@uniswap/the-compact/types/EIP712Types.sol";
 import { ResetPeriod } from "@uniswap/the-compact/lib/IdLib.sol";
+import { ForcedWithdrawalStatus } from "@uniswap/the-compact/types/ForcedWithdrawalStatus.sol";
 import { IAllocator } from "../interfaces/IAllocator.sol";
 import { ISimpleAllocator } from "../interfaces/ISimpleAllocator.sol";
 
@@ -15,7 +16,6 @@ contract SimpleAllocator is ISimpleAllocator {
     bytes32 constant COMPACT_TYPEHASH = 0xcdca950b17b5efc016b74b912d8527dfba5e404a688cbc3dab16cb943287fec2;
 
     address public immutable COMPACT_CONTRACT;
-    address public immutable ARBITER;
     uint256 public immutable MIN_WITHDRAWAL_DELAY;
     uint256 public immutable MAX_WITHDRAWAL_DELAY;
 
@@ -28,9 +28,8 @@ contract SimpleAllocator is ISimpleAllocator {
     /// @dev mapping of the lock digest to the tokenHash of the lock
     mapping(bytes32 digest => bytes32 tokenHash) internal _sponsor;
 
-    constructor(address compactContract_, address arbiter_, uint256 minWithdrawalDelay_, uint256 maxWithdrawalDelay_) {
+    constructor(address compactContract_, uint256 minWithdrawalDelay_, uint256 maxWithdrawalDelay_) {
         COMPACT_CONTRACT = compactContract_;
-        ARBITER = arbiter_;
         MIN_WITHDRAWAL_DELAY = minWithdrawalDelay_;
         MAX_WITHDRAWAL_DELAY = maxWithdrawalDelay_;
 
@@ -117,10 +116,6 @@ contract SimpleAllocator is ISimpleAllocator {
 
     /// @inheritdoc ISimpleAllocator
     function checkCompactLocked(Compact calldata compact_) external view returns (bool locked_, uint256 expires_) {
-        // TODO: Check the force unlock time in the compact contract and adapt expires_ if needed
-        if (compact_.arbiter != ARBITER) {
-            revert InvalidArbiter(compact_.arbiter);
-        }
         bytes32 tokenHash = _getTokenHash(compact_.id, compact_.sponsor);
         bytes32 digest = keccak256(
             abi.encodePacked(
@@ -141,6 +136,13 @@ contract SimpleAllocator is ISimpleAllocator {
         );
         uint256 expires = _claim[tokenHash];
         bool active = _sponsor[digest] == tokenHash && expires > block.timestamp && !ITheCompact(COMPACT_CONTRACT).hasConsumedAllocatorNonce(_nonce[tokenHash], address(this));
+        if (active) {
+            (ForcedWithdrawalStatus status, uint256 forcedWithdrawalAvailableAt) = ITheCompact(COMPACT_CONTRACT).getForcedWithdrawalStatus(compact_.sponsor, compact_.id);
+            if (status == ForcedWithdrawalStatus.Enabled && forcedWithdrawalAvailableAt < expires) {
+                expires = forcedWithdrawalAvailableAt;
+                active = expires > block.timestamp;
+            }
+        }
         return (active, active ? expires : 0);
     }
 
@@ -158,16 +160,15 @@ contract SimpleAllocator is ISimpleAllocator {
         if (_claim[tokenHash] > block.timestamp && !ITheCompact(COMPACT_CONTRACT).hasConsumedAllocatorNonce(_nonce[tokenHash], address(this))) {
             revert ClaimActive(compact_.sponsor);
         }
-        // Check arbiter is valid
-        if (compact_.arbiter != ARBITER) {
-            revert InvalidArbiter(compact_.arbiter);
-        }
         // Check expiration is not too soon or too late
         if (compact_.expires < block.timestamp + MIN_WITHDRAWAL_DELAY || compact_.expires > block.timestamp + MAX_WITHDRAWAL_DELAY) {
             revert InvalidExpiration(compact_.expires);
         }
+        (,address allocator, ResetPeriod resetPeriod,) = ITheCompact(COMPACT_CONTRACT).getLockDetails(compact_.id);
+        if (allocator != address(this)) {
+            revert InvalidAllocator(allocator);
+        }
         // Check expiration is not longer then the tokens forced withdrawal time
-        (,, ResetPeriod resetPeriod,) = ITheCompact(COMPACT_CONTRACT).getLockDetails(compact_.id);
         if (compact_.expires > block.timestamp + _resetPeriodToSeconds(resetPeriod)) {
             revert ForceWithdrawalAvailable(compact_.expires, block.timestamp + _resetPeriodToSeconds(resetPeriod));
         }

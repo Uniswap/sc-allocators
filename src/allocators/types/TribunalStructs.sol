@@ -13,6 +13,8 @@ import { Compact } from "@uniswap/the-compact/types/EIP712Types.sol";
     }
 
     struct Mandate {
+        uint256 chainId; // (implicit arg, included in EIP712 payload)
+        address tribunal; // (implicit arg, included in EIP712 payload)
         address recipient; // Recipient of settled tokens
         uint256 expires; // Mandate expiration timestamp
         address token; // Settlement token (address(0) for native)
@@ -20,9 +22,4 @@ import { Compact } from "@uniswap/the-compact/types/EIP712Types.sol";
         uint256 baselinePriorityFee; // Base fee threshold where scaling kicks in
         uint256 scalingFactor; // Fee scaling multiplier (1e18 baseline)
         bytes32 salt; // Replay protection parameter
-    }
-
-    struct Directive {
-        address claimant; // Recipient of claimed tokens
-        uint256 dispensation; // Cross-chain message layer payment
     }
