@@ -56,7 +56,7 @@ abstract contract MocksSetup is Test {
         tribunal = makeAddr("tribunal");
         usdc = new ERC20Mock("USDC", "USDC");
         compactContract = new TheCompact();
-        erc7683Allocator = new ERC7683Allocator(address(compactContract), arbiter, 5, 100);
+        erc7683Allocator = new ERC7683Allocator(address(compactContract), 5, 100);
         Lock memory lock = Lock({
             token: address(usdc),
             allocator: address(erc7683Allocator),

@@ -29,8 +29,8 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
     
     mapping(uint256 nonce => bool nonceUsed)  private _userNonce;
 
-    constructor(address compactContract_, address arbiter_, uint256 minWithdrawalDelay_, uint256 maxWithdrawalDelay_)
-        SimpleAllocator(compactContract_, arbiter_, minWithdrawalDelay_, maxWithdrawalDelay_) {
+    constructor(address compactContract_, uint256 minWithdrawalDelay_, uint256 maxWithdrawalDelay_)
+        SimpleAllocator(compactContract_, minWithdrawalDelay_, maxWithdrawalDelay_) {
         _COMPACT_DOMAIN_SEPARATOR = ITheCompact(COMPACT_CONTRACT).DOMAIN_SEPARATOR();
     }
 
