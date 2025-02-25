@@ -20,8 +20,8 @@ contract SimpleWitnessAllocator is SimpleAllocator, ISimpleWitnessAllocator {
     // uint200(abi.decode(bytes(",Witness witness)Witness("), (bytes25)))
     uint200 constant WITNESS_TYPESTRING = 0x2C5769746E657373207769746E657373295769746E65737328;
 
-    constructor(address compactContract_, address arbiter_, uint256 minWithdrawalDelay_, uint256 maxWithdrawalDelay_)
-        SimpleAllocator(compactContract_, arbiter_, minWithdrawalDelay_, maxWithdrawalDelay_) {}
+    constructor(address compactContract_, uint256 minWithdrawalDelay_, uint256 maxWithdrawalDelay_)
+        SimpleAllocator(compactContract_, minWithdrawalDelay_, maxWithdrawalDelay_) {}
 
     /// @inheritdoc ISimpleWitnessAllocator
     function lockWithWitness(Compact calldata compact_, bytes32 typestringHash_, bytes32 witnessHash_) external {
