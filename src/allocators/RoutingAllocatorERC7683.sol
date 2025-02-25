@@ -89,8 +89,8 @@ contract RoutingAllocatorERC7683 is SimpleAllocator, IOriginSettler {
     
     mapping(uint256 identifier => bool nonceUsed)  private _userNonce;
 
-    constructor(address compactContract_, address arbiter_, uint256 minWithdrawalDelay_, uint256 maxWithdrawalDelay_)
-        SimpleAllocator(compactContract_, arbiter_, minWithdrawalDelay_, maxWithdrawalDelay_) {
+    constructor(address compactContract_, uint256 minWithdrawalDelay_, uint256 maxWithdrawalDelay_)
+        SimpleAllocator(compactContract_, minWithdrawalDelay_, maxWithdrawalDelay_) {
         ALLOCATOR_ID_PREFIX = bytes32(IdLib.toId(Lock({
             token: address(0),
             allocator: address(this),
