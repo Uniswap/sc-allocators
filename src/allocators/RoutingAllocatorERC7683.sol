@@ -267,10 +267,6 @@ contract RoutingAllocatorERC7683 is SimpleAllocator, IOriginSettler {
         if(!delegated_ && orderData_.sponsor != msg.sender) { 
             revert InvalidCaller(msg.sender, orderData_.sponsor);
         }
-        // Check the arbiter
-        if (orderData_.arbiter != ARBITER) {
-            revert InvalidArbiter(orderData_.arbiter);
-        }
 
         uint256 identifier = _createIdentifier(orderData_.sponsor, orderData_.nonce);
         // Check the nonce
@@ -453,6 +449,8 @@ contract RoutingAllocatorERC7683 is SimpleAllocator, IOriginSettler {
 
             /// TODO: FILL THE MANDATE
             Mandate memory mandate = Mandate({
+                chainId: orderData.settlements[i].input.chainId,
+                tribunal: orderData.arbiter,
                 recipient: _castToAddress(orderData.settlements[i].output.recipient),
                 expires: fillDeadline, // TODO: is this correct? Or do we ignore the fill deadline and only care about the claim deadline?
                 token: _castToAddress(orderData.settlements[i].output.token),

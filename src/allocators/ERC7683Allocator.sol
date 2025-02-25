@@ -3,130 +3,38 @@
 pragma solidity ^0.8.27;
 
 import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import { Compact, BatchCompact, BATCH_COMPACT_TYPEHASH, COMPACT_TYPEHASH } from "@uniswap/the-compact/types/EIP712Types.sol";
+import { Compact } from "@uniswap/the-compact/types/EIP712Types.sol";
 import { ITheCompact } from "@uniswap/the-compact/interfaces/ITheCompact.sol";
 import { SimpleAllocator } from "./SimpleAllocator.sol";
 import { Claim, Mandate } from "./types/TribunalStructs.sol";
-import { IOriginSettler } from "../interfaces/ERC7683/IOriginSettler.sol";
+import { IERC7683Allocator } from "../interfaces/IERC7683Allocator.sol";
 
-contract SimpleERC7683Allocator is SimpleAllocator, IOriginSettler {
-
-    struct OrderData {
-        // COMPACT
-        address arbiter; // The account tasked with verifying and submitting the claim.
-        address sponsor; // The account to source the tokens from.
-        uint256 nonce; // A parameter to enforce replay protection, scoped to allocator.
-        uint256 expires; // The time at which the claim expires.
-        uint256 id; // The token ID of the ERC6909 token to allocate.
-        uint256 amount; // The amount of ERC6909 tokens to allocate.
-        // MANDATE
-        uint256 chainId; // (implicit arg, included in EIP712 payload)
-        address tribunal; // (implicit arg, included in EIP712 payload)
-        address recipient; // Recipient of settled tokens
-        // uint256 expires; // Mandate expiration timestamp
-        address token; // Settlement token (address(0) for native)
-        uint256 minimumAmount; // Minimum settlement amount
-        uint256 baselinePriorityFee; // Base fee threshold where scaling kicks in
-        uint256 scalingFactor; // Fee scaling multiplier (1e18 baseline)
-        bytes32 salt; // Replay protection parameter
-    }
-
-    struct OrderDataGasless {
-        // COMPACT
-        // address arbiter; // The account tasked with verifying and submitting the claim.
-        // address sponsor; // The account to source the tokens from.
-        // uint256 nonce; // A parameter to enforce replay protection, scoped to allocator.
-        uint256 expires; // The time at which the claim expires.
-        uint256 id; // The token ID of the ERC6909 token to allocate.
-        uint256 amount; // The amount of ERC6909 tokens to allocate.
-        // MANDATE
-        uint256 chainId; // (implicit arg, included in EIP712 payload)
-        address tribunal; // (implicit arg, included in EIP712 payload)
-        address recipient; // Recipient of settled tokens
-        // uint256 expires; // Mandate expiration timestamp
-        address token; // Settlement token (address(0) for native)
-        uint256 minimumAmount; // Minimum settlement amount
-        uint256 baselinePriorityFee; // Base fee threshold where scaling kicks in
-        uint256 scalingFactor; // Fee scaling multiplier (1e18 baseline)
-        bytes32 salt; // Replay protection parameter
-    }
-
-    error InvalidOriginSettler(address originSettler, address expectedOriginSettler);
-    error InvalidOrderDataType(bytes32 orderDataType, bytes32 expectedOrderDataType);
-    error InvalidChainId(uint256 chainId, uint256 expectedChainId);
-    error InvalidRecipient(address recipient, address expectedRecipient);
-    error InvalidNonce(uint256 nonce);
-    error NonceAlreadyInUse(uint256 nonce);
-    error InvalidSignature(address signer, address expectedSigner);
-    error InvalidRegistration(address sponsor, bytes32 claimHash);
-    error InvalidSponsor(address sponsor, address expectedSponsor);
+contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
 
     // The typehash of the OrderData struct
     // keccak256("OrderData(address arbiter,address sponsor,uint256 nonce,uint256 id,uint256 amount,Mandate mandate)
     // Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt)")
-    bytes32 constant ORDERDATA_TYPEHASH = 0x9e0e1bdb0df35509b65bbc49d209dd42496c5a3f13998f9a74dc842d6932656b;
+    bytes32 public constant ORDERDATA_TYPEHASH = 0x9e0e1bdb0df35509b65bbc49d209dd42496c5a3f13998f9a74dc842d6932656b;
 
     // The typehash of the OrderDataGasless struct
     // keccak256("OrderDataGasless(address arbiter,uint256 id,uint256 amount,Mandate mandate)
     // Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt)")
-    bytes32 constant ORDERDATA_GASLESS_TYPEHASH = 0x9ab67658b7c0f35b64fdadd7adee1e58b6399a8201f38c355d3a109a2d7081d7;
+    bytes32 public constant ORDERDATA_GASLESS_TYPEHASH = 0x9ab67658b7c0f35b64fdadd7adee1e58b6399a8201f38c355d3a109a2d7081d7;
 
     // keccak256("Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)
     // Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt)")
-    bytes32 constant COMPACT_WITNESS_TYPEHASH = 0x27f09e0bb8ce2ae63380578af7af85055d3ada248c502e2378b85bc3d05ee0b0;
+    bytes32 public constant COMPACT_WITNESS_TYPEHASH = 0x27f09e0bb8ce2ae63380578af7af85055d3ada248c502e2378b85bc3d05ee0b0;
 
     bytes32 immutable _COMPACT_DOMAIN_SEPARATOR;
-
-    /// FOR SINGLE COMPACT WE HAVE:
-    /// - arbiter
-    /// - sponsor
-    /// - nonce
-    /// - expires
-    /// - id
-    /// - amount
-    /// WHAT ADDITIONAL DATA NEEDS TO BE SIGNED:
-    // Witness(
-    // uint256 originChainId, 
-    // uint256 targetChainId, 
-    // bytes32 targetTokenAddress, 
-    // uint256 targetMinAmount, 
-    // bytes32 recipient, 
-    // bytes32 destinationSettler, 
-    // uint32 fillDeadline
-    // )
-
-    /// FOR BATCH COMPACT WE HAVE:
-    /// - arbiter
-    /// - sponsor
-    /// - nonce
-    /// - expires
-    /// - idsAndAmounts
-    /// WHAT ADDITIONAL DATA NEEDS TO BE SIGNED:
-    // Witness(
-    // uint256[] originChainId, 
-    // uint256[] targetChainId, 
-    // bytes32[] targetTokenAddress, 
-    // uint256[] targetMinAmount, 
-    // bytes32[] recipient, 
-    // bytes32[] destinationSettler, 
-    // uint32 fillDeadline
-    // )
-
-    /// TODO: batch compacts witness
     
-    // The nonce of the allocator
     mapping(uint256 nonce => bool nonceUsed)  private _userNonce;
 
-    constructor(address compactContract_, uint256 minWithdrawalDelay_, uint256 maxWithdrawalDelay_)
-        SimpleAllocator(compactContract_, minWithdrawalDelay_, maxWithdrawalDelay_) {
+    constructor(address compactContract_, address arbiter_, uint256 minWithdrawalDelay_, uint256 maxWithdrawalDelay_)
+        SimpleAllocator(compactContract_, arbiter_, minWithdrawalDelay_, maxWithdrawalDelay_) {
         _COMPACT_DOMAIN_SEPARATOR = ITheCompact(COMPACT_CONTRACT).DOMAIN_SEPARATOR();
     }
 
-    /// @notice Opens a gasless cross-chain order on behalf of a user.
-	/// @dev To be called by the filler.
-	/// @dev This method must emit the Open event
-	/// @param order_ The GaslessCrossChainOrder definition
-	/// @param sponsorSignature_ The user's signature over the order
+    /// @inheritdoc IERC7683Allocator
 	function openFor(GaslessCrossChainOrder calldata order_, bytes calldata sponsorSignature_, bytes calldata) external{
         // With the users signature, we can create locks in the name of the user
 
@@ -134,23 +42,20 @@ contract SimpleERC7683Allocator is SimpleAllocator, IOriginSettler {
         if (order_.orderDataType != ORDERDATA_GASLESS_TYPEHASH) {
             revert InvalidOrderDataType(order_.orderDataType, ORDERDATA_GASLESS_TYPEHASH);
         }
+        if(order_.originSettler != address(this)){
+            revert InvalidOriginSettler(order_.originSettler, address(this));
+        }
 
         // Decode the orderData
         OrderDataGasless memory orderDataGasless = abi.decode(order_.orderData, (OrderDataGasless));
 
-        OrderData memory orderData = _convertGaslessOrderData(order_.user, order_.nonce, order_.originSettler, orderDataGasless);
+        OrderData memory orderData = _convertGaslessOrderData(order_.user, order_.nonce, order_.openDeadline, orderDataGasless);
 
         _open(orderData, order_.fillDeadline, order_.user, sponsorSignature_);
     }
 
-	/// @notice Opens a cross-chain order
-	/// @dev To be called by the user
-	/// @dev This method must emit the Open event
-    /// @dev This locks the users tokens
-	/// @param order The OnchainCrossChainOrder definition
+    /// @inheritdoc IERC7683Allocator
 	function open(OnchainCrossChainOrder calldata order) external{
-        // TODO: Think about if this can only be used with a registered compact? Or do we want the sponsor signature in the orderData?
-
         // Check if orderDataType is the one expected by the allocator
         if (order.orderDataType != ORDERDATA_TYPEHASH) {
             revert InvalidOrderDataType(order.orderDataType, ORDERDATA_TYPEHASH);
@@ -165,38 +70,33 @@ contract SimpleERC7683Allocator is SimpleAllocator, IOriginSettler {
         _open(orderData, order.fillDeadline, msg.sender, "");
     }
 
-    /// @notice Resolves a specific GaslessCrossChainOrder into a generic ResolvedCrossChainOrder
-	/// @dev Intended to improve standardized integration of various order types and settlement contracts
-	/// @param order The GaslessCrossChainOrder definition
-	/// @return ResolvedCrossChainOrder hydrated order data including the inputs and outputs of the order
-	function resolveFor(GaslessCrossChainOrder calldata order, bytes calldata) external view returns (ResolvedCrossChainOrder memory){
-        OrderDataGasless memory orderDataGasless = abi.decode(order.orderData, (OrderDataGasless));
+    /// @inheritdoc IERC7683Allocator
+	function resolveFor(GaslessCrossChainOrder calldata order_, bytes calldata) external view returns (ResolvedCrossChainOrder memory){
+        OrderDataGasless memory orderDataGasless = abi.decode(order_.orderData, (OrderDataGasless));
 
-        OrderData memory orderData = _convertGaslessOrderData(order.user, order.nonce, order.originSettler, orderDataGasless);
-        return _resolveOrder(order.user, order.fillDeadline, order.nonce, orderData, "");
+        OrderData memory orderData = _convertGaslessOrderData(order_.user, order_.nonce, order_.openDeadline, orderDataGasless);
+        return _resolveOrder(order_.user, order_.fillDeadline, order_.nonce, orderData, "");
     }
 
-	/// @notice Resolves a specific OnchainCrossChainOrder into a generic ResolvedCrossChainOrder
-	/// @dev Intended to improve standardized integration of various order types and settlement contracts
-	/// @param order The OnchainCrossChainOrder definition
-	/// @return ResolvedCrossChainOrder hydrated order data including the inputs and outputs of the order
-	function resolve(OnchainCrossChainOrder calldata order) external view returns (ResolvedCrossChainOrder memory){
-        OrderData memory orderData = abi.decode(order.orderData, (OrderData));
-        return _resolveOrder(orderData.sponsor, order.fillDeadline, orderData.nonce, orderData, "");
+    /// @inheritdoc IERC7683Allocator
+	function resolve(OnchainCrossChainOrder calldata order_) external view returns (ResolvedCrossChainOrder memory){
+        OrderData memory orderData = abi.decode(order_.orderData, (OrderData));
+        return _resolveOrder(orderData.sponsor, order_.fillDeadline, orderData.nonce, orderData, "");
     }
 
-    function getCompactWitnessString() external pure returns (string memory) {
-        return "Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt)";
+    /// @inheritdoc IERC7683Allocator
+    function getCompactWitnessTypeString() external pure returns (string memory) {
+        return "Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt))";
     }
 
-    function checkNonce(address sponsor_, uint256 nonce_) external view returns (bool nonceUnused_) {
+    /// @inheritdoc IERC7683Allocator
+    function checkNonce(address sponsor_, uint256 nonce_) external view returns (bool nonceFree_) {
         _checkNonce(sponsor_, nonce_);
-        nonceUnused_ = !_userNonce[nonce_];
-        return nonceUnused_;
+        nonceFree_ = !_userNonce[nonce_];
+        return nonceFree_;
     }
 
     function _open(OrderData memory orderData_, uint32 fillDeadline_, address sponsor_, bytes memory sponsorSignature_) internal {
-
         // Enforce a nonce where the most significant 96 bits are the nonce and the least significant 160 bits are the sponsor
         _checkNonce(sponsor_, orderData_.nonce);
 
@@ -206,9 +106,8 @@ contract SimpleERC7683Allocator is SimpleAllocator, IOriginSettler {
         }
         _userNonce[orderData_.nonce] = true;
 
-        // We do not enforce a specific tribunal, so we do not check the address. This will allow to support new tribunals after the deployment of the allocator
-        // Going with an immutable tribunal would limit support for new chains with a fully decentralized allocator
-        /// TODO: THINK ABOUT IF THE ARBITER MUST BE ENFORCED OR NOT
+        // We do not enforce a specific tribunal or arbiter. This will allow to support new arbiters and tribunals after the deployment of the allocator
+        // Going with an immutable arbiter and tribunal would limit support for new chains with a fully decentralized allocator
 
         bytes32 tokenHash = _lockTokens(orderData_, sponsor_, orderData_.nonce);
 
@@ -237,18 +136,17 @@ contract SimpleERC7683Allocator is SimpleAllocator, IOriginSettler {
                 )
             )
         );
+        bytes32 digest = keccak256(
+            abi.encodePacked(
+                bytes2(0x1901),
+                _COMPACT_DOMAIN_SEPARATOR,
+                claimHash
+            )
+        );
 
-        // TODO: This means everyone can open an order for a user if they have registered the claim hash on the compact (just call openFor with an empty signature). Any issues with that?
-        //       Do not currently see an issue, since its the same with the sponsors signature.
+        // We check for the length, which means this could also be triggered by a zero length signature provided in the openFor function. This enables relaying of orders if the claim was registered on the compact.
         if(sponsorSignature_.length > 0) {
             // confirm the signature matches the digest
-            bytes32 digest = keccak256(
-                abi.encodePacked(
-                    bytes2(0x1901),
-                    _COMPACT_DOMAIN_SEPARATOR,
-                    claimHash
-                )
-            );
             address signer = ECDSA.recover(digest, sponsorSignature_);
             if (sponsor_ != signer) {
                 revert InvalidSignature(sponsor_, signer);
@@ -261,7 +159,7 @@ contract SimpleERC7683Allocator is SimpleAllocator, IOriginSettler {
             }
         }
 
-        _sponsor[claimHash] = tokenHash;
+        _sponsor[digest] = tokenHash;
 
         // Emit an open event
         emit Open(bytes32(orderData_.nonce), _resolveOrder(sponsor_, fillDeadline_, orderData_.nonce, orderData_, sponsorSignature_));
@@ -313,23 +211,23 @@ contract SimpleERC7683Allocator is SimpleAllocator, IOriginSettler {
                 amount: orderData.amount
             }),
             sponsorSignature: sponsorSignature,
-            allocatorSignature: "" // No signature required from this allocator, it will verify the claim on chain.
+            allocatorSignature: "" // No signature required from this allocator, it will verify the claim on chain via ERC1271.
         });
 
         fillInstructions[0] = FillInstruction({
             destinationChainId: orderData.chainId,
-            destinationSettler: bytes20(orderData.tribunal),
-            originData: abi.encode(claim, mandate) // TODO: FILL WITH THE ORIGIN DATA REQUIRED BY THE TRIBUNAL
+            destinationSettler: _addressToBytes32(orderData.tribunal),
+            originData: abi.encode(claim, mandate)
         });
 
         Output memory spent = Output({
-            token: bytes20(orderData.token),
+            token: _addressToBytes32(orderData.token),
             amount: type(uint256).max,
-            recipient: bytes20(orderData.recipient),
+            recipient: _addressToBytes32(orderData.recipient),
             chainId: orderData.chainId
         });
         Output memory received = Output({
-            token: bytes20(_idToToken(orderData.id)),
+            token: _addressToBytes32(_idToToken(orderData.id)),
             amount: orderData.amount,
             recipient: bytes32(0),
             chainId: block.chainid
@@ -377,12 +275,18 @@ contract SimpleERC7683Allocator is SimpleAllocator, IOriginSettler {
         }
     }
 
-    function _convertGaslessOrderData(address sponsor_, uint256 nonce_, address arbiter_, OrderDataGasless memory orderDataGasless_) internal pure returns (OrderData memory orderData_) {
+    function _addressToBytes32(address address_) internal pure returns (bytes32 output_) {
+        assembly ("memory-safe") {
+            output_ := shr(96, shl(96, address_))
+        }
+    }
+
+    function _convertGaslessOrderData(address sponsor_, uint256 nonce_, uint32 openDeadline_, OrderDataGasless memory orderDataGasless_) internal pure returns (OrderData memory orderData_) {
         orderData_ = OrderData({
-            arbiter: arbiter_,
+            arbiter: orderDataGasless_.arbiter,
             sponsor: sponsor_,
             nonce: nonce_,
-            expires: orderDataGasless_.expires,
+            expires: openDeadline_,
             id: orderDataGasless_.id,
             amount: orderDataGasless_.amount,
             chainId: orderDataGasless_.chainId,
