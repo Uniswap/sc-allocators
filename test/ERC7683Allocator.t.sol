@@ -616,3 +616,137 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Create
         vm.assertEq(compactContract.balanceOf(filler, usdcId), defaultAmount);
     }
 }
+
+contract ERC7683Allocator_resolveFor is GaslessCrossChainOrderData {
+    function test_resolve_successful() public {
+
+        // WITH THE CURRENT ERC7683 DESIGN, THE SPONSOR SIGNATURE IS NOT PROVIDED TO THE RESOLVE FUNCTION
+        // WHILE THE ResolvedCrossChainOrder WITHOUT THE SIGNATURE COULD STILL BE USED TO SIMULATE THE FILL,
+        // ACTUALLY USING THIS DATA WOULD RESULT IN A LOSS OF THE REWARD TOKENS FOR THE FILLER.
+        // THIS FEELS RISKY.
+        // THE CURRENT ALTERNATIVE WOULD BE HAVE THE INPUT SIGNATURE BEING LEFT EMPTY AND INSTEAD BE PROVIDED IN THE THE orderData OF THE GaslessCrossChainOrderData.
+        // THIS IS BOTH NOT IDEAL, SO CURRENTLY CHECKING FOR A SOLUTION.
+
+        (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, /*bytes memory sponsorSignature*/) = _getGaslessCrossChainOrder();
+        IOriginSettler.Output[] memory maxSpent = new IOriginSettler.Output[](1);
+        IOriginSettler.Output[] memory minReceived = new IOriginSettler.Output[](1);
+        IOriginSettler.FillInstruction[] memory fillInstructions = new IOriginSettler.FillInstruction[](1);
+        maxSpent[0] = IOriginSettler.Output({
+            token: bytes32(uint256(uint160(defaultOutputToken))),
+            amount: type(uint256).max,
+            recipient: bytes32(uint256(uint160(user))),
+            chainId: defaultOutputChainId
+        });
+        minReceived[0] = IOriginSettler.Output({
+            token: bytes32(uint256(uint160(address(usdc)))),
+            amount: defaultAmount,
+            recipient: "",
+            chainId: block.chainid
+        });
+        Claim memory claim = Claim({
+            chainId: block.chainid,
+            compact: _getCompact(),
+            sponsorSignature: "", // sponsorSignature, // THE SIGNATURE MUST BE ADDED MANUALLY BY THE FILLER WITH THE CURRENT SYSTEM, BEFORE FILLING THE ORDER ON THE TARGET CHAIN
+            allocatorSignature: ""
+        });
+        fillInstructions[0] = IOriginSettler.FillInstruction({
+            destinationChainId: defaultOutputChainId,
+            destinationSettler: bytes32(uint256(uint160(tribunal))),
+            originData: abi.encode(claim, _getMandate())
+        });
+
+        IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
+            user: user,
+            originChainId: block.chainid,
+            openDeadline: uint32(_getClaimExpiration()),
+            fillDeadline: uint32(_getFillExpiration()),
+            orderId: bytes32(defaultNonce),
+            maxSpent: maxSpent,
+            minReceived: minReceived,
+            fillInstructions: fillInstructions
+        });
+        IOriginSettler.ResolvedCrossChainOrder memory resolved = erc7683Allocator.resolveFor(gaslessCrossChainOrder_, "");
+        assertEq(resolved.user, resolvedCrossChainOrder.user);    
+        assertEq(resolved.originChainId, resolvedCrossChainOrder.originChainId);
+        assertEq(resolved.openDeadline, resolvedCrossChainOrder.openDeadline);
+        assertEq(resolved.fillDeadline, resolvedCrossChainOrder.fillDeadline);
+        assertEq(resolved.orderId, resolvedCrossChainOrder.orderId);
+        assertEq(resolved.maxSpent.length, resolvedCrossChainOrder.maxSpent.length);
+        assertEq(resolved.maxSpent[0].token, resolvedCrossChainOrder.maxSpent[0].token);
+        assertEq(resolved.maxSpent[0].amount, resolvedCrossChainOrder.maxSpent[0].amount);
+        assertEq(resolved.maxSpent[0].recipient, resolvedCrossChainOrder.maxSpent[0].recipient);
+        assertEq(resolved.maxSpent[0].chainId, resolvedCrossChainOrder.maxSpent[0].chainId);
+        assertEq(resolved.minReceived.length, resolvedCrossChainOrder.minReceived.length);
+        assertEq(resolved.minReceived[0].token, resolvedCrossChainOrder.minReceived[0].token);
+        assertEq(resolved.minReceived[0].amount, resolvedCrossChainOrder.minReceived[0].amount);
+        assertEq(resolved.minReceived[0].recipient, resolvedCrossChainOrder.minReceived[0].recipient);
+        assertEq(resolved.minReceived[0].chainId, resolvedCrossChainOrder.minReceived[0].chainId);
+        assertEq(resolved.fillInstructions.length, resolvedCrossChainOrder.fillInstructions.length);
+        assertEq(resolved.fillInstructions[0].destinationChainId, resolvedCrossChainOrder.fillInstructions[0].destinationChainId);
+        assertEq(resolved.fillInstructions[0].destinationSettler, resolvedCrossChainOrder.fillInstructions[0].destinationSettler);
+        assertEq(resolved.fillInstructions[0].originData, resolvedCrossChainOrder.fillInstructions[0].originData);
+    }
+}
+
+contract ERC7683Allocator_resolve is OnChainCrossChainOrderData {
+    function test_resolve_successful() public {
+        (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
+        IOriginSettler.Output[] memory maxSpent = new IOriginSettler.Output[](1);
+        IOriginSettler.Output[] memory minReceived = new IOriginSettler.Output[](1);
+        IOriginSettler.FillInstruction[] memory fillInstructions = new IOriginSettler.FillInstruction[](1);
+        maxSpent[0] = IOriginSettler.Output({
+            token: bytes32(uint256(uint160(defaultOutputToken))),
+            amount: type(uint256).max,
+            recipient: bytes32(uint256(uint160(user))),
+            chainId: defaultOutputChainId
+        });
+        minReceived[0] = IOriginSettler.Output({
+            token: bytes32(uint256(uint160(address(usdc)))),
+            amount: defaultAmount,
+            recipient: "",
+            chainId: block.chainid
+        });
+        Claim memory claim = Claim({
+            chainId: block.chainid,
+            compact: _getCompact(),
+            sponsorSignature: "",
+            allocatorSignature: ""
+        });
+        fillInstructions[0] = IOriginSettler.FillInstruction({
+            destinationChainId: defaultOutputChainId,
+            destinationSettler: bytes32(uint256(uint160(tribunal))),
+            originData: abi.encode(claim, _getMandate())
+        });
+
+        IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
+            user: user,
+            originChainId: block.chainid,
+            openDeadline: uint32(_getClaimExpiration()),
+            fillDeadline: uint32(_getFillExpiration()),
+            orderId: bytes32(defaultNonce),
+            maxSpent: maxSpent,
+            minReceived: minReceived,
+            fillInstructions: fillInstructions
+        });
+        IOriginSettler.ResolvedCrossChainOrder memory resolved = erc7683Allocator.resolve(onChainCrossChainOrder_);
+        assertEq(resolved.user, resolvedCrossChainOrder.user);    
+        assertEq(resolved.originChainId, resolvedCrossChainOrder.originChainId);
+        assertEq(resolved.openDeadline, resolvedCrossChainOrder.openDeadline);
+        assertEq(resolved.fillDeadline, resolvedCrossChainOrder.fillDeadline);
+        assertEq(resolved.orderId, resolvedCrossChainOrder.orderId);
+        assertEq(resolved.maxSpent.length, resolvedCrossChainOrder.maxSpent.length);
+        assertEq(resolved.maxSpent[0].token, resolvedCrossChainOrder.maxSpent[0].token);
+        assertEq(resolved.maxSpent[0].amount, resolvedCrossChainOrder.maxSpent[0].amount);
+        assertEq(resolved.maxSpent[0].recipient, resolvedCrossChainOrder.maxSpent[0].recipient);
+        assertEq(resolved.maxSpent[0].chainId, resolvedCrossChainOrder.maxSpent[0].chainId);
+        assertEq(resolved.minReceived.length, resolvedCrossChainOrder.minReceived.length);
+        assertEq(resolved.minReceived[0].token, resolvedCrossChainOrder.minReceived[0].token);
+        assertEq(resolved.minReceived[0].amount, resolvedCrossChainOrder.minReceived[0].amount);
+        assertEq(resolved.minReceived[0].recipient, resolvedCrossChainOrder.minReceived[0].recipient);
+        assertEq(resolved.minReceived[0].chainId, resolvedCrossChainOrder.minReceived[0].chainId);
+        assertEq(resolved.fillInstructions.length, resolvedCrossChainOrder.fillInstructions.length);
+        assertEq(resolved.fillInstructions[0].destinationChainId, resolvedCrossChainOrder.fillInstructions[0].destinationChainId);
+        assertEq(resolved.fillInstructions[0].destinationSettler, resolvedCrossChainOrder.fillInstructions[0].destinationSettler);
+        assertEq(resolved.fillInstructions[0].originData, resolvedCrossChainOrder.fillInstructions[0].originData);
+    }
+}
