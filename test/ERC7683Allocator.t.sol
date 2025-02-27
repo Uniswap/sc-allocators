@@ -914,3 +914,59 @@ contract ERC7683Allocator_resolve is OnChainCrossChainOrderData {
         assertEq(resolved.fillInstructions[0].originData, resolvedCrossChainOrder.fillInstructions[0].originData);
     }
 }
+
+contract ERC7683Allocator_getCompactWitnessTypeString is MocksSetup {
+    function test_getCompactWitnessTypeString() public view {
+        assertEq(erc7683Allocator.getCompactWitnessTypeString(), "Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt))");
+    }
+}
+
+contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData, CreateHash {
+    function test_revert_checkNonce(uint256 nonce_) public {
+        address expectedSponsor;
+        assembly ("memory-safe") {
+            expectedSponsor := shr(96, shl(96, nonce_))
+        }
+        vm.assume(user != expectedSponsor);
+
+        vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidNonce.selector, nonce_));
+        erc7683Allocator.checkNonce(user, nonce_);
+    }
+
+    function test_checkNonce_unused(uint96 nonce_) public view {
+        address sponsor = user;
+        uint256 nonce;
+        assembly ("memory-safe") {
+            nonce := or(shl(160, nonce_), shr(96, shl(96, sponsor)))
+        }
+        assertEq(erc7683Allocator.checkNonce(sponsor, nonce), true);
+    }
+
+    function test_checkNonce_used() public {
+        // Deposit tokens
+        vm.startPrank(user);
+        usdc.mint(user, defaultAmount);
+        usdc.approve(address(compactContract), defaultAmount);
+        compactContract.deposit(
+            address(usdc), address(erc7683Allocator), defaultResetPeriod, defaultScope, defaultAmount, user
+        );
+
+        // register a claim
+        Compact memory compact_ = _getCompact();
+        Mandate memory mandate_ = _getMandate();
+
+        bytes32 claimHash = _hashCompact(compact_, mandate_);
+        bytes32 typeHash = _getTypeHash();
+        compactContract.register(claimHash, typeHash, defaultResetPeriodTimestamp);
+
+        vm.stopPrank();
+
+        (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
+        vm.prank(user);
+        erc7683Allocator.open(onChainCrossChainOrder_);
+
+
+        vm.prank(user);
+        vm.assertEq(erc7683Allocator.checkNonce(user, defaultNonce), false);
+    }
+}

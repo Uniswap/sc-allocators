@@ -285,12 +285,6 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         }
     }
 
-    function _castToAddress(bytes32 address_) internal pure returns (address output_) {
-        assembly ("memory-safe") {
-            output_ := shr(96, shl(96, address_))
-        }
-    }
-
     function _idToToken(uint256 id_) internal pure returns (address token_) {
         assembly ("memory-safe") {
             token_ := shr(96, shl(96, id_))
