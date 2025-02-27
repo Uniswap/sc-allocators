@@ -2,7 +2,7 @@
 
 pragma solidity ^0.8.27;
 
-import { IAllocator } from "../interfaces/IAllocator.sol";
+import {IAllocator} from '../interfaces/IAllocator.sol';
 
 interface IServerAllocator is IAllocator {
     struct RegisterAttestation {
@@ -92,7 +92,8 @@ interface IServerAllocator is IAllocator {
     /// @dev Nonce management in the RegisterAttestation is only required for multiple registers of the same attestation with the same expiration.
     /// @param attestation_ The RegisterAttestation struct containing the signer, the hash of the attestation, the expiration and the nonce
     /// @param signature_ The signature of the signer
-    function registerAttestationViaSignature(RegisterAttestation calldata attestation_, bytes calldata signature_) external;
+    function registerAttestationViaSignature(RegisterAttestation calldata attestation_, bytes calldata signature_)
+        external;
 
     /// @notice Consume nonces on the compact contract and attestations on the allocator
     /// @dev The hashes array needs to be of the same length as the nonces array.
@@ -128,7 +129,10 @@ interface IServerAllocator is IAllocator {
     /// @param id_ The id of the token
     /// @param amount_ The amount of the token
     /// @return The array of expiration dates for the registered attestations
-    function checkAttestationExpirations(address sponsor_, uint256 id_, uint256 amount_) external view returns (uint256[] memory);
+    function checkAttestationExpirations(address sponsor_, uint256 id_, uint256 amount_)
+        external
+        view
+        returns (uint256[] memory);
 
     /// @notice Get the address of the compact contract
     /// @dev Only the compact contract can call the attest function

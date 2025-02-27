@@ -2,10 +2,9 @@
 
 pragma solidity ^0.8.27;
 
-import { IOriginSettler } from "./ERC7683/IOriginSettler.sol";
+import {IOriginSettler} from './ERC7683/IOriginSettler.sol';
 
 interface IERC7683Allocator is IOriginSettler {
-
     struct OrderData {
         // COMPACT
         address arbiter; // The account tasked with verifying and submitting the claim.
@@ -54,19 +53,22 @@ interface IERC7683Allocator is IOriginSettler {
     error InvalidRegistration(address sponsor, bytes32 claimHash);
     error InvalidSponsor(address sponsor, address expectedSponsor);
 
+    /// @inheritdoc IOriginSettler
+    function openFor(GaslessCrossChainOrder calldata order, bytes calldata signature, bytes calldata originFillerData)
+        external;
 
     /// @inheritdoc IOriginSettler
-	function openFor(GaslessCrossChainOrder calldata order, bytes calldata signature, bytes calldata originFillerData) external;
+    /// @dev Requires the user to have previously registered the claim hash on the compact
+    function open(OnchainCrossChainOrder calldata order) external;
 
     /// @inheritdoc IOriginSettler
-	/// @dev Requires the user to have previously registered the claim hash on the compact
-	function open(OnchainCrossChainOrder calldata order) external;
+    function resolveFor(GaslessCrossChainOrder calldata order, bytes calldata originFillerData)
+        external
+        view
+        returns (ResolvedCrossChainOrder memory);
 
     /// @inheritdoc IOriginSettler
-	function resolveFor(GaslessCrossChainOrder calldata order, bytes calldata originFillerData) external view returns (ResolvedCrossChainOrder memory);
-
-    /// @inheritdoc IOriginSettler
-	function resolve(OnchainCrossChainOrder calldata order) external view returns (ResolvedCrossChainOrder memory);
+    function resolve(OnchainCrossChainOrder calldata order) external view returns (ResolvedCrossChainOrder memory);
 
     /// @notice Returns the type string of the compact including the witness
     function getCompactWitnessTypeString() external pure returns (string memory);

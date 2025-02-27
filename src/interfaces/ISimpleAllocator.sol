@@ -2,8 +2,8 @@
 
 pragma solidity ^0.8.27;
 
-import { IAllocator } from "../interfaces/IAllocator.sol";
-import { Compact } from "@uniswap/the-compact/types/EIP712Types.sol";
+import {IAllocator} from '../interfaces/IAllocator.sol';
+import {Compact} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 interface ISimpleAllocator is IAllocator {
     /// @notice Thrown if a claim is already active
@@ -48,7 +48,10 @@ interface ISimpleAllocator is IAllocator {
     /// @param sponsor_ The address of the sponsor
     /// @return amount_ The amount of the token that was available for locking (the full balance of the token will get locked)
     /// @return expires_ The expiration of the lock
-    function checkTokensLocked(uint256 id_, address sponsor_) external view returns (uint256 amount_, uint256 expires_);
+    function checkTokensLocked(uint256 id_, address sponsor_)
+        external
+        view
+        returns (uint256 amount_, uint256 expires_);
 
     /// @notice Checks if the a lock for the compact exists and is active
     /// @dev Also checks if the provided nonce has not yet been consumed on the compact contract

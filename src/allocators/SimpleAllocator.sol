@@ -2,14 +2,14 @@
 
 pragma solidity ^0.8.27;
 
-import { ERC6909 } from "@solady/tokens/ERC6909.sol";
-import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
-import { ITheCompact } from "@uniswap/the-compact/interfaces/ITheCompact.sol";
-import { Compact } from "@uniswap/the-compact/types/EIP712Types.sol";
-import { ResetPeriod } from "@uniswap/the-compact/lib/IdLib.sol";
-import { ForcedWithdrawalStatus } from "@uniswap/the-compact/types/ForcedWithdrawalStatus.sol";
-import { IAllocator } from "../interfaces/IAllocator.sol";
-import { ISimpleAllocator } from "../interfaces/ISimpleAllocator.sol";
+import {IAllocator} from '../interfaces/IAllocator.sol';
+import {ISimpleAllocator} from '../interfaces/ISimpleAllocator.sol';
+import {IERC1271} from '@openzeppelin/contracts/interfaces/IERC1271.sol';
+import {ERC6909} from '@solady/tokens/ERC6909.sol';
+import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
+import {ResetPeriod} from '@uniswap/the-compact/lib/IdLib.sol';
+import {Compact} from '@uniswap/the-compact/types/EIP712Types.sol';
+import {ForcedWithdrawalStatus} from '@uniswap/the-compact/types/ForcedWithdrawalStatus.sol';
 
 contract SimpleAllocator is ISimpleAllocator {
     // keccak256("Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount)")
@@ -33,7 +33,7 @@ contract SimpleAllocator is ISimpleAllocator {
         MIN_WITHDRAWAL_DELAY = minWithdrawalDelay_;
         MAX_WITHDRAWAL_DELAY = maxWithdrawalDelay_;
 
-        ITheCompact(COMPACT_CONTRACT).__registerAllocator(address(this), "");
+        ITheCompact(COMPACT_CONTRACT).__registerAllocator(address(this), '');
     }
 
     /// @inheritdoc ISimpleAllocator
@@ -67,7 +67,11 @@ contract SimpleAllocator is ISimpleAllocator {
     }
 
     /// @inheritdoc IAllocator
-    function attest(address operator_, address from_, address, uint256 id_, uint256 amount_) external view returns (bytes4) {
+    function attest(address operator_, address from_, address, uint256 id_, uint256 amount_)
+        external
+        view
+        returns (bytes4)
+    {
         if (msg.sender != COMPACT_CONTRACT) {
             revert InvalidCaller(msg.sender, COMPACT_CONTRACT);
         }
@@ -82,7 +86,9 @@ contract SimpleAllocator is ISimpleAllocator {
         uint256 fullAmount = amount_;
         if (_claim[tokenHash] > block.timestamp) {
             // Lock is still active, add the locked amount if the nonce has not yet been consumed
-            fullAmount += ITheCompact(COMPACT_CONTRACT).hasConsumedAllocatorNonce(_nonce[tokenHash], address(this)) ? 0 : _amount[tokenHash];
+            fullAmount += ITheCompact(COMPACT_CONTRACT).hasConsumedAllocatorNonce(_nonce[tokenHash], address(this))
+                ? 0
+                : _amount[tokenHash];
         }
         if (balance < fullAmount) {
             revert InsufficientBalance(from_, id_, balance, fullAmount);
@@ -104,10 +110,17 @@ contract SimpleAllocator is ISimpleAllocator {
     }
 
     /// @inheritdoc ISimpleAllocator
-    function checkTokensLocked(uint256 id_, address sponsor_) external view returns (uint256 amount_, uint256 expires_) {
+    function checkTokensLocked(uint256 id_, address sponsor_)
+        external
+        view
+        returns (uint256 amount_, uint256 expires_)
+    {
         bytes32 tokenHash = _getTokenHash(id_, sponsor_);
         uint256 expires = _claim[tokenHash];
-        if (expires <= block.timestamp || ITheCompact(COMPACT_CONTRACT).hasConsumedAllocatorNonce(_nonce[tokenHash], address(this))) {
+        if (
+            expires <= block.timestamp
+                || ITheCompact(COMPACT_CONTRACT).hasConsumedAllocatorNonce(_nonce[tokenHash], address(this))
+        ) {
             return (0, 0);
         }
 
@@ -135,9 +148,11 @@ contract SimpleAllocator is ISimpleAllocator {
             )
         );
         uint256 expires = _claim[tokenHash];
-        bool active = _sponsor[digest] == tokenHash && expires > block.timestamp && !ITheCompact(COMPACT_CONTRACT).hasConsumedAllocatorNonce(_nonce[tokenHash], address(this));
+        bool active = _sponsor[digest] == tokenHash && expires > block.timestamp
+            && !ITheCompact(COMPACT_CONTRACT).hasConsumedAllocatorNonce(_nonce[tokenHash], address(this));
         if (active) {
-            (ForcedWithdrawalStatus status, uint256 forcedWithdrawalAvailableAt) = ITheCompact(COMPACT_CONTRACT).getForcedWithdrawalStatus(compact_.sponsor, compact_.id);
+            (ForcedWithdrawalStatus status, uint256 forcedWithdrawalAvailableAt) =
+                ITheCompact(COMPACT_CONTRACT).getForcedWithdrawalStatus(compact_.sponsor, compact_.id);
             if (status == ForcedWithdrawalStatus.Enabled && forcedWithdrawalAvailableAt < expires) {
                 expires = forcedWithdrawalAvailableAt;
                 active = expires > block.timestamp;
@@ -157,14 +172,20 @@ contract SimpleAllocator is ISimpleAllocator {
         }
         bytes32 tokenHash = _getTokenHash(compact_.id, msg.sender);
         // Check no lock is already active for this sponsor
-        if (_claim[tokenHash] > block.timestamp && !ITheCompact(COMPACT_CONTRACT).hasConsumedAllocatorNonce(_nonce[tokenHash], address(this))) {
+        if (
+            _claim[tokenHash] > block.timestamp
+                && !ITheCompact(COMPACT_CONTRACT).hasConsumedAllocatorNonce(_nonce[tokenHash], address(this))
+        ) {
             revert ClaimActive(compact_.sponsor);
         }
         // Check expiration is not too soon or too late
-        if (compact_.expires < block.timestamp + MIN_WITHDRAWAL_DELAY || compact_.expires > block.timestamp + MAX_WITHDRAWAL_DELAY) {
+        if (
+            compact_.expires < block.timestamp + MIN_WITHDRAWAL_DELAY
+                || compact_.expires > block.timestamp + MAX_WITHDRAWAL_DELAY
+        ) {
             revert InvalidExpiration(compact_.expires);
         }
-        (,address allocator, ResetPeriod resetPeriod,) = ITheCompact(COMPACT_CONTRACT).getLockDetails(compact_.id);
+        (, address allocator, ResetPeriod resetPeriod,) = ITheCompact(COMPACT_CONTRACT).getLockDetails(compact_.id);
         if (allocator != address(this)) {
             revert InvalidAllocator(allocator);
         }
@@ -173,7 +194,8 @@ contract SimpleAllocator is ISimpleAllocator {
             revert ForceWithdrawalAvailable(compact_.expires, block.timestamp + _resetPeriodToSeconds(resetPeriod));
         }
         // Check expiration is not past an active force withdrawal
-        (, uint256 forcedWithdrawalExpiration) = ITheCompact(COMPACT_CONTRACT).getForcedWithdrawalStatus(compact_.sponsor, compact_.id);
+        (, uint256 forcedWithdrawalExpiration) =
+            ITheCompact(COMPACT_CONTRACT).getForcedWithdrawalStatus(compact_.sponsor, compact_.id);
         if (forcedWithdrawalExpiration != 0 && forcedWithdrawalExpiration < compact_.expires) {
             revert ForceWithdrawalAvailable(compact_.expires, forcedWithdrawalExpiration);
         }

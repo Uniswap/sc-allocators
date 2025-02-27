@@ -2,26 +2,30 @@
 
 pragma solidity ^0.8.27;
 
-import { ERC6909 } from "@solady/tokens/ERC6909.sol";
-import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
-import { ITheCompact } from "@uniswap/the-compact/interfaces/ITheCompact.sol";
-import { Compact } from "@uniswap/the-compact/types/EIP712Types.sol";
-import { SimpleAllocator } from "./SimpleAllocator.sol";
-import { IAllocator } from "../interfaces/IAllocator.sol";
-import { ISimpleWitnessAllocator } from "../interfaces/ISimpleWitnessAllocator.sol";
+import {IAllocator} from '../interfaces/IAllocator.sol';
+import {ISimpleWitnessAllocator} from '../interfaces/ISimpleWitnessAllocator.sol';
+import {SimpleAllocator} from './SimpleAllocator.sol';
+import {IERC1271} from '@openzeppelin/contracts/interfaces/IERC1271.sol';
+import {ERC6909} from '@solady/tokens/ERC6909.sol';
+import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
+import {Compact} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 contract SimpleWitnessAllocator is SimpleAllocator, ISimpleWitnessAllocator {
     // abi.decode(bytes("Compact(address arbiter,address "), (bytes32))
-    bytes32 constant COMPACT_TYPESTRING_FRAGMENT_ONE = 0x436f6d70616374286164647265737320617262697465722c6164647265737320;
+    bytes32 constant COMPACT_TYPESTRING_FRAGMENT_ONE =
+        0x436f6d70616374286164647265737320617262697465722c6164647265737320;
     // abi.decode(bytes("sponsor,uint256 nonce,uint256 ex"), (bytes32))
-    bytes32 constant COMPACT_TYPESTRING_FRAGMENT_TWO = 0x73706f6e736f722c75696e74323536206e6f6e63652c75696e74323536206578;
+    bytes32 constant COMPACT_TYPESTRING_FRAGMENT_TWO =
+        0x73706f6e736f722c75696e74323536206e6f6e63652c75696e74323536206578;
     // abi.decode(bytes("pires,uint256 id,uint256 amount)"), (bytes32))
-    bytes32 constant COMPACT_TYPESTRING_FRAGMENT_THREE = 0x70697265732c75696e743235362069642c75696e7432353620616d6f756e7429;
+    bytes32 constant COMPACT_TYPESTRING_FRAGMENT_THREE =
+        0x70697265732c75696e743235362069642c75696e7432353620616d6f756e7429;
     // uint200(abi.decode(bytes(",Witness witness)Witness("), (bytes25)))
     uint200 constant WITNESS_TYPESTRING = 0x2C5769746E657373207769746E657373295769746E65737328;
 
     constructor(address compactContract_, uint256 minWithdrawalDelay_, uint256 maxWithdrawalDelay_)
-        SimpleAllocator(compactContract_, minWithdrawalDelay_, maxWithdrawalDelay_) {}
+        SimpleAllocator(compactContract_, minWithdrawalDelay_, maxWithdrawalDelay_)
+    {}
 
     /// @inheritdoc ISimpleWitnessAllocator
     function lockWithWitness(Compact calldata compact_, bytes32 typestringHash_, bytes32 witnessHash_) external {

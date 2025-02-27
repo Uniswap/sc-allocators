@@ -2,14 +2,14 @@
 
 pragma solidity ^0.8.27;
 
-import { ITheCompact } from "@uniswap/the-compact/interfaces/ITheCompact.sol";
-import { Compact, COMPACT_TYPEHASH } from "@uniswap/the-compact/types/EIP712Types.sol";
-import { Ownable, Ownable2Step } from "@openzeppelin/contracts/access/Ownable2Step.sol";
-import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
-import { IAllocator } from "../interfaces/IAllocator.sol";
-import { IServerAllocator } from "../interfaces/IServerAllocator.sol";
+import {IAllocator} from '../interfaces/IAllocator.sol';
+import {IServerAllocator} from '../interfaces/IServerAllocator.sol';
+import {Ownable, Ownable2Step} from '@openzeppelin/contracts/access/Ownable2Step.sol';
+import {IERC1271} from '@openzeppelin/contracts/interfaces/IERC1271.sol';
+import {ECDSA} from '@openzeppelin/contracts/utils/cryptography/ECDSA.sol';
+import {EIP712} from '@openzeppelin/contracts/utils/cryptography/EIP712.sol';
+import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
+import {COMPACT_TYPEHASH, Compact} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 contract ServerAllocator is Ownable2Step, EIP712, IServerAllocator {
     using ECDSA for bytes32;
@@ -21,7 +21,8 @@ contract ServerAllocator is Ownable2Step, EIP712, IServerAllocator {
     bytes32 private constant _ATTESTATION_TYPE_HASH = 0x6017ed71e505719876ff40d1e87ed2a0a078883c87bd2902ea9988c117f7ca7f;
 
     // keccak256("NonceConsumption(address signer,uint256[] nonces,bytes32[] attestations)")
-    bytes32 private constant _NONCE_CONSUMPTION_TYPE_HASH = 0x626e2c6c331510cafaa5cc323e6ac1e87f32c48cba2a61d81c86b50534f7cc91;
+    bytes32 private constant _NONCE_CONSUMPTION_TYPE_HASH =
+        0x626e2c6c331510cafaa5cc323e6ac1e87f32c48cba2a61d81c86b50534f7cc91;
 
     address private immutable _COMPACT_CONTRACT;
 
@@ -40,9 +41,9 @@ contract ServerAllocator is Ownable2Step, EIP712, IServerAllocator {
         _;
     }
 
-    constructor(address owner_, address compactContract_) Ownable(owner_) EIP712("Allocator", "1") {
+    constructor(address owner_, address compactContract_) Ownable(owner_) EIP712('Allocator', '1') {
         _COMPACT_CONTRACT = compactContract_;
-        ITheCompact(_COMPACT_CONTRACT).__registerAllocator(address(this), "");
+        ITheCompact(_COMPACT_CONTRACT).__registerAllocator(address(this), '');
     }
 
     /// @inheritdoc IServerAllocator
@@ -78,12 +79,17 @@ contract ServerAllocator is Ownable2Step, EIP712, IServerAllocator {
     }
 
     /// @inheritdoc IServerAllocator
-    function registerAttestationViaSignature(RegisterAttestation calldata attestation_, bytes calldata signature_) external {
-        bytes32 _attestationWithNonce = keccak256(abi.encode(attestation_.attestationHash, attestation_.expiration, attestation_.nonce));
+    function registerAttestationViaSignature(RegisterAttestation calldata attestation_, bytes calldata signature_)
+        external
+    {
+        bytes32 _attestationWithNonce =
+            keccak256(abi.encode(attestation_.attestationHash, attestation_.expiration, attestation_.nonce));
         if (_attestationSignatures[_attestationWithNonce]) {
             revert AlreadyUsedSig(attestation_.attestationHash, attestation_.nonce);
         }
-        address signer = _validateSignedAttestation(attestation_.signer, attestation_.attestationHash, attestation_.expiration, attestation_.nonce, signature_);
+        address signer = _validateSignedAttestation(
+            attestation_.signer, attestation_.attestationHash, attestation_.expiration, attestation_.nonce, signature_
+        );
         if (signer != attestation_.signer || !_containsSigner(signer)) {
             revert InvalidSignature(signature_, signer);
         }
@@ -179,7 +185,11 @@ contract ServerAllocator is Ownable2Step, EIP712, IServerAllocator {
     }
 
     /// @inheritdoc IServerAllocator
-    function checkAttestationExpirations(address sponsor_, uint256 id_, uint256 amount_) external view returns (uint256[] memory) {
+    function checkAttestationExpirations(address sponsor_, uint256 id_, uint256 amount_)
+        external
+        view
+        returns (uint256[] memory)
+    {
         return _checkAttestationExpirations(keccak256(abi.encode(sponsor_, id_, amount_)));
     }
 
@@ -220,12 +230,22 @@ contract ServerAllocator is Ownable2Step, EIP712, IServerAllocator {
         emit NoncesConsumed(nonces_);
     }
 
-    function _validateSignedAttestation(address signer_, bytes32 hash_, uint256 expiration_, uint256 nonce, bytes calldata signature_) internal view returns (address) {
+    function _validateSignedAttestation(
+        address signer_,
+        bytes32 hash_,
+        uint256 expiration_,
+        uint256 nonce,
+        bytes calldata signature_
+    ) internal view returns (address) {
         bytes32 message = _hashAttestation(signer_, hash_, expiration_, nonce);
         return message.recover(signature_);
     }
 
-    function _hashAttestation(address signer_, bytes32 hash_, uint256 expiration_, uint256 nonce_) internal view returns (bytes32) {
+    function _hashAttestation(address signer_, bytes32 hash_, uint256 expiration_, uint256 nonce_)
+        internal
+        view
+        returns (bytes32)
+    {
         return _hashTypedDataV4(keccak256(abi.encode(_ATTESTATION_TYPE_HASH, signer_, hash_, expiration_, nonce_)));
     }
 
@@ -233,13 +253,19 @@ contract ServerAllocator is Ownable2Step, EIP712, IServerAllocator {
         return digest_.recover(signature_);
     }
 
-    function _validateNonceConsumption(NonceConsumption calldata data_, bytes calldata signature_) internal view returns (address) {
+    function _validateNonceConsumption(NonceConsumption calldata data_, bytes calldata signature_)
+        internal
+        view
+        returns (address)
+    {
         bytes32 message = _hashNonceConsumption(data_);
         return message.recover(signature_);
     }
 
     function _hashNonceConsumption(NonceConsumption calldata data_) internal view returns (bytes32) {
-        return _hashTypedDataV4(keccak256(abi.encode(_NONCE_CONSUMPTION_TYPE_HASH, data_.signer, data_.nonces, data_.attestations)));
+        return _hashTypedDataV4(
+            keccak256(abi.encode(_NONCE_CONSUMPTION_TYPE_HASH, data_.signer, data_.nonces, data_.attestations))
+        );
     }
 
     function _containsSigner(address signer_) internal view returns (bool) {

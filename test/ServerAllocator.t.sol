@@ -2,18 +2,20 @@
 
 pragma solidity ^0.8.27;
 
-import { Test } from "forge-std/Test.sol";
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { ServerAllocator } from "src/allocators/ServerAllocator.sol";
-import { IServerAllocator } from "src/interfaces/IServerAllocator.sol";
-import { Compact, COMPACT_TYPEHASH } from "@uniswap/the-compact/types/EIP712Types.sol";
-import { TheCompactMock } from "src/test/TheCompactMock.sol";
-import { ERC20Mock } from "src/test/ERC20Mock.sol";
-import { console } from "forge-std/console.sol";
-import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
+import {Ownable} from '@openzeppelin/contracts/access/Ownable.sol';
+
+import {IERC1271} from '@openzeppelin/contracts/interfaces/IERC1271.sol';
+import {COMPACT_TYPEHASH, Compact} from '@uniswap/the-compact/types/EIP712Types.sol';
+import {Test} from 'forge-std/Test.sol';
+
+import {console} from 'forge-std/console.sol';
+import {ServerAllocator} from 'src/allocators/ServerAllocator.sol';
+import {IServerAllocator} from 'src/interfaces/IServerAllocator.sol';
+import {ERC20Mock} from 'src/test/ERC20Mock.sol';
+import {TheCompactMock} from 'src/test/TheCompactMock.sol';
 
 abstract contract MocksSetup is Test {
-    address owner = makeAddr("owner");
+    address owner = makeAddr('owner');
     address signer;
     uint256 signerPK;
     address attacker;
@@ -24,12 +26,12 @@ abstract contract MocksSetup is Test {
     uint256 usdcId;
 
     function setUp() public virtual {
-        usdc = new ERC20Mock("USDC", "USDC");
+        usdc = new ERC20Mock('USDC', 'USDC');
         compactContract = new TheCompactMock();
         serverAllocator = new ServerAllocator(owner, address(compactContract));
         usdcId = compactContract.getTokenId(address(usdc), address(serverAllocator));
-        (signer, signerPK) = makeAddrAndKey("signer");
-        (attacker, attackerPK) = makeAddrAndKey("attacker");
+        (signer, signerPK) = makeAddrAndKey('signer');
+        (attacker, attackerPK) = makeAddrAndKey('attacker');
     }
 }
 
@@ -47,13 +49,14 @@ abstract contract CreateHash is Test {
     }
 
     // stringified types
-    string EIP712_DOMAIN_TYPE = "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"; // Hashed inside the funcion
+    string EIP712_DOMAIN_TYPE = 'EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)'; // Hashed inside the funcion
     // string ALLOCATOR_TYPE = "Allocator(bytes32 hash)"; // Hashed inside the funcion
-    string REGISTER_ATTESTATION_TYPE = "RegisterAttestation(address signer,bytes32 attestationHash,uint256 expiration,uint256 nonce)"; // Hashed inside the funcion
-    string NONCE_CONSUMPTION_TYPE = "NonceConsumption(address signer,uint256[] nonces,bytes32[] attestations)"; // Hashed inside the funcion
+    string REGISTER_ATTESTATION_TYPE =
+        'RegisterAttestation(address signer,bytes32 attestationHash,uint256 expiration,uint256 nonce)'; // Hashed inside the funcion
+    string NONCE_CONSUMPTION_TYPE = 'NonceConsumption(address signer,uint256[] nonces,bytes32[] attestations)'; // Hashed inside the funcion
     // EIP712 domain type
-    string name = "Allocator";
-    string version = "1";
+    string name = 'Allocator';
+    string version = '1';
 
     // function _hashAllocator(Allocator memory data, address verifyingContract) internal view returns (bytes32) {
     //     // hash typed data
@@ -70,36 +73,66 @@ abstract contract CreateHash is Test {
         // hash typed data
         return keccak256(
             abi.encodePacked(
-                "\x19\x01", // backslash is needed to escape the character
+                '\x19\x01', // backslash is needed to escape the character
                 _domainSeparator(verifyingContract),
-                keccak256(abi.encode(COMPACT_TYPEHASH, data.arbiter, data.sponsor, data.nonce, data.expires, data.id, data.amount))
+                keccak256(
+                    abi.encode(
+                        COMPACT_TYPEHASH, data.arbiter, data.sponsor, data.nonce, data.expires, data.id, data.amount
+                    )
+                )
             )
         );
     }
 
-    function _hashRegisterAttest(ServerAllocator.RegisterAttestation memory data, address verifyingContract) internal view returns (bytes32) {
+    function _hashRegisterAttest(ServerAllocator.RegisterAttestation memory data, address verifyingContract)
+        internal
+        view
+        returns (bytes32)
+    {
         return keccak256(
             abi.encodePacked(
-                "\x19\x01", // backslash is needed to escape the character
+                '\x19\x01', // backslash is needed to escape the character
                 _domainSeparator(verifyingContract),
-                keccak256(abi.encode(keccak256(bytes(REGISTER_ATTESTATION_TYPE)), data.signer, data.attestationHash, data.expiration, data.nonce))
+                keccak256(
+                    abi.encode(
+                        keccak256(bytes(REGISTER_ATTESTATION_TYPE)),
+                        data.signer,
+                        data.attestationHash,
+                        data.expiration,
+                        data.nonce
+                    )
+                )
             )
         );
     }
 
-    function _hashNonceConsumption(ServerAllocator.NonceConsumption memory data, address verifyingContract) internal view returns (bytes32) {
+    function _hashNonceConsumption(ServerAllocator.NonceConsumption memory data, address verifyingContract)
+        internal
+        view
+        returns (bytes32)
+    {
         // hash typed data
         return keccak256(
             abi.encodePacked(
-                "\x19\x01", // backslash is needed to escape the character
+                '\x19\x01', // backslash is needed to escape the character
                 _domainSeparator(verifyingContract),
-                keccak256(abi.encode(keccak256(bytes(NONCE_CONSUMPTION_TYPE)), data.signer, data.nonces, data.attestations))
+                keccak256(
+                    abi.encode(keccak256(bytes(NONCE_CONSUMPTION_TYPE)), data.signer, data.nonces, data.attestations)
+                )
             )
         );
     }
 
     function _domainSeparator(address verifyingContract) internal view returns (bytes32) {
-        return keccak256(abi.encode(keccak256(bytes(EIP712_DOMAIN_TYPE)), keccak256(bytes(name)), keccak256(bytes(version)), block.chainid, verifyingContract));
+        return keccak256(
+            abi.encode(
+                keccak256(bytes(EIP712_DOMAIN_TYPE)),
+                keccak256(bytes(name)),
+                keccak256(bytes(version)),
+                block.chainid,
+                verifyingContract
+            )
+        );
     }
 
     function _signMessage(bytes32 hash_, uint256 signerPK_) internal pure returns (bytes memory) {
@@ -233,7 +266,8 @@ contract ServerAllocator_Attest is SignerSet {
         bytes32 attest = createAttest(signer, usdcId, 100);
         uint256 expiration = vm.getBlockTimestamp() + 1 days;
 
-        IServerAllocator.RegisterAttestation memory attestData = IServerAllocator.RegisterAttestation(signer, attest, expiration, 0);
+        IServerAllocator.RegisterAttestation memory attestData =
+            IServerAllocator.RegisterAttestation(signer, attest, expiration, 0);
         bytes32 message = _hashRegisterAttest(attestData, address(serverAllocator));
         bytes memory signature = _signMessage(message, attackerPK);
 
@@ -246,7 +280,8 @@ contract ServerAllocator_Attest is SignerSet {
         bytes32 attest = createAttest(signer, usdcId, 100);
         uint256 expiration = vm.getBlockTimestamp() + 1 days;
 
-        IServerAllocator.RegisterAttestation memory attestData = IServerAllocator.RegisterAttestation(signer, attest, expiration, 0);
+        IServerAllocator.RegisterAttestation memory attestData =
+            IServerAllocator.RegisterAttestation(signer, attest, expiration, 0);
         bytes32 message = _hashRegisterAttest(attestData, address(serverAllocator));
         bytes memory signature = _signMessage(message, signerPK);
 
@@ -260,7 +295,8 @@ contract ServerAllocator_Attest is SignerSet {
         bytes32 attest = createAttest(signer, usdcId, 100);
         uint256 expiration = vm.getBlockTimestamp() + 1 days;
 
-        IServerAllocator.RegisterAttestation memory attestData = IServerAllocator.RegisterAttestation(signer, attest, expiration, 0);
+        IServerAllocator.RegisterAttestation memory attestData =
+            IServerAllocator.RegisterAttestation(signer, attest, expiration, 0);
         bytes32 message = _hashRegisterAttest(attestData, address(serverAllocator));
         bytes memory signature = _signMessage(message, signerPK);
 
@@ -300,13 +336,21 @@ contract ServerAllocator_Attest is SignerSet {
         vm.assume(caller_ != address(compactContract));
 
         vm.prank(caller_);
-        vm.expectRevert(abi.encodeWithSelector(IServerAllocator.InvalidCaller.selector, caller_, address(compactContract)));
+        vm.expectRevert(
+            abi.encodeWithSelector(IServerAllocator.InvalidCaller.selector, caller_, address(compactContract))
+        );
         serverAllocator.attest(caller_, signer, attacker, usdcId, 100);
     }
 
-    function test_fuzz_attest_notRegistered(address operator_, address from_, address to_, uint256 id_, uint256 amount_) public {
+    function test_fuzz_attest_notRegistered(address operator_, address from_, address to_, uint256 id_, uint256 amount_)
+        public
+    {
         vm.prank(address(compactContract));
-        vm.expectRevert(abi.encodeWithSelector(IServerAllocator.UnregisteredAttestation.selector, keccak256(abi.encode(from_, id_, amount_))));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IServerAllocator.UnregisteredAttestation.selector, keccak256(abi.encode(from_, id_, amount_))
+            )
+        );
         serverAllocator.attest(operator_, from_, to_, id_, amount_);
     }
 
@@ -325,10 +369,12 @@ contract ServerAllocator_Attest is SignerSet {
         // check attest
         vm.prank(address(compactContract));
         vm.expectRevert(abi.encodeWithSelector(IServerAllocator.ExpiredAttestations.selector, attest));
-        serverAllocator.attest(signer, attacker, makeAddr("to"), usdcId, amount_);
+        serverAllocator.attest(signer, attacker, makeAddr('to'), usdcId, amount_);
     }
 
-    function test_fuzz_attest_successful(address operator_, address from_, address to_, uint256 id_, uint256 amount_) public {
+    function test_fuzz_attest_successful(address operator_, address from_, address to_, uint256 id_, uint256 amount_)
+        public
+    {
         bytes32 attest = createAttest(from_, id_, amount_);
         uint256 expiration = vm.getBlockTimestamp();
 
@@ -424,21 +470,29 @@ contract ServerAllocator_Consume is SignerSet {
     }
 
     function test_consumeViaSignature_requiresNoncesAndAttestsToBeOfSameLength() public {
-        bytes32 message = _hashNonceConsumption(IServerAllocator.NonceConsumption(signer, new uint256[](0), new bytes32[](1)), address(serverAllocator));
+        bytes32 message = _hashNonceConsumption(
+            IServerAllocator.NonceConsumption(signer, new uint256[](0), new bytes32[](1)), address(serverAllocator)
+        );
         bytes memory signature = _signMessage(message, signerPK);
 
         vm.prank(signer);
         vm.expectRevert(abi.encodeWithSelector(IServerAllocator.InvalidInput.selector));
-        serverAllocator.consumeViaSignature(IServerAllocator.NonceConsumption(signer, new uint256[](0), new bytes32[](1)), signature);
+        serverAllocator.consumeViaSignature(
+            IServerAllocator.NonceConsumption(signer, new uint256[](0), new bytes32[](1)), signature
+        );
     }
 
     function test_consumeViaSignature_requireValidSignature() public {
-        bytes32 message = _hashNonceConsumption(IServerAllocator.NonceConsumption(signer, new uint256[](1), new bytes32[](1)), address(serverAllocator));
+        bytes32 message = _hashNonceConsumption(
+            IServerAllocator.NonceConsumption(signer, new uint256[](1), new bytes32[](1)), address(serverAllocator)
+        );
         bytes memory signature = _signMessage(message, attackerPK);
 
         vm.prank(signer);
         vm.expectRevert(abi.encodeWithSelector(IServerAllocator.InvalidSignature.selector, signature, attacker));
-        serverAllocator.consumeViaSignature(IServerAllocator.NonceConsumption(signer, new uint256[](1), new bytes32[](1)), signature);
+        serverAllocator.consumeViaSignature(
+            IServerAllocator.NonceConsumption(signer, new uint256[](1), new bytes32[](1)), signature
+        );
     }
 
     function test_consumeViaSignature_successfulWithoutAttests() public {
@@ -447,13 +501,17 @@ contract ServerAllocator_Consume is SignerSet {
         nonces[1] = 2;
         nonces[2] = 3;
 
-        bytes32 message = _hashNonceConsumption(IServerAllocator.NonceConsumption(signer, nonces, new bytes32[](3)), address(serverAllocator));
+        bytes32 message = _hashNonceConsumption(
+            IServerAllocator.NonceConsumption(signer, nonces, new bytes32[](3)), address(serverAllocator)
+        );
         bytes memory signature = _signMessage(message, signerPK);
 
         vm.prank(attacker);
         vm.expectEmit(address(serverAllocator));
         emit IServerAllocator.NoncesConsumed(nonces);
-        serverAllocator.consumeViaSignature(IServerAllocator.NonceConsumption(signer, nonces, new bytes32[](3)), signature);
+        serverAllocator.consumeViaSignature(
+            IServerAllocator.NonceConsumption(signer, nonces, new bytes32[](3)), signature
+        );
     }
 
     function test_consumeViaSignature_successfulWithAttests() public {
@@ -478,7 +536,8 @@ contract ServerAllocator_Consume is SignerSet {
         assertEq(serverAllocator.checkAttestationExpirations(attests[1])[0], vm.getBlockTimestamp());
         assertEq(serverAllocator.checkAttestationExpirations(attests[2])[0], vm.getBlockTimestamp());
 
-        bytes32 message = _hashNonceConsumption(IServerAllocator.NonceConsumption(signer, nonces, attests), address(serverAllocator));
+        bytes32 message =
+            _hashNonceConsumption(IServerAllocator.NonceConsumption(signer, nonces, attests), address(serverAllocator));
         bytes memory signature = _signMessage(message, signerPK);
 
         vm.prank(attacker);
@@ -503,7 +562,8 @@ contract ServerAllocator_Consume is SignerSet {
 
 contract ServerAllocator_isValidSignature is SignerSet {
     function test_isValidSignature_revertInvalidSig() public {
-        bytes32 message = _hashCompact(Compact(signer, signer, 0, vm.getBlockTimestamp(), usdcId, 100), address(serverAllocator));
+        bytes32 message =
+            _hashCompact(Compact(signer, signer, 0, vm.getBlockTimestamp(), usdcId, 100), address(serverAllocator));
         bytes memory signature = _signMessage(message, attackerPK);
 
         vm.prank(attacker);
@@ -512,7 +572,8 @@ contract ServerAllocator_isValidSignature is SignerSet {
     }
 
     function test_isValidSignature_successful() public {
-        bytes32 message = _hashCompact(Compact(signer, signer, 0, vm.getBlockTimestamp(), usdcId, 100), address(serverAllocator));
+        bytes32 message =
+            _hashCompact(Compact(signer, signer, 0, vm.getBlockTimestamp(), usdcId, 100), address(serverAllocator));
         bytes memory signature = _signMessage(message, signerPK);
 
         vm.prank(attacker);
