@@ -5,7 +5,7 @@ libs = ["lib"]
 optimizer = true
 optimizer_runs = 999999
 via_ir = true
-solc = "0.8.27"
+solc = "0.8.28"
 verbosity = 2
 ffi = true
 evm_version = "cancun"
@@ -13,7 +13,6 @@ fs_permissions = [
   { access = "read-write", path = ".forge-snapshots"},
   { access = "read", path = "script/" }
 ]
-
 remappings = [
   "forge-std=lib/forge-std/src",
   "@openzeppelin/contracts=lib/openzeppelin-contracts/contracts",
@@ -21,6 +20,16 @@ remappings = [
   "@uniswap/the-compact=lib/the-compact/src",
   "@solady=lib/solady/src",
 ]
+
+[profile.ci]
+inherit = "default"
+optimizer_runs = 200  # Override optimizer runs to reduce the compact contract sizes
+bytecode_hash = 'none'
+
+[profile.pr]
+inherit = "default"
+optimizer_runs = 200  # Override optimizer runs to reduce the compact contract sizes
+bytecode_hash = 'none'
 
 [profile.default.fuzz]
 runs = 1000
