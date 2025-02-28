@@ -917,7 +917,10 @@ contract ERC7683Allocator_resolve is OnChainCrossChainOrderData {
 
 contract ERC7683Allocator_getCompactWitnessTypeString is MocksSetup {
     function test_getCompactWitnessTypeString() public view {
-        assertEq(erc7683Allocator.getCompactWitnessTypeString(), "Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt))");
+        assertEq(
+            erc7683Allocator.getCompactWitnessTypeString(),
+            'Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt))'
+        );
     }
 }
 
@@ -964,7 +967,6 @@ contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData, CreateHash {
         (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
         vm.prank(user);
         erc7683Allocator.open(onChainCrossChainOrder_);
-
 
         vm.prank(user);
         vm.assertEq(erc7683Allocator.checkNonce(user, defaultNonce), false);
