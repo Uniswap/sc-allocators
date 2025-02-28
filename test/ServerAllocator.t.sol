@@ -244,7 +244,7 @@ contract ServerAllocator_Attest is SignerSet {
     function test_fuzz_registerAttest_attestExpired(uint256 expiration_) public {
         uint256 targetTime = vm.getBlockTimestamp() + 100;
         vm.warp(targetTime);
-        vm.assume(expiration_ < targetTime);
+        expiration_ = bound(expiration_, 0, targetTime - 1);
 
         vm.prank(signer);
         vm.expectRevert(abi.encodeWithSelector(IServerAllocator.Expired.selector, expiration_, vm.getBlockTimestamp()));

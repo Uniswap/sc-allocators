@@ -174,7 +174,7 @@ contract SimpleAllocator_Lock is MocksSetup {
     }
 
     function test_revert_InvalidExpiration_tooShort(uint128 delay_) public {
-        vm.assume(delay_ < simpleAllocator.MIN_WITHDRAWAL_DELAY());
+        delay_ = uint128(bound(delay_, 0, simpleAllocator.MIN_WITHDRAWAL_DELAY() - 1));
         uint256 expiration = vm.getBlockTimestamp() + delay_;
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(ISimpleAllocator.InvalidExpiration.selector, expiration));
@@ -208,9 +208,16 @@ contract SimpleAllocator_Lock is MocksSetup {
     }
 
     function test_revert_ForceWithdrawalAvailable_ExpirationLongerThenResetPeriod(uint8 delay_) public {
-        vm.assume(delay_ > simpleAllocator.MIN_WITHDRAWAL_DELAY());
-        vm.assume(delay_ < simpleAllocator.MAX_WITHDRAWAL_DELAY());
-        vm.assume(delay_ > defaultResetPeriod);
+        // Use bound to ensure delay_ is within valid range but greater than resetPeriod
+        delay_ = uint8(
+            bound(
+                delay_,
+                simpleAllocator.MIN_WITHDRAWAL_DELAY() > defaultResetPeriod
+                    ? simpleAllocator.MIN_WITHDRAWAL_DELAY() + 1
+                    : defaultResetPeriod + 1,
+                simpleAllocator.MAX_WITHDRAWAL_DELAY() - 1
+            )
+        );
 
         uint256 expiration = vm.getBlockTimestamp() + delay_;
         uint256 maxExpiration = vm.getBlockTimestamp() + defaultResetPeriod;
@@ -319,9 +326,15 @@ contract SimpleAllocator_Lock is MocksSetup {
     }
 
     function test_successfullyLocked(uint256 nonce_, uint128 amount_, uint32 delay_) public {
-        vm.assume(delay_ > simpleAllocator.MIN_WITHDRAWAL_DELAY());
-        vm.assume(delay_ < simpleAllocator.MAX_WITHDRAWAL_DELAY());
-        vm.assume(delay_ <= defaultResetPeriod);
+        delay_ = uint32(
+            bound(
+                delay_,
+                simpleAllocator.MIN_WITHDRAWAL_DELAY() + 1,
+                defaultResetPeriod < simpleAllocator.MAX_WITHDRAWAL_DELAY()
+                    ? defaultResetPeriod
+                    : simpleAllocator.MAX_WITHDRAWAL_DELAY() - 1
+            )
+        );
 
         vm.startPrank(user);
 
@@ -356,9 +369,15 @@ contract SimpleAllocator_Lock is MocksSetup {
         uint128 amount_,
         uint32 delay_
     ) public {
-        vm.assume(delay_ > simpleAllocator.MIN_WITHDRAWAL_DELAY());
-        vm.assume(delay_ < simpleAllocator.MAX_WITHDRAWAL_DELAY());
-        vm.assume(delay_ <= defaultResetPeriod);
+        delay_ = uint32(
+            bound(
+                delay_,
+                simpleAllocator.MIN_WITHDRAWAL_DELAY() + 1,
+                defaultResetPeriod < simpleAllocator.MAX_WITHDRAWAL_DELAY()
+                    ? defaultResetPeriod
+                    : simpleAllocator.MAX_WITHDRAWAL_DELAY() - 1
+            )
+        );
         vm.assume(noncePrev_ != nonce_);
 
         vm.startPrank(user);
@@ -474,7 +493,8 @@ contract SimpleAllocator_Attest is Deposited {
     }
 
     function test_successfullyAttested(uint32 lockedAmount_, uint32 transferAmount_) public {
-        vm.assume(uint256(transferAmount_) + uint256(lockedAmount_) <= defaultAmount);
+        transferAmount_ = uint32(bound(transferAmount_, 0, defaultAmount));
+        lockedAmount_ = uint32(bound(lockedAmount_, 0, defaultAmount - transferAmount_));
 
         address otherUser = makeAddr('otherUser');
 
