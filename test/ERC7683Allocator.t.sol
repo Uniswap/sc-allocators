@@ -89,6 +89,8 @@ abstract contract CreateHash is Test {
 
     string compactWitnessTypeString =
         'Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt)';
+    string mandateTypeString =
+        'Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt)';
     string witnessTypeString =
         'Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt)';
 
@@ -118,7 +120,7 @@ abstract contract CreateHash is Test {
                 data.expires,
                 data.id,
                 data.amount,
-                keccak256(abi.encode(mandate))
+                keccak256(abi.encode(keccak256(bytes(mandateTypeString)), mandate))
             )
         );
     }
@@ -709,7 +711,7 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Create
             sponsor: user,
             nonce: defaultNonce,
             expires: compact_.expires,
-            witness: keccak256(abi.encode(mandate_)),
+            witness: keccak256(abi.encode(keccak256(bytes(mandateTypeString)), mandate_)),
             witnessTypestring: witnessTypeString,
             id: usdcId,
             allocatedAmount: defaultAmount,
@@ -757,7 +759,7 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Create
             sponsor: user,
             nonce: defaultNonce,
             expires: compact_.expires,
-            witness: keccak256(abi.encode(mandate_)),
+            witness: keccak256(abi.encode(keccak256(bytes(mandateTypeString)), mandate_)),
             witnessTypestring: witnessTypeString,
             id: usdcId,
             allocatedAmount: defaultAmount,
