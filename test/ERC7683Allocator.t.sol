@@ -76,7 +76,7 @@ abstract contract MocksSetup is Test {
     }
 }
 
-abstract contract CreateHash is Test {
+abstract contract CreateHash is MocksSetup {
     struct Allocator {
         bytes32 hash;
     }
@@ -120,7 +120,7 @@ abstract contract CreateHash is Test {
                 data.expires,
                 data.id,
                 data.amount,
-                keccak256(abi.encode(keccak256(bytes(mandateTypeString)), mandate))
+                keccak256(abi.encode(keccak256(bytes(mandateTypeString)), defaultOutputChainId, tribunal, mandate))
             )
         );
     }
@@ -157,7 +157,7 @@ abstract contract CreateHash is Test {
     }
 }
 
-abstract contract CompactData is MocksSetup {
+abstract contract CompactData is CreateHash {
     Compact private compact;
     Mandate private mandate;
 
@@ -174,8 +174,6 @@ abstract contract CompactData is MocksSetup {
         });
 
         mandate = Mandate({
-            chainId: defaultOutputChainId,
-            tribunal: tribunal,
             recipient: user,
             expires: _getFillExpiration(),
             token: defaultOutputToken,
@@ -205,7 +203,7 @@ abstract contract CompactData is MocksSetup {
     }
 }
 
-abstract contract GaslessCrossChainOrderData is CompactData, CreateHash {
+abstract contract GaslessCrossChainOrderData is CompactData {
     IOriginSettler.GaslessCrossChainOrder private gaslessCrossChainOrder;
 
     function setUp() public virtual override {
@@ -226,8 +224,8 @@ abstract contract GaslessCrossChainOrderData is CompactData, CreateHash {
                 compact_.arbiter,
                 compact_.id,
                 compact_.amount,
-                mandate_.chainId,
-                mandate_.tribunal,
+                defaultOutputChainId,
+                tribunal,
                 mandate_.recipient,
                 mandate_.token,
                 mandate_.minimumAmount,
@@ -259,8 +257,8 @@ abstract contract GaslessCrossChainOrderData is CompactData, CreateHash {
                 compact_.arbiter,
                 compact_.id,
                 compact_.amount,
-                mandate_.chainId,
-                mandate_.tribunal,
+                defaultOutputChainId,
+                tribunal,
                 mandate_.recipient,
                 mandate_.token,
                 mandate_.minimumAmount,
@@ -302,8 +300,8 @@ abstract contract OnChainCrossChainOrderData is CompactData {
                 compact_.expires,
                 compact_.id,
                 compact_.amount,
-                mandate_.chainId,
-                mandate_.tribunal,
+                defaultOutputChainId,
+                tribunal,
                 mandate_.recipient,
                 mandate_.token,
                 mandate_.minimumAmount,
@@ -320,7 +318,7 @@ abstract contract OnChainCrossChainOrderData is CompactData {
 
     function _getOnChainCrossChainOrder(Compact memory compact_, Mandate memory mandate_, bytes32 orderDataType_)
         internal
-        pure
+        view
         returns (IOriginSettler.OnchainCrossChainOrder memory)
     {
         IOriginSettler.OnchainCrossChainOrder memory onchainCrossChainOrder_ = IOriginSettler.OnchainCrossChainOrder({
@@ -333,8 +331,8 @@ abstract contract OnChainCrossChainOrderData is CompactData {
                 compact_.expires,
                 compact_.id,
                 compact_.amount,
-                mandate_.chainId,
-                mandate_.tribunal,
+                defaultOutputChainId,
+                tribunal,
                 mandate_.recipient,
                 mandate_.token,
                 mandate_.minimumAmount,
@@ -543,7 +541,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
     }
 }
 
-contract ERC7683Allocator_open is OnChainCrossChainOrderData, CreateHash {
+contract ERC7683Allocator_open is OnChainCrossChainOrderData {
     function test_revert_InvalidOrderDataType() public {
         // Order data type is invalid
         bytes32 falseOrderDataType = keccak256('false');
@@ -678,7 +676,7 @@ contract ERC7683Allocator_open is OnChainCrossChainOrderData, CreateHash {
     }
 }
 
-contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, CreateHash {
+contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData {
     function test_revert_InvalidLock() public {
         // Deposit tokens
         vm.startPrank(user);
@@ -759,7 +757,7 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Create
             sponsor: user,
             nonce: defaultNonce,
             expires: compact_.expires,
-            witness: keccak256(abi.encode(keccak256(bytes(mandateTypeString)), mandate_)),
+            witness: keccak256(abi.encode(keccak256(bytes(mandateTypeString)), defaultOutputChainId, tribunal, mandate_)),
             witnessTypestring: witnessTypeString,
             id: usdcId,
             allocatedAmount: defaultAmount,
@@ -926,7 +924,7 @@ contract ERC7683Allocator_getCompactWitnessTypeString is MocksSetup {
     }
 }
 
-contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData, CreateHash {
+contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
     function test_revert_checkNonce(uint256 nonce_) public {
         address expectedSponsor;
         assembly ("memory-safe") {

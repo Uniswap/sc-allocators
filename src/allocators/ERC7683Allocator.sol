@@ -216,8 +216,6 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         FillInstruction[] memory fillInstructions = new FillInstruction[](1);
 
         Mandate memory mandate = Mandate({
-            chainId: orderData.chainId,
-            tribunal: orderData.tribunal,
             recipient: orderData.recipient,
             expires: fillDeadline,
             token: orderData.token,
