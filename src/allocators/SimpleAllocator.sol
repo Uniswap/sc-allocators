@@ -86,7 +86,7 @@ contract SimpleAllocator is ISimpleAllocator {
             revert InsufficientBalance(from_, id_, balance, fullAmount);
         }
 
-        return 0x1a808f91;
+        return this.attest.selector;
     }
 
     /// @inheritdoc IERC1271
