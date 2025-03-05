@@ -276,11 +276,11 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
     }
 
     function _checkNonce(address sponsor_, uint256 nonce_) internal pure {
-        // Enforce a nonce where the most significant 96 bits are the nonce and the least significant 160 bits are the sponsor
+        // Enforce a nonce where the least significant 96 bits are the nonce and the most significant 160 bits are the sponsors address
         // This ensures that the nonce is unique for a given sponsor
         address expectedSponsor;
         assembly ("memory-safe") {
-            expectedSponsor := shr(96, shl(96, nonce_))
+            expectedSponsor := shr(96, nonce_)
         }
         if (expectedSponsor != sponsor_) {
             revert InvalidNonce(nonce_);

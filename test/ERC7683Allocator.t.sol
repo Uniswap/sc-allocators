@@ -69,7 +69,7 @@ abstract contract MocksSetup is Test {
         });
         usdcId = IdLib.toId(lock);
         (attacker, attackerPK) = makeAddrAndKey('attacker');
-        defaultNonce = uint256(bytes32(abi.encodePacked(uint96(1), user)));
+        defaultNonce = uint256(bytes32(abi.encodePacked(user, uint96(1))));
 
         ORDERDATA_GASLESS_TYPEHASH = erc7683Allocator.ORDERDATA_GASLESS_TYPEHASH();
         ORDERDATA_TYPEHASH = erc7683Allocator.ORDERDATA_TYPEHASH();
@@ -940,7 +940,7 @@ contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
         address sponsor = user;
         uint256 nonce;
         assembly ("memory-safe") {
-            nonce := or(shl(160, nonce_), shr(96, shl(96, sponsor)))
+            nonce := or(shl(96, sponsor), shr(160, shl(160, nonce_)))
         }
         assertEq(erc7683Allocator.checkNonce(sponsor, nonce), true);
     }
