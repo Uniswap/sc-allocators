@@ -67,17 +67,9 @@ contract SimpleAllocator is ISimpleAllocator {
     }
 
     /// @inheritdoc IAllocator
-    function attest(address operator_, address from_, address, uint256 id_, uint256 amount_)
-        external
-        view
-        returns (bytes4)
-    {
+    function attest(address, address from_, address, uint256 id_, uint256 amount_) external view returns (bytes4) {
         if (msg.sender != COMPACT_CONTRACT) {
             revert InvalidCaller(msg.sender, COMPACT_CONTRACT);
-        }
-        // For a transfer, the sponsor is the arbiter
-        if (operator_ != from_) {
-            revert InvalidCaller(operator_, from_);
         }
         uint256 balance = ERC6909(COMPACT_CONTRACT).balanceOf(from_, id_);
         // Check unlocked balance

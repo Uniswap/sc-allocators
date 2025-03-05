@@ -447,12 +447,6 @@ contract SimpleAllocator_Attest is Deposited {
         simpleAllocator.attest(address(user), address(user), address(usdc), usdcId, defaultAmount);
     }
 
-    function test_revert_InvalidCaller_FromNotOperator() public {
-        vm.prank(attacker);
-        vm.expectRevert(abi.encodeWithSelector(ISimpleAllocator.InvalidCaller.selector, attacker, user));
-        compactContract.transfer(user, attacker, defaultAmount, address(usdc), address(simpleAllocator));
-    }
-
     function test_revert_InsufficientBalance_NoActiveLock(uint128 falseAmount_) public {
         vm.assume(falseAmount_ > defaultAmount);
 
