@@ -925,10 +925,10 @@ contract ERC7683Allocator_getCompactWitnessTypeString is MocksSetup {
 }
 
 contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
-    function test_revert_checkNonce(uint256 nonce_) public {
+    function test_revert_invalidNonce(uint256 nonce_) public {
         address expectedSponsor;
         assembly ("memory-safe") {
-            expectedSponsor := shr(96, shl(96, nonce_))
+            expectedSponsor := shr(96, nonce_)
         }
         vm.assume(user != expectedSponsor);
 
@@ -962,13 +962,39 @@ contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
         bytes32 typeHash = _getTypeHash();
         compactContract.register(claimHash, typeHash, defaultResetPeriodTimestamp);
 
-        vm.stopPrank();
-
         (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
-        vm.prank(user);
         erc7683Allocator.open(onChainCrossChainOrder_);
 
-        vm.prank(user);
         vm.assertEq(erc7683Allocator.checkNonce(user, defaultNonce), false);
+        vm.stopPrank();
+    }
+
+    function test_checkNonce_fuzz(uint8 nonce_) public {
+        uint256 nonce = uint256(bytes32(abi.encodePacked(user, uint96(nonce_))));
+
+        bool sameNonce = nonce == defaultNonce;
+
+        // Deposit tokens
+        vm.startPrank(user);
+        usdc.mint(user, defaultAmount);
+        usdc.approve(address(compactContract), defaultAmount);
+        compactContract.deposit(
+            address(usdc), address(erc7683Allocator), defaultResetPeriod, defaultScope, defaultAmount, user
+        );
+
+        // register a claim
+        Compact memory compact_ = _getCompact();
+        Mandate memory mandate_ = _getMandate();
+
+        bytes32 claimHash = _hashCompact(compact_, mandate_);
+        bytes32 typeHash = _getTypeHash();
+        compactContract.register(claimHash, typeHash, defaultResetPeriodTimestamp);
+
+        (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
+        erc7683Allocator.open(onChainCrossChainOrder_);
+
+        vm.assertEq(erc7683Allocator.checkNonce(user, nonce), !sameNonce);
+
+        vm.stopPrank();
     }
 }

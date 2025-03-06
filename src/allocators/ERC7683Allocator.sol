@@ -29,9 +29,10 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
     /// @notice keccak256("Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt)")
     bytes32 internal constant MANDATE_TYPEHASH = 0x52c75464356e20084ae43acac75087fbf0e0c678e7ffa326f369f37e88696036;
 
-    bytes32 immutable _COMPACT_DOMAIN_SEPARATOR;
+    /// @notice uint256(uint8(keccak256("ERC7683Allocator.nonce")))
+    uint8 internal constant NONCE_MASTER_SLOT_SEED = 0x39;
 
-    mapping(uint256 nonce => bool nonceUsed) private _userNonce;
+    bytes32 immutable _COMPACT_DOMAIN_SEPARATOR;
 
     constructor(address compactContract_, uint256 minWithdrawalDelay_, uint256 maxWithdrawalDelay_)
         SimpleAllocator(compactContract_, minWithdrawalDelay_, maxWithdrawalDelay_)
@@ -105,8 +106,13 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
 
     /// @inheritdoc IERC7683Allocator
     function checkNonce(address sponsor_, uint256 nonce_) external view returns (bool nonceFree_) {
-        _checkNonce(sponsor_, nonce_);
-        nonceFree_ = !_userNonce[nonce_];
+        uint96 nonceWithoutAddress = _checkNonce(sponsor_, nonce_);
+        uint96 wordPos = uint96(nonceWithoutAddress / 256);
+        uint96 bitPos = uint96(nonceWithoutAddress % 256);
+        assembly ("memory-safe") {
+            let masterSlot := or(shl(248, NONCE_MASTER_SLOT_SEED), or(shl(88, sponsor_), wordPos))
+            nonceFree_ := iszero(and(sload(masterSlot), shl(bitPos, 1)))
+        }
         return nonceFree_;
     }
 
@@ -114,13 +120,10 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         internal
     {
         // Enforce a nonce where the most significant 96 bits are the nonce and the least significant 160 bits are the sponsor
-        _checkNonce(sponsor_, orderData_.nonce);
+        uint96 nonceWithoutAddress = _checkNonce(sponsor_, orderData_.nonce);
 
-        // Check the nonce
-        if (_userNonce[orderData_.nonce]) {
-            revert NonceAlreadyInUse(orderData_.nonce);
-        }
-        _userNonce[orderData_.nonce] = true;
+        // Set a nonce or revert if it is already used
+        _setNonce(sponsor_, nonceWithoutAddress);
 
         // We do not enforce a specific tribunal or arbiter. This will allow to support new arbiters and tribunals after the deployment of the allocator
         // Going with an immutable arbiter and tribunal would limit support for new chains with a fully decentralized allocator
@@ -180,28 +183,23 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         );
     }
 
-    function _lockTokens(OrderData memory orderData_, address sponsor_, uint256 identifier)
+    function _lockTokens(OrderData memory orderData_, address sponsor_, uint256 nonce)
         internal
         returns (bytes32 tokenHash_)
     {
-        return
-            _lockTokens(orderData_.arbiter, sponsor_, identifier, orderData_.expires, orderData_.id, orderData_.amount);
+        return _lockTokens(orderData_.arbiter, sponsor_, nonce, orderData_.expires, orderData_.id, orderData_.amount);
     }
 
-    function _lockTokens(
-        address arbiter,
-        address sponsor,
-        uint256 identifier,
-        uint256 expires,
-        uint256 id,
-        uint256 amount
-    ) internal returns (bytes32 tokenHash_) {
+    function _lockTokens(address arbiter, address sponsor, uint256 nonce, uint256 expires, uint256 id, uint256 amount)
+        internal
+        returns (bytes32 tokenHash_)
+    {
         tokenHash_ = _checkAllocation(
-            Compact({arbiter: arbiter, sponsor: sponsor, nonce: identifier, expires: expires, id: id, amount: amount})
+            Compact({arbiter: arbiter, sponsor: sponsor, nonce: nonce, expires: expires, id: id, amount: amount})
         );
         _claim[tokenHash_] = expires;
         _amount[tokenHash_] = amount;
-        _nonce[tokenHash_] = identifier;
+        _nonce[tokenHash_] = nonce;
 
         return tokenHash_;
     }
@@ -209,7 +207,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
     function _resolveOrder(
         address sponsor,
         uint32 fillDeadline,
-        uint256 identifier,
+        uint256 nonce,
         OrderData memory orderData,
         bytes memory sponsorSignature
     ) internal view returns (ResolvedCrossChainOrder memory) {
@@ -267,7 +265,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
             originChainId: block.chainid,
             openDeadline: uint32(orderData.expires),
             fillDeadline: fillDeadline,
-            orderId: bytes32(identifier),
+            orderId: bytes32(nonce),
             maxSpent: maxSpent,
             minReceived: minReceived,
             fillInstructions: fillInstructions
@@ -275,15 +273,35 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         return resolvedOrder;
     }
 
-    function _checkNonce(address sponsor_, uint256 nonce_) internal pure {
+    function _checkNonce(address sponsor_, uint256 nonce_) internal pure returns (uint96 nonce) {
         // Enforce a nonce where the least significant 96 bits are the nonce and the most significant 160 bits are the sponsors address
         // This ensures that the nonce is unique for a given sponsor
         address expectedSponsor;
         assembly ("memory-safe") {
             expectedSponsor := shr(96, nonce_)
+            nonce := shr(160, shl(160, nonce_))
         }
         if (expectedSponsor != sponsor_) {
             revert InvalidNonce(nonce_);
+        }
+    }
+
+    function _setNonce(address sponsor_, uint96 nonce_) internal {
+        bool used;
+        uint96 wordPos = nonce_ / 256; // uint96 divided by 256 means it becomes a uint88 (11 bytes)
+        uint96 bitPos = nonce_ % 256;
+        assembly ("memory-safe") {
+            // [NONCE_MASTER_SLOT_SEED - 1 byte][sponsor address - 20 bytes][wordPos - 11 bytes]
+            let masterSlot := or(shl(248, NONCE_MASTER_SLOT_SEED), or(shl(88, sponsor_), wordPos))
+            let previouslyUsedNonces := sload(masterSlot)
+            if and(previouslyUsedNonces, shl(bitPos, 1)) { used := 1 }
+            {
+                let usedNonces := or(previouslyUsedNonces, shl(bitPos, 1))
+                sstore(masterSlot, usedNonces)
+            }
+        }
+        if (used) {
+            revert NonceAlreadyInUse(uint256(bytes32(abi.encodePacked(sponsor_, nonce_))));
         }
     }
 
