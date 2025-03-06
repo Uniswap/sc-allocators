@@ -2,14 +2,14 @@
 
 pragma solidity ^0.8.27;
 
-import { IAllocator } from "src/interfaces/IAllocator.sol";
-import { ERC6909 } from "@solady/tokens/ERC6909.sol";
-import { ERC20 } from "@solady/tokens/ERC20.sol";
-import { IdLib } from "@uniswap/the-compact/lib/IdLib.sol";
-import { ForcedWithdrawalStatus } from "@uniswap/the-compact/types/ForcedWithdrawalStatus.sol";
-import { ResetPeriod } from "@uniswap/the-compact/types/ResetPeriod.sol";
-import { Scope } from "@uniswap/the-compact/types/Scope.sol";
-import { console2 } from "forge-std/console2.sol";
+import {ERC20} from '@solady/tokens/ERC20.sol';
+import {ERC6909} from '@solady/tokens/ERC6909.sol';
+import {IdLib} from '@uniswap/the-compact/lib/IdLib.sol';
+import {ForcedWithdrawalStatus} from '@uniswap/the-compact/types/ForcedWithdrawalStatus.sol';
+import {ResetPeriod} from '@uniswap/the-compact/types/ResetPeriod.sol';
+import {Scope} from '@uniswap/the-compact/types/Scope.sol';
+import {console2} from 'forge-std/console2.sol';
+import {IAllocator} from 'src/interfaces/IAllocator.sol';
 
 contract TheCompactMock is ERC6909 {
     using IdLib for uint96;
@@ -34,7 +34,7 @@ contract TheCompactMock is ERC6909 {
         return 0;
     }
 
-    function deposit(address token, uint256 amount, address allocator) external {
+    function deposit(address token, address allocator, uint256 amount) external {
         ERC20(token).transferFrom(msg.sender, address(this), amount);
         uint256 id = _getTokenId(token, allocator);
         tokens[id] = token;
@@ -47,7 +47,9 @@ contract TheCompactMock is ERC6909 {
         _transfer(address(0), from, to, id, amount);
     }
 
-    function claim(address from, address to, address token, uint256 amount, address allocator, bytes calldata signature) external {
+    function claim(address from, address to, address token, uint256 amount, address allocator, bytes calldata signature)
+        external
+    {
         uint256 id = _getTokenId(token, allocator);
         IAllocator(allocator).isValidSignature(keccak256(abi.encode(from, id, amount)), signature);
         _transfer(address(0), from, to, id, amount);
@@ -85,7 +87,11 @@ contract TheCompactMock is ERC6909 {
         return true;
     }
 
-    function getForcedWithdrawalStatus(address sponsor, uint256) external view returns (ForcedWithdrawalStatus, uint256) {
+    function getForcedWithdrawalStatus(address sponsor, uint256)
+        external
+        view
+        returns (ForcedWithdrawalStatus, uint256)
+    {
         uint256 expires = forcedWithdrawalStatus[sponsor];
         return (expires == 0 ? ForcedWithdrawalStatus.Disabled : ForcedWithdrawalStatus.Enabled, expires);
     }
@@ -99,8 +105,8 @@ contract TheCompactMock is ERC6909 {
             abi.encode(
                 // keccak256('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)')
                 0x8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f,
-                keccak256("The Compact"),
-                keccak256("0"),
+                keccak256('The Compact'),
+                keccak256('0'),
                 block.chainid,
                 address(this)
             )
@@ -110,22 +116,25 @@ contract TheCompactMock is ERC6909 {
     function name(
         uint256 // id
     ) public view virtual override returns (string memory) {
-        return "TheCompactMock";
+        return 'TheCompactMock';
     }
 
     function symbol(
         uint256 // id
     ) public view virtual override returns (string memory) {
-        return "TCM";
+        return 'TCM';
     }
 
     function tokenURI(
         uint256 // id
     ) public view virtual override returns (string memory) {
-        return "";
+        return '';
     }
 
-    function _getTokenId(address token, address allocator) internal pure returns (uint256) {
-        return uint256(keccak256(abi.encode(token, allocator)));
+    function _getTokenId(address token, address allocator) internal pure returns (uint256 tokenId) {
+        assembly ("memory-safe") {
+            tokenId := or(shl(160, allocator), shr(96, shl(96, token)))
+        }
+        return tokenId;
     }
 }
