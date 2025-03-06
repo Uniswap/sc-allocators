@@ -195,7 +195,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         returns (bytes32 tokenHash_)
     {
         tokenHash_ = _checkAllocation(
-            Compact({arbiter: arbiter, sponsor: sponsor, nonce: nonce, expires: expires, id: id, amount: amount})
+            Compact({arbiter: arbiter, sponsor: sponsor, nonce: nonce, expires: expires, id: id, amount: amount}), false
         );
         _claim[tokenHash_] = expires;
         _amount[tokenHash_] = amount;

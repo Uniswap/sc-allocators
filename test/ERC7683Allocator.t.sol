@@ -459,7 +459,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
     }
 
-    function test_successful() public {
+    function test_successful_userHimself() public {
         // Deposit tokens
         vm.startPrank(user);
         usdc.mint(user, defaultAmount);
@@ -509,6 +509,61 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
             fillInstructions: fillInstructions
         });
         vm.prank(user);
+        vm.expectEmit(true, false, false, true, address(erc7683Allocator));
+        emit IOriginSettler.Open(bytes32(defaultNonce), resolvedCrossChainOrder);
+        erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
+    }
+
+    function test_successful_relayed() public {
+        // Deposit tokens
+        vm.startPrank(user);
+        usdc.mint(user, defaultAmount);
+        usdc.approve(address(compactContract), defaultAmount);
+        compactContract.deposit(
+            address(usdc), address(erc7683Allocator), defaultResetPeriod, defaultScope, defaultAmount, user
+        );
+        vm.stopPrank();
+
+        (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, bytes memory sponsorSignature) =
+            _getGaslessCrossChainOrder();
+        IOriginSettler.Output[] memory maxSpent = new IOriginSettler.Output[](1);
+        IOriginSettler.Output[] memory minReceived = new IOriginSettler.Output[](1);
+        IOriginSettler.FillInstruction[] memory fillInstructions = new IOriginSettler.FillInstruction[](1);
+        maxSpent[0] = IOriginSettler.Output({
+            token: bytes32(uint256(uint160(defaultOutputToken))),
+            amount: type(uint256).max,
+            recipient: bytes32(uint256(uint160(user))),
+            chainId: defaultOutputChainId
+        });
+        minReceived[0] = IOriginSettler.Output({
+            token: bytes32(uint256(uint160(address(usdc)))),
+            amount: defaultAmount,
+            recipient: '',
+            chainId: block.chainid
+        });
+        Claim memory claim = Claim({
+            chainId: block.chainid,
+            compact: _getCompact(),
+            sponsorSignature: sponsorSignature,
+            allocatorSignature: ''
+        });
+        fillInstructions[0] = IOriginSettler.FillInstruction({
+            destinationChainId: defaultOutputChainId,
+            destinationSettler: bytes32(uint256(uint160(tribunal))),
+            originData: abi.encode(claim, _getMandate())
+        });
+
+        IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
+            user: user,
+            originChainId: block.chainid,
+            openDeadline: uint32(_getClaimExpiration()),
+            fillDeadline: uint32(_getFillExpiration()),
+            orderId: bytes32(defaultNonce),
+            maxSpent: maxSpent,
+            minReceived: minReceived,
+            fillInstructions: fillInstructions
+        });
+        vm.prank(makeAddr('filler'));
         vm.expectEmit(true, false, false, true, address(erc7683Allocator));
         emit IOriginSettler.Open(bytes32(defaultNonce), resolvedCrossChainOrder);
         erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
