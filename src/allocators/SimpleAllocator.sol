@@ -38,7 +38,7 @@ contract SimpleAllocator is ISimpleAllocator {
 
     /// @inheritdoc ISimpleAllocator
     function lock(Compact calldata compact_) external {
-        bytes32 tokenHash = _checkAllocation(compact_);
+        bytes32 tokenHash = _checkAllocation(compact_, true);
 
         bytes32 digest = keccak256(
             abi.encodePacked(
@@ -67,17 +67,9 @@ contract SimpleAllocator is ISimpleAllocator {
     }
 
     /// @inheritdoc IAllocator
-    function attest(address operator_, address from_, address, uint256 id_, uint256 amount_)
-        external
-        view
-        returns (bytes4)
-    {
+    function attest(address, address from_, address, uint256 id_, uint256 amount_) external view returns (bytes4) {
         if (msg.sender != COMPACT_CONTRACT) {
             revert InvalidCaller(msg.sender, COMPACT_CONTRACT);
-        }
-        // For a transfer, the sponsor is the arbiter
-        if (operator_ != from_) {
-            revert InvalidCaller(operator_, from_);
         }
         uint256 balance = ERC6909(COMPACT_CONTRACT).balanceOf(from_, id_);
         // Check unlocked balance
@@ -94,7 +86,7 @@ contract SimpleAllocator is ISimpleAllocator {
             revert InsufficientBalance(from_, id_, balance, fullAmount);
         }
 
-        return 0x1a808f91;
+        return this.attest.selector;
     }
 
     /// @inheritdoc IERC1271
@@ -165,12 +157,12 @@ contract SimpleAllocator is ISimpleAllocator {
         return keccak256(abi.encode(id_, sponsor_));
     }
 
-    function _checkAllocation(Compact memory compact_) internal view returns (bytes32) {
+    function _checkAllocation(Compact memory compact_, bool checkSponsor_) internal view returns (bytes32) {
         // Check msg.sender is sponsor
-        if (msg.sender != compact_.sponsor) {
+        if (checkSponsor_ && msg.sender != compact_.sponsor) {
             revert InvalidCaller(msg.sender, compact_.sponsor);
         }
-        bytes32 tokenHash = _getTokenHash(compact_.id, msg.sender);
+        bytes32 tokenHash = _getTokenHash(compact_.id, compact_.sponsor);
         // Check no lock is already active for this sponsor
         if (
             _claim[tokenHash] > block.timestamp
@@ -204,10 +196,10 @@ contract SimpleAllocator is ISimpleAllocator {
             revert NonceAlreadyConsumed(compact_.nonce);
         }
 
-        uint256 balance = ERC6909(COMPACT_CONTRACT).balanceOf(msg.sender, compact_.id);
+        uint256 balance = ERC6909(COMPACT_CONTRACT).balanceOf(compact_.sponsor, compact_.id);
         // Check balance is enough
         if (balance < compact_.amount) {
-            revert InsufficientBalance(msg.sender, compact_.id, balance, compact_.amount);
+            revert InsufficientBalance(compact_.sponsor, compact_.id, balance, compact_.amount);
         }
 
         return tokenHash;

@@ -447,12 +447,6 @@ contract SimpleAllocator_Attest is Deposited {
         simpleAllocator.attest(address(user), address(user), address(usdc), usdcId, defaultAmount);
     }
 
-    function test_revert_InvalidCaller_FromNotOperator() public {
-        vm.prank(attacker);
-        vm.expectRevert(abi.encodeWithSelector(ISimpleAllocator.InvalidCaller.selector, attacker, user));
-        compactContract.transfer(user, attacker, defaultAmount, address(usdc), address(simpleAllocator));
-    }
-
     function test_revert_InsufficientBalance_NoActiveLock(uint128 falseAmount_) public {
         vm.assume(falseAmount_ > defaultAmount);
 
@@ -490,6 +484,34 @@ contract SimpleAllocator_Attest is Deposited {
             )
         );
         compactContract.transfer(user, attacker, defaultAmount, address(usdc), address(simpleAllocator));
+    }
+
+    function test_successfullyAttested_returnsSelector() public {
+        bytes4 selector = bytes4(0x1a808f91);
+
+        uint32 transferAmount = 10;
+        uint32 lockedAmount = 90;
+
+        address otherUser = makeAddr('otherUser');
+
+        // Lock tokens
+        uint256 defaultExpiration_ = vm.getBlockTimestamp() + defaultResetPeriod;
+        vm.prank(user);
+        simpleAllocator.lock(
+            Compact({
+                arbiter: arbiter,
+                sponsor: user,
+                nonce: defaultNonce,
+                id: usdcId,
+                expires: defaultExpiration_,
+                amount: lockedAmount
+            })
+        );
+        compactContract.transfer(user, otherUser, transferAmount, address(usdc), address(simpleAllocator));
+
+        vm.prank(address(compactContract));
+        bytes4 returnedSelector = simpleAllocator.attest(user, user, otherUser, usdcId, transferAmount);
+        assertEq(returnedSelector, selector);
     }
 
     function test_successfullyAttested(uint32 lockedAmount_, uint32 transferAmount_) public {
