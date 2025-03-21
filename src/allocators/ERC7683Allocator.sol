@@ -11,15 +11,15 @@ import {Compact} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
     /// @notice The typehash of the OrderData struct
-    //          keccak256("OrderData(address arbiter,address sponsor,uint256 nonce,uint256 id,uint256 amount,Mandate mandate)
-    //          Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
-    bytes32 public constant ORDERDATA_TYPEHASH = 0x524227237e80c55bea046dee5ee8323384274111dd94aadae8ce9bbc3916facb;
+    //          keccak256("OrderData(address arbiter,address sponsor,uint256 nonce,uint256 id,uint256 amount,
+    //          uint256 chainId,address tribunal,address recipient,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt,uint256 targetBlock,uint256 maximumBlocksAfterTarget)")
+    bytes32 public constant ORDERDATA_TYPEHASH = 0x9687614112a074c792f7035dc9365f34672a3aa8d3c312500bd47ddcaa0383b5;
 
     /// @notice The typehash of the OrderDataGasless struct
-    //          keccak256("OrderDataGasless(address arbiter,uint256 id,uint256 amount,Mandate mandate)
-    //          Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
+    //          keccak256("OrderDataGasless(address arbiter,uint256 id,uint256 amount,
+    //          uint256 chainId,address tribunal,address recipient,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt,uint256 targetBlock,uint256 maximumBlocksAfterTarget)")
     bytes32 public constant ORDERDATA_GASLESS_TYPEHASH =
-        0x3d6dd96d82595484a68f0b4dcd56a17557e8e675c9aa8e149d6166912a791704;
+        0xe6c40de3837db693910c63e423da4d9f6157257aaad00a0786775e629249ee73;
 
     /// @notice keccak256("Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)
     //          Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
@@ -114,6 +114,23 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
             nonceFree_ := iszero(and(sload(masterSlot), shl(bitPos, 1)))
         }
         return nonceFree_;
+    }
+
+    /// @inheritdoc IERC7683Allocator
+    function completeOriginData(bytes memory originData_, address claimant_)
+        external
+        pure
+        returns (bytes memory originData)
+    {
+        (
+            Claim memory claim,
+            Mandate memory mandate, /* empty receiver of the tokens */
+            ,
+            uint256 targetBlock,
+            uint256 maximumBlocksAfterTarget
+        ) = abi.decode(originData_, (Claim, Mandate, address, uint256, uint256));
+        originData = abi.encode(claim, mandate, claimant_, targetBlock, maximumBlocksAfterTarget);
+        return originData;
     }
 
     function _open(OrderData memory orderData_, uint32 fillDeadline_, address sponsor_, bytes memory sponsorSignature_)
@@ -241,7 +258,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         fillInstructions[0] = FillInstruction({
             destinationChainId: orderData.chainId,
             destinationSettler: _addressToBytes32(orderData.tribunal),
-            originData: abi.encode(claim, mandate)
+            originData: abi.encode(claim, mandate, address(0), orderData.targetBlock, orderData.maximumBlocksAfterTarget)
         });
 
         Output memory spent = Output({
@@ -340,7 +357,9 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
             baselinePriorityFee: orderDataGasless_.baselinePriorityFee,
             scalingFactor: orderDataGasless_.scalingFactor,
             decayCurve: orderDataGasless_.decayCurve,
-            salt: orderDataGasless_.salt
+            salt: orderDataGasless_.salt,
+            targetBlock: orderDataGasless_.targetBlock,
+            maximumBlocksAfterTarget: orderDataGasless_.maximumBlocksAfterTarget
         });
         return orderData_;
     }

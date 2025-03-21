@@ -51,6 +51,8 @@ abstract contract MocksSetup is Test {
     uint256 defaultScalingFactor = 0;
     uint256[] defaultDecayCurve = new uint256[](0);
     bytes32 defaultSalt = bytes32(0);
+    uint256 defaultTargetBlock = 100;
+    uint256 defaultMaximumBlocksAfterTarget = 10;
 
     bytes32 ORDERDATA_GASLESS_TYPEHASH;
     bytes32 ORDERDATA_TYPEHASH;
@@ -249,7 +251,9 @@ abstract contract GaslessCrossChainOrderData is CompactData {
                     baselinePriorityFee: mandate_.baselinePriorityFee,
                     scalingFactor: mandate_.scalingFactor,
                     decayCurve: mandate_.decayCurve,
-                    salt: mandate_.salt
+                    salt: mandate_.salt,
+                    targetBlock: defaultTargetBlock,
+                    maximumBlocksAfterTarget: defaultMaximumBlocksAfterTarget
                 })
             )
         });
@@ -285,7 +289,9 @@ abstract contract GaslessCrossChainOrderData is CompactData {
                     baselinePriorityFee: mandate_.baselinePriorityFee,
                     scalingFactor: mandate_.scalingFactor,
                     decayCurve: mandate_.decayCurve,
-                    salt: mandate_.salt
+                    salt: mandate_.salt,
+                    targetBlock: defaultTargetBlock,
+                    maximumBlocksAfterTarget: defaultMaximumBlocksAfterTarget
                 })
             )
         });
@@ -331,7 +337,9 @@ abstract contract OnChainCrossChainOrderData is CompactData {
                     baselinePriorityFee: mandate_.baselinePriorityFee,
                     scalingFactor: mandate_.scalingFactor,
                     decayCurve: mandate_.decayCurve,
-                    salt: mandate_.salt
+                    salt: mandate_.salt,
+                    targetBlock: defaultTargetBlock,
+                    maximumBlocksAfterTarget: defaultMaximumBlocksAfterTarget
                 })
             )
         });
@@ -365,7 +373,9 @@ abstract contract OnChainCrossChainOrderData is CompactData {
                     baselinePriorityFee: mandate_.baselinePriorityFee,
                     scalingFactor: mandate_.scalingFactor,
                     decayCurve: mandate_.decayCurve,
-                    salt: mandate_.salt
+                    salt: mandate_.salt,
+                    targetBlock: defaultTargetBlock,
+                    maximumBlocksAfterTarget: defaultMaximumBlocksAfterTarget
                 })
             )
         });
@@ -523,7 +533,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         fillInstructions[0] = IOriginSettler.FillInstruction({
             destinationChainId: defaultOutputChainId,
             destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate())
+            originData: abi.encode(claim, _getMandate(), address(0), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
         });
 
         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
@@ -578,7 +588,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         fillInstructions[0] = IOriginSettler.FillInstruction({
             destinationChainId: defaultOutputChainId,
             destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate())
+            originData: abi.encode(claim, _getMandate(), address(0), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
         });
 
         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
@@ -739,7 +749,7 @@ contract ERC7683Allocator_open is OnChainCrossChainOrderData {
         fillInstructions[0] = IOriginSettler.FillInstruction({
             destinationChainId: defaultOutputChainId,
             destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate())
+            originData: abi.encode(claim, _getMandate(), address(0), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
         });
 
         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
@@ -904,7 +914,7 @@ contract ERC7683Allocator_resolveFor is GaslessCrossChainOrderData {
         fillInstructions[0] = IOriginSettler.FillInstruction({
             destinationChainId: defaultOutputChainId,
             destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate())
+            originData: abi.encode(claim, _getMandate(), address(0), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
         });
 
         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
@@ -970,7 +980,7 @@ contract ERC7683Allocator_resolve is OnChainCrossChainOrderData {
         fillInstructions[0] = IOriginSettler.FillInstruction({
             destinationChainId: defaultOutputChainId,
             destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate())
+            originData: abi.encode(claim, _getMandate(), address(0), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
         });
 
         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({

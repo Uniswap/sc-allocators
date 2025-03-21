@@ -24,6 +24,9 @@ interface IERC7683Allocator is IOriginSettler {
         uint256 scalingFactor; // Fee scaling multiplier (1e18 baseline)
         uint256[] decayCurve; // Block durations, fill increases, & claim decreases.
         bytes32 salt; // Replay protection parameter
+        // ADDITIONAL INPUT
+        uint256 targetBlock; // The block number at the target chain on which the PGA is executed / the reverse dutch auction starts.
+        uint256 maximumBlocksAfterTarget; // Blocks after target block that are still fillable.
     }
 
     struct OrderDataGasless {
@@ -45,6 +48,9 @@ interface IERC7683Allocator is IOriginSettler {
         uint256 scalingFactor; // Fee scaling multiplier (1e18 baseline)
         uint256[] decayCurve; // Block durations, fill increases, & claim decreases.
         bytes32 salt; // Replay protection parameter
+        // ADDITIONAL INPUT
+        uint256 targetBlock; // The block number at the target chain on which the PGA is executed / the reverse dutch auction starts.
+        uint256 maximumBlocksAfterTarget; // Blocks after target block that are still fillable.
     }
 
     error InvalidOriginSettler(address originSettler, address expectedOriginSettler);
@@ -78,4 +84,12 @@ interface IERC7683Allocator is IOriginSettler {
     /// @notice Checks if a nonce is free to be used
     /// @dev The nonce is the most significant 96 bits. The least significant 160 bits must be the sponsor address
     function checkNonce(address sponsor_, uint256 nonce_) external view returns (bool nonceFree_);
+
+    /// @notice Completes the origin data by adding the filler as a claimant in the fillInstructions from the ResolvedCrossChainOrder
+    /// @param originData_ The origin data from the open event
+    /// @param claimant_ The address claiming the origin tokens after a successful fill (typically the address of the filler)
+    function completeOriginData(bytes memory originData_, address claimant_)
+        external
+        pure
+        returns (bytes memory completeOriginData);
 }
