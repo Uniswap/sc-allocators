@@ -5,6 +5,8 @@ pragma solidity ^0.8.27;
 import {IERC7683Allocator} from '../interfaces/IERC7683Allocator.sol';
 import {SimpleAllocator} from './SimpleAllocator.sol';
 import {Claim, Mandate} from './types/TribunalStructs.sol';
+
+import {IERC1271} from '@openzeppelin/contracts/interfaces/IERC1271.sol';
 import {ECDSA} from '@openzeppelin/contracts/utils/cryptography/ECDSA.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {Compact} from '@uniswap/the-compact/types/EIP712Types.sol';
@@ -17,9 +19,12 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
 
     /// @notice The typehash of the OrderDataGasless struct
     //          keccak256("OrderDataGasless(address arbiter,uint256 id,uint256 amount,
-    //          uint256 chainId,address tribunal,address recipient,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt,uint256 targetBlock,uint256 maximumBlocksAfterTarget)")
+    //          uint256 chainId,address tribunal,address recipient,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
     bytes32 public constant ORDERDATA_GASLESS_TYPEHASH =
-        0xe6c40de3837db693910c63e423da4d9f6157257aaad00a0786775e629249ee73;
+        0xe9b624fa654c7f07ce16d31bf0165a4030d4022f62987afad8ef9d30fc8a0b88;
+
+    /// @notice keccak256("QualifiedClaim(bytes32 claimHash,uint256 targetBlock,uint256 maximumBlocksAfterTarget)")
+    bytes32 public constant QUALIFICATION_TYPEHASH = 0x59866b84bd1f6c909cf2a31efd20c59e6c902e50f2c196994e5aa85cdc7d7ce0;
 
     /// @notice keccak256("Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)
     //          Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
@@ -163,10 +168,10 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
                 )
             )
         );
-        bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), _COMPACT_DOMAIN_SEPARATOR, claimHash));
 
         // We check for the length, which means this could also be triggered by a zero length signature provided in the openFor function. This enables relaying of orders if the claim was registered on the compact.
         if (sponsorSignature_.length > 0) {
+            bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), _COMPACT_DOMAIN_SEPARATOR, claimHash));
             // confirm the signature matches the digest
             address signer = ECDSA.recover(digest, sponsorSignature_);
             if (sponsor_ != signer) {
@@ -181,7 +186,13 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
             }
         }
 
-        _sponsor[digest] = tokenHash;
+        bytes32 qualifiedClaimHash = keccak256(
+            abi.encode(QUALIFICATION_TYPEHASH, claimHash, orderData_.targetBlock, orderData_.maximumBlocksAfterTarget)
+        );
+        bytes32 qualifiedDigest =
+            keccak256(abi.encodePacked(bytes2(0x1901), _COMPACT_DOMAIN_SEPARATOR, qualifiedClaimHash));
+
+        _sponsor[qualifiedDigest] = tokenHash;
 
         // Emit an open event
         emit Open(
@@ -207,7 +218,6 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         _claim[tokenHash_] = expires;
         _amount[tokenHash_] = amount;
         _nonce[tokenHash_] = nonce;
-
         return tokenHash_;
     }
 
@@ -347,8 +357,8 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
             scalingFactor: orderDataGasless_.scalingFactor,
             decayCurve: orderDataGasless_.decayCurve,
             salt: orderDataGasless_.salt,
-            targetBlock: orderDataGasless_.targetBlock,
-            maximumBlocksAfterTarget: orderDataGasless_.maximumBlocksAfterTarget
+            targetBlock: 0,
+            maximumBlocksAfterTarget: 0
         });
         return orderData_;
     }

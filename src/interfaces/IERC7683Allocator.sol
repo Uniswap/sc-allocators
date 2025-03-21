@@ -48,9 +48,6 @@ interface IERC7683Allocator is IOriginSettler {
         uint256 scalingFactor; // Fee scaling multiplier (1e18 baseline)
         uint256[] decayCurve; // Block durations, fill increases, & claim decreases.
         bytes32 salt; // Replay protection parameter
-        // ADDITIONAL INPUT
-        uint256 targetBlock; // The block number at the target chain on which the PGA is executed / the reverse dutch auction starts.
-        uint256 maximumBlocksAfterTarget; // Blocks after target block that are still fillable.
     }
 
     error InvalidOriginSettler(address originSettler, address expectedOriginSettler);
