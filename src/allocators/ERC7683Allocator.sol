@@ -12,22 +12,22 @@ import {Compact} from '@uniswap/the-compact/types/EIP712Types.sol';
 contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
     /// @notice The typehash of the OrderData struct
     //          keccak256("OrderData(address arbiter,address sponsor,uint256 nonce,uint256 id,uint256 amount,Mandate mandate)
-    //          Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt)")
-    bytes32 public constant ORDERDATA_TYPEHASH = 0x9e0e1bdb0df35509b65bbc49d209dd42496c5a3f13998f9a74dc842d6932656b;
+    //          Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
+    bytes32 public constant ORDERDATA_TYPEHASH = 0x524227237e80c55bea046dee5ee8323384274111dd94aadae8ce9bbc3916facb;
 
     /// @notice The typehash of the OrderDataGasless struct
     //          keccak256("OrderDataGasless(address arbiter,uint256 id,uint256 amount,Mandate mandate)
-    //          Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt)")
+    //          Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
     bytes32 public constant ORDERDATA_GASLESS_TYPEHASH =
-        0x9ab67658b7c0f35b64fdadd7adee1e58b6399a8201f38c355d3a109a2d7081d7;
+        0x3d6dd96d82595484a68f0b4dcd56a17557e8e675c9aa8e149d6166912a791704;
 
     /// @notice keccak256("Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)
-    //          Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt)")
+    //          Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
     bytes32 public constant COMPACT_WITNESS_TYPEHASH =
-        0x27f09e0bb8ce2ae63380578af7af85055d3ada248c502e2378b85bc3d05ee0b0;
+        0xfd9cda0e5e31a3a3476cb5b57b07e2a4d6a12815506f69c880696448cd9897a5;
 
-    /// @notice keccak256("Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt)")
-    bytes32 internal constant MANDATE_TYPEHASH = 0x52c75464356e20084ae43acac75087fbf0e0c678e7ffa326f369f37e88696036;
+    /// @notice keccak256("Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
+    bytes32 internal constant MANDATE_TYPEHASH = 0x74d9c10530859952346f3e046aa2981a24bb7524b8394eb45a9deddced9d6501;
 
     /// @notice uint256(uint8(keccak256("ERC7683Allocator.nonce")))
     uint8 internal constant NONCE_MASTER_SLOT_SEED = 0x39;
@@ -101,7 +101,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
     /// @inheritdoc IERC7683Allocator
     function getCompactWitnessTypeString() external pure returns (string memory) {
         return
-        'Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt))';
+        'Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt))';
     }
 
     /// @inheritdoc IERC7683Allocator
@@ -151,6 +151,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
                         orderData_.minimumAmount,
                         orderData_.baselinePriorityFee,
                         orderData_.scalingFactor,
+                        keccak256(abi.encodePacked(orderData_.decayCurve)),
                         orderData_.salt
                     )
                 )
@@ -220,6 +221,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
             minimumAmount: orderData.minimumAmount,
             baselinePriorityFee: orderData.baselinePriorityFee,
             scalingFactor: orderData.scalingFactor,
+            decayCurve: orderData.decayCurve,
             salt: orderData.salt
         });
         Claim memory claim = Claim({
@@ -337,6 +339,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
             minimumAmount: orderDataGasless_.minimumAmount,
             baselinePriorityFee: orderDataGasless_.baselinePriorityFee,
             scalingFactor: orderDataGasless_.scalingFactor,
+            decayCurve: orderDataGasless_.decayCurve,
             salt: orderDataGasless_.salt
         });
         return orderData_;

@@ -49,6 +49,7 @@ abstract contract MocksSetup is Test {
     uint256 defaultMinimumAmount = 1000;
     uint256 defaultBaselinePriorityFee = 0;
     uint256 defaultScalingFactor = 0;
+    uint256[] defaultDecayCurve = new uint256[](0);
     bytes32 defaultSalt = bytes32(0);
 
     bytes32 ORDERDATA_GASLESS_TYPEHASH;
@@ -88,11 +89,11 @@ abstract contract CreateHash is MocksSetup {
     string version = '0';
 
     string compactWitnessTypeString =
-        'Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt)';
+        'Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)';
     string mandateTypeString =
-        'Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt)';
+        'Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)';
     string witnessTypeString =
-        'Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt)';
+        'Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)';
 
     function _hashCompact(Compact memory data, Mandate memory mandate, address verifyingContract)
         internal
@@ -120,7 +121,21 @@ abstract contract CreateHash is MocksSetup {
                 data.expires,
                 data.id,
                 data.amount,
-                keccak256(abi.encode(keccak256(bytes(mandateTypeString)), defaultOutputChainId, tribunal, mandate))
+                keccak256(
+                    abi.encode(
+                        keccak256(bytes(mandateTypeString)),
+                        defaultOutputChainId,
+                        tribunal,
+                        mandate.recipient,
+                        mandate.expires,
+                        mandate.token,
+                        mandate.minimumAmount,
+                        mandate.baselinePriorityFee,
+                        mandate.scalingFactor,
+                        keccak256(abi.encodePacked(mandate.decayCurve)),
+                        mandate.salt
+                    )
+                )
             )
         );
     }
@@ -180,6 +195,7 @@ abstract contract CompactData is CreateHash {
             minimumAmount: defaultMinimumAmount,
             baselinePriorityFee: defaultBaselinePriorityFee,
             scalingFactor: defaultScalingFactor,
+            decayCurve: defaultDecayCurve,
             salt: defaultSalt
         });
     }
@@ -221,17 +237,20 @@ abstract contract GaslessCrossChainOrderData is CompactData {
             fillDeadline: uint32(_getFillExpiration()),
             orderDataType: erc7683Allocator.ORDERDATA_GASLESS_TYPEHASH(),
             orderData: abi.encode(
-                compact_.arbiter,
-                compact_.id,
-                compact_.amount,
-                defaultOutputChainId,
-                tribunal,
-                mandate_.recipient,
-                mandate_.token,
-                mandate_.minimumAmount,
-                mandate_.baselinePriorityFee,
-                mandate_.scalingFactor,
-                mandate_.salt
+                IERC7683Allocator.OrderDataGasless({
+                    arbiter: compact_.arbiter,
+                    id: compact_.id,
+                    amount: compact_.amount,
+                    chainId: defaultOutputChainId,
+                    tribunal: tribunal,
+                    recipient: mandate_.recipient,
+                    token: mandate_.token,
+                    minimumAmount: mandate_.minimumAmount,
+                    baselinePriorityFee: mandate_.baselinePriorityFee,
+                    scalingFactor: mandate_.scalingFactor,
+                    decayCurve: mandate_.decayCurve,
+                    salt: mandate_.salt
+                })
             )
         });
     }
@@ -254,17 +273,20 @@ abstract contract GaslessCrossChainOrderData is CompactData {
             fillDeadline: uint32(mandate_.expires),
             orderDataType: orderDataGaslessTypeHash_,
             orderData: abi.encode(
-                compact_.arbiter,
-                compact_.id,
-                compact_.amount,
-                defaultOutputChainId,
-                tribunal,
-                mandate_.recipient,
-                mandate_.token,
-                mandate_.minimumAmount,
-                mandate_.baselinePriorityFee,
-                mandate_.scalingFactor,
-                mandate_.salt
+                IERC7683Allocator.OrderDataGasless({
+                    arbiter: compact_.arbiter,
+                    id: compact_.id,
+                    amount: compact_.amount,
+                    chainId: defaultOutputChainId,
+                    tribunal: tribunal,
+                    recipient: mandate_.recipient,
+                    token: mandate_.token,
+                    minimumAmount: mandate_.minimumAmount,
+                    baselinePriorityFee: mandate_.baselinePriorityFee,
+                    scalingFactor: mandate_.scalingFactor,
+                    decayCurve: mandate_.decayCurve,
+                    salt: mandate_.salt
+                })
             )
         });
 
@@ -294,20 +316,23 @@ abstract contract OnChainCrossChainOrderData is CompactData {
             fillDeadline: uint32(_getFillExpiration()),
             orderDataType: erc7683Allocator.ORDERDATA_TYPEHASH(),
             orderData: abi.encode(
-                compact_.arbiter,
-                compact_.sponsor,
-                compact_.nonce,
-                compact_.expires,
-                compact_.id,
-                compact_.amount,
-                defaultOutputChainId,
-                tribunal,
-                mandate_.recipient,
-                mandate_.token,
-                mandate_.minimumAmount,
-                mandate_.baselinePriorityFee,
-                mandate_.scalingFactor,
-                mandate_.salt
+                IERC7683Allocator.OrderData({
+                    arbiter: compact_.arbiter,
+                    sponsor: compact_.sponsor,
+                    nonce: compact_.nonce,
+                    expires: compact_.expires,
+                    id: compact_.id,
+                    amount: compact_.amount,
+                    chainId: defaultOutputChainId,
+                    tribunal: tribunal,
+                    recipient: mandate_.recipient,
+                    token: mandate_.token,
+                    minimumAmount: mandate_.minimumAmount,
+                    baselinePriorityFee: mandate_.baselinePriorityFee,
+                    scalingFactor: mandate_.scalingFactor,
+                    decayCurve: mandate_.decayCurve,
+                    salt: mandate_.salt
+                })
             )
         });
     }
@@ -325,20 +350,23 @@ abstract contract OnChainCrossChainOrderData is CompactData {
             fillDeadline: uint32(mandate_.expires),
             orderDataType: orderDataType_,
             orderData: abi.encode(
-                compact_.arbiter,
-                compact_.sponsor,
-                compact_.nonce,
-                compact_.expires,
-                compact_.id,
-                compact_.amount,
-                defaultOutputChainId,
-                tribunal,
-                mandate_.recipient,
-                mandate_.token,
-                mandate_.minimumAmount,
-                mandate_.baselinePriorityFee,
-                mandate_.scalingFactor,
-                mandate_.salt
+                IERC7683Allocator.OrderData({
+                    arbiter: compact_.arbiter,
+                    sponsor: compact_.sponsor,
+                    nonce: compact_.nonce,
+                    expires: compact_.expires,
+                    id: compact_.id,
+                    amount: compact_.amount,
+                    chainId: defaultOutputChainId,
+                    tribunal: tribunal,
+                    recipient: mandate_.recipient,
+                    token: mandate_.token,
+                    minimumAmount: mandate_.minimumAmount,
+                    baselinePriorityFee: mandate_.baselinePriorityFee,
+                    scalingFactor: mandate_.scalingFactor,
+                    decayCurve: mandate_.decayCurve,
+                    salt: mandate_.salt
+                })
             )
         });
         return onchainCrossChainOrder_;
@@ -812,7 +840,21 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData {
             sponsor: user,
             nonce: defaultNonce,
             expires: compact_.expires,
-            witness: keccak256(abi.encode(keccak256(bytes(mandateTypeString)), defaultOutputChainId, tribunal, mandate_)),
+            witness: keccak256(
+                abi.encode(
+                    keccak256(bytes(mandateTypeString)),
+                    defaultOutputChainId,
+                    tribunal,
+                    mandate_.recipient,
+                    mandate_.expires,
+                    mandate_.token,
+                    mandate_.minimumAmount,
+                    mandate_.baselinePriorityFee,
+                    mandate_.scalingFactor,
+                    keccak256(abi.encodePacked(mandate_.decayCurve)),
+                    mandate_.salt
+                )
+            ),
             witnessTypestring: witnessTypeString,
             id: usdcId,
             allocatedAmount: defaultAmount,
@@ -974,7 +1016,7 @@ contract ERC7683Allocator_getCompactWitnessTypeString is MocksSetup {
     function test_getCompactWitnessTypeString() public view {
         assertEq(
             erc7683Allocator.getCompactWitnessTypeString(),
-            'Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt))'
+            'Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt))'
         );
     }
 }

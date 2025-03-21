@@ -22,6 +22,7 @@ interface IERC7683Allocator is IOriginSettler {
         uint256 minimumAmount; // Minimum settlement amount
         uint256 baselinePriorityFee; // Base fee threshold where scaling kicks in
         uint256 scalingFactor; // Fee scaling multiplier (1e18 baseline)
+        uint256[] decayCurve; // Block durations, fill increases, & claim decreases.
         bytes32 salt; // Replay protection parameter
     }
 
@@ -42,6 +43,7 @@ interface IERC7683Allocator is IOriginSettler {
         uint256 minimumAmount; // Minimum settlement amount
         uint256 baselinePriorityFee; // Base fee threshold where scaling kicks in
         uint256 scalingFactor; // Fee scaling multiplier (1e18 baseline)
+        uint256[] decayCurve; // Block durations, fill increases, & claim decreases.
         bytes32 salt; // Replay protection parameter
     }
 

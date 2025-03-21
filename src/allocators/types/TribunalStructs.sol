@@ -12,13 +12,14 @@ struct Claim {
 }
 
 struct Mandate {
-    // uint256 chainId; // (implicit arg, included in EIP712 payload)
-    // address tribunal; // (implicit arg, included in EIP712 payload)
-    address recipient; // Recipient of settled tokens
-    uint256 expires; // Mandate expiration timestamp
-    address token; // Settlement token (address(0) for native)
-    uint256 minimumAmount; // Minimum settlement amount
-    uint256 baselinePriorityFee; // Base fee threshold where scaling kicks in
-    uint256 scalingFactor; // Fee scaling multiplier (1e18 baseline)
-    bytes32 salt; // Replay protection parameter
+    // uint256 chainId; // (implicit arg, included in EIP712 payload).
+    // address tribunal; // (implicit arg, included in EIP712 payload).
+    address recipient; // Recipient of filled tokens.
+    uint256 expires; // Mandate expiration timestamp.
+    address token; // Fill token (address(0) for native).
+    uint256 minimumAmount; // Minimum fill amount.
+    uint256 baselinePriorityFee; // Base fee threshold where scaling kicks in.
+    uint256 scalingFactor; // Fee scaling multiplier (1e18 baseline).
+    uint256[] decayCurve; // Block durations, fill increases, & claim decreases.
+    bytes32 salt; // Replay protection parameter.
 }
