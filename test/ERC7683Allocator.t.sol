@@ -533,7 +533,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         fillInstructions[0] = IOriginSettler.FillInstruction({
             destinationChainId: defaultOutputChainId,
             destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate(), address(0), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
+            originData: abi.encode(claim, _getMandate(), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
         });
 
         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
@@ -588,7 +588,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         fillInstructions[0] = IOriginSettler.FillInstruction({
             destinationChainId: defaultOutputChainId,
             destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate(), address(0), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
+            originData: abi.encode(claim, _getMandate(), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
         });
 
         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
@@ -749,7 +749,7 @@ contract ERC7683Allocator_open is OnChainCrossChainOrderData {
         fillInstructions[0] = IOriginSettler.FillInstruction({
             destinationChainId: defaultOutputChainId,
             destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate(), address(0), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
+            originData: abi.encode(claim, _getMandate(), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
         });
 
         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
@@ -914,7 +914,7 @@ contract ERC7683Allocator_resolveFor is GaslessCrossChainOrderData {
         fillInstructions[0] = IOriginSettler.FillInstruction({
             destinationChainId: defaultOutputChainId,
             destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate(), address(0), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
+            originData: abi.encode(claim, _getMandate(), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
         });
 
         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
@@ -980,7 +980,7 @@ contract ERC7683Allocator_resolve is OnChainCrossChainOrderData {
         fillInstructions[0] = IOriginSettler.FillInstruction({
             destinationChainId: defaultOutputChainId,
             destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate(), address(0), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
+            originData: abi.encode(claim, _getMandate(), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
         });
 
         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({

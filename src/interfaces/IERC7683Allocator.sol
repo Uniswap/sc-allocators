@@ -85,11 +85,7 @@ interface IERC7683Allocator is IOriginSettler {
     /// @dev The nonce is the most significant 96 bits. The least significant 160 bits must be the sponsor address
     function checkNonce(address sponsor_, uint256 nonce_) external view returns (bool nonceFree_);
 
-    /// @notice Completes the origin data by adding the filler as a claimant in the fillInstructions from the ResolvedCrossChainOrder
-    /// @param originData_ The origin data from the open event
+    /// @notice Creates the filler data for the open event to be used on the IDestinationSettler
     /// @param claimant_ The address claiming the origin tokens after a successful fill (typically the address of the filler)
-    function completeOriginData(bytes memory originData_, address claimant_)
-        external
-        pure
-        returns (bytes memory completeOriginData);
+    function createFillerData(address claimant_) external pure returns (bytes memory fillerData);
 }

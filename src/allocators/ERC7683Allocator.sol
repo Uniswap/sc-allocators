@@ -117,20 +117,9 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
     }
 
     /// @inheritdoc IERC7683Allocator
-    function completeOriginData(bytes memory originData_, address claimant_)
-        external
-        pure
-        returns (bytes memory originData)
-    {
-        (
-            Claim memory claim,
-            Mandate memory mandate, /* empty receiver of the tokens */
-            ,
-            uint256 targetBlock,
-            uint256 maximumBlocksAfterTarget
-        ) = abi.decode(originData_, (Claim, Mandate, address, uint256, uint256));
-        originData = abi.encode(claim, mandate, claimant_, targetBlock, maximumBlocksAfterTarget);
-        return originData;
+    function createFillerData(address claimant_) external pure returns (bytes memory fillerData) {
+        fillerData = abi.encode(claimant_);
+        return fillerData;
     }
 
     function _open(OrderData memory orderData_, uint32 fillDeadline_, address sponsor_, bytes memory sponsorSignature_)
@@ -258,7 +247,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         fillInstructions[0] = FillInstruction({
             destinationChainId: orderData.chainId,
             destinationSettler: _addressToBytes32(orderData.tribunal),
-            originData: abi.encode(claim, mandate, address(0), orderData.targetBlock, orderData.maximumBlocksAfterTarget)
+            originData: abi.encode(claim, mandate, orderData.targetBlock, orderData.maximumBlocksAfterTarget)
         });
 
         Output memory spent = Output({
