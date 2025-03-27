@@ -29,7 +29,11 @@ interface ISimpleAllocator is IAllocator {
 
     /// @notice Thrown if the provided lock is not available or expired
     /// @dev The expiration will be '0' if no lock is available
-    error InvalidLock(bytes32 digest, uint256 expiration);
+    error InvalidLock(bytes32 claimHash, uint256 expiration);
+
+    /// @notice Thrown if the current allocation is bigger then uint224
+    /// @dev Allocations above uint224 do not support attestations
+    error ExtensiveAllocationActive(address sponsor, uint256 id);
 
     /// @notice Emitted when a lock is successfully created
     /// @param sponsor The address of the sponsor
