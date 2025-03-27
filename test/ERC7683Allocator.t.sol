@@ -8,7 +8,7 @@ import {TheCompact} from '@uniswap/the-compact/TheCompact.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 
 import {IdLib} from '@uniswap/the-compact/lib/IdLib.sol';
-import {ClaimWithWitness} from '@uniswap/the-compact/types/Claims.sol';
+import {QualifiedClaimWithWitness} from '@uniswap/the-compact/types/Claims.sol';
 
 import {COMPACT_TYPEHASH, Compact} from '@uniswap/the-compact/types/EIP712Types.sol';
 import {ForcedWithdrawalStatus} from '@uniswap/the-compact/types/ForcedWithdrawalStatus.sol';
@@ -49,7 +49,10 @@ abstract contract MocksSetup is Test {
     uint256 defaultMinimumAmount = 1000;
     uint256 defaultBaselinePriorityFee = 0;
     uint256 defaultScalingFactor = 0;
+    uint256[] defaultDecayCurve = new uint256[](0);
     bytes32 defaultSalt = bytes32(0);
+    uint256 defaultTargetBlock = 100;
+    uint256 defaultMaximumBlocksAfterTarget = 10;
 
     bytes32 ORDERDATA_GASLESS_TYPEHASH;
     bytes32 ORDERDATA_TYPEHASH;
@@ -88,11 +91,11 @@ abstract contract CreateHash is MocksSetup {
     string version = '0';
 
     string compactWitnessTypeString =
-        'Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt)';
+        'Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)';
     string mandateTypeString =
-        'Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt)';
+        'Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)';
     string witnessTypeString =
-        'Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt)';
+        'Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)';
 
     function _hashCompact(Compact memory data, Mandate memory mandate, address verifyingContract)
         internal
@@ -120,7 +123,21 @@ abstract contract CreateHash is MocksSetup {
                 data.expires,
                 data.id,
                 data.amount,
-                keccak256(abi.encode(keccak256(bytes(mandateTypeString)), defaultOutputChainId, tribunal, mandate))
+                keccak256(
+                    abi.encode(
+                        keccak256(bytes(mandateTypeString)),
+                        defaultOutputChainId,
+                        tribunal,
+                        mandate.recipient,
+                        mandate.expires,
+                        mandate.token,
+                        mandate.minimumAmount,
+                        mandate.baselinePriorityFee,
+                        mandate.scalingFactor,
+                        keccak256(abi.encodePacked(mandate.decayCurve)),
+                        mandate.salt
+                    )
+                )
             )
         );
     }
@@ -180,6 +197,7 @@ abstract contract CompactData is CreateHash {
             minimumAmount: defaultMinimumAmount,
             baselinePriorityFee: defaultBaselinePriorityFee,
             scalingFactor: defaultScalingFactor,
+            decayCurve: defaultDecayCurve,
             salt: defaultSalt
         });
     }
@@ -221,17 +239,20 @@ abstract contract GaslessCrossChainOrderData is CompactData {
             fillDeadline: uint32(_getFillExpiration()),
             orderDataType: erc7683Allocator.ORDERDATA_GASLESS_TYPEHASH(),
             orderData: abi.encode(
-                compact_.arbiter,
-                compact_.id,
-                compact_.amount,
-                defaultOutputChainId,
-                tribunal,
-                mandate_.recipient,
-                mandate_.token,
-                mandate_.minimumAmount,
-                mandate_.baselinePriorityFee,
-                mandate_.scalingFactor,
-                mandate_.salt
+                IERC7683Allocator.OrderDataGasless({
+                    arbiter: compact_.arbiter,
+                    id: compact_.id,
+                    amount: compact_.amount,
+                    chainId: defaultOutputChainId,
+                    tribunal: tribunal,
+                    recipient: mandate_.recipient,
+                    token: mandate_.token,
+                    minimumAmount: mandate_.minimumAmount,
+                    baselinePriorityFee: mandate_.baselinePriorityFee,
+                    scalingFactor: mandate_.scalingFactor,
+                    decayCurve: mandate_.decayCurve,
+                    salt: mandate_.salt
+                })
             )
         });
     }
@@ -254,17 +275,20 @@ abstract contract GaslessCrossChainOrderData is CompactData {
             fillDeadline: uint32(mandate_.expires),
             orderDataType: orderDataGaslessTypeHash_,
             orderData: abi.encode(
-                compact_.arbiter,
-                compact_.id,
-                compact_.amount,
-                defaultOutputChainId,
-                tribunal,
-                mandate_.recipient,
-                mandate_.token,
-                mandate_.minimumAmount,
-                mandate_.baselinePriorityFee,
-                mandate_.scalingFactor,
-                mandate_.salt
+                IERC7683Allocator.OrderDataGasless({
+                    arbiter: compact_.arbiter,
+                    id: compact_.id,
+                    amount: compact_.amount,
+                    chainId: defaultOutputChainId,
+                    tribunal: tribunal,
+                    recipient: mandate_.recipient,
+                    token: mandate_.token,
+                    minimumAmount: mandate_.minimumAmount,
+                    baselinePriorityFee: mandate_.baselinePriorityFee,
+                    scalingFactor: mandate_.scalingFactor,
+                    decayCurve: mandate_.decayCurve,
+                    salt: mandate_.salt
+                })
             )
         });
 
@@ -294,20 +318,25 @@ abstract contract OnChainCrossChainOrderData is CompactData {
             fillDeadline: uint32(_getFillExpiration()),
             orderDataType: erc7683Allocator.ORDERDATA_TYPEHASH(),
             orderData: abi.encode(
-                compact_.arbiter,
-                compact_.sponsor,
-                compact_.nonce,
-                compact_.expires,
-                compact_.id,
-                compact_.amount,
-                defaultOutputChainId,
-                tribunal,
-                mandate_.recipient,
-                mandate_.token,
-                mandate_.minimumAmount,
-                mandate_.baselinePriorityFee,
-                mandate_.scalingFactor,
-                mandate_.salt
+                IERC7683Allocator.OrderData({
+                    arbiter: compact_.arbiter,
+                    sponsor: compact_.sponsor,
+                    nonce: compact_.nonce,
+                    expires: compact_.expires,
+                    id: compact_.id,
+                    amount: compact_.amount,
+                    chainId: defaultOutputChainId,
+                    tribunal: tribunal,
+                    recipient: mandate_.recipient,
+                    token: mandate_.token,
+                    minimumAmount: mandate_.minimumAmount,
+                    baselinePriorityFee: mandate_.baselinePriorityFee,
+                    scalingFactor: mandate_.scalingFactor,
+                    decayCurve: mandate_.decayCurve,
+                    salt: mandate_.salt,
+                    targetBlock: defaultTargetBlock,
+                    maximumBlocksAfterTarget: defaultMaximumBlocksAfterTarget
+                })
             )
         });
     }
@@ -325,20 +354,25 @@ abstract contract OnChainCrossChainOrderData is CompactData {
             fillDeadline: uint32(mandate_.expires),
             orderDataType: orderDataType_,
             orderData: abi.encode(
-                compact_.arbiter,
-                compact_.sponsor,
-                compact_.nonce,
-                compact_.expires,
-                compact_.id,
-                compact_.amount,
-                defaultOutputChainId,
-                tribunal,
-                mandate_.recipient,
-                mandate_.token,
-                mandate_.minimumAmount,
-                mandate_.baselinePriorityFee,
-                mandate_.scalingFactor,
-                mandate_.salt
+                IERC7683Allocator.OrderData({
+                    arbiter: compact_.arbiter,
+                    sponsor: compact_.sponsor,
+                    nonce: compact_.nonce,
+                    expires: compact_.expires,
+                    id: compact_.id,
+                    amount: compact_.amount,
+                    chainId: defaultOutputChainId,
+                    tribunal: tribunal,
+                    recipient: mandate_.recipient,
+                    token: mandate_.token,
+                    minimumAmount: mandate_.minimumAmount,
+                    baselinePriorityFee: mandate_.baselinePriorityFee,
+                    scalingFactor: mandate_.scalingFactor,
+                    decayCurve: mandate_.decayCurve,
+                    salt: mandate_.salt,
+                    targetBlock: defaultTargetBlock,
+                    maximumBlocksAfterTarget: defaultMaximumBlocksAfterTarget
+                })
             )
         });
         return onchainCrossChainOrder_;
@@ -495,7 +529,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         fillInstructions[0] = IOriginSettler.FillInstruction({
             destinationChainId: defaultOutputChainId,
             destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate())
+            originData: abi.encode(claim, _getMandate(), uint256(0), uint256(0))
         });
 
         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
@@ -550,7 +584,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         fillInstructions[0] = IOriginSettler.FillInstruction({
             destinationChainId: defaultOutputChainId,
             destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate())
+            originData: abi.encode(claim, _getMandate(), uint256(0), uint256(0))
         });
 
         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
@@ -711,7 +745,7 @@ contract ERC7683Allocator_open is OnChainCrossChainOrderData {
         fillInstructions[0] = IOriginSettler.FillInstruction({
             destinationChainId: defaultOutputChainId,
             destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate())
+            originData: abi.encode(claim, _getMandate(), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
         });
 
         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
@@ -731,7 +765,11 @@ contract ERC7683Allocator_open is OnChainCrossChainOrderData {
     }
 }
 
-contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData {
+contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, GaslessCrossChainOrderData {
+    function setUp() public override(OnChainCrossChainOrderData, GaslessCrossChainOrderData) {
+        super.setUp();
+    }
+
     function test_revert_InvalidLock() public {
         // Deposit tokens
         vm.startPrank(user);
@@ -758,7 +796,7 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData {
         // we do NOT open the order or lock the tokens
 
         // claim should be fail, because we mess with the nonce
-        ClaimWithWitness memory claim = ClaimWithWitness({
+        QualifiedClaimWithWitness memory claim = QualifiedClaimWithWitness({
             allocatorSignature: '',
             sponsorSignature: '',
             sponsor: user,
@@ -766,6 +804,8 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData {
             expires: compact_.expires,
             witness: keccak256(abi.encode(keccak256(bytes(mandateTypeString)), mandate_)),
             witnessTypestring: witnessTypeString,
+            qualificationTypehash: erc7683Allocator.QUALIFICATION_TYPEHASH(),
+            qualificationPayload: abi.encode(defaultTargetBlock, defaultMaximumBlocksAfterTarget),
             id: usdcId,
             allocatedAmount: defaultAmount,
             claimant: filler,
@@ -779,7 +819,7 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData {
         vm.assertEq(compactContract.balanceOf(filler, usdcId), 0);
     }
 
-    function test_isValidSignature_successful() public {
+    function test_isValidSignature_successful_open() public {
         // Deposit tokens
         vm.startPrank(user);
         usdc.mint(user, defaultAmount);
@@ -806,14 +846,94 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData {
         vm.stopPrank();
 
         // claim should be successful
-        ClaimWithWitness memory claim = ClaimWithWitness({
+        QualifiedClaimWithWitness memory claim = QualifiedClaimWithWitness({
             allocatorSignature: '',
             sponsorSignature: '',
             sponsor: user,
             nonce: defaultNonce,
             expires: compact_.expires,
-            witness: keccak256(abi.encode(keccak256(bytes(mandateTypeString)), defaultOutputChainId, tribunal, mandate_)),
+            witness: keccak256(
+                abi.encode(
+                    keccak256(bytes(mandateTypeString)),
+                    defaultOutputChainId,
+                    tribunal,
+                    mandate_.recipient,
+                    mandate_.expires,
+                    mandate_.token,
+                    mandate_.minimumAmount,
+                    mandate_.baselinePriorityFee,
+                    mandate_.scalingFactor,
+                    keccak256(abi.encodePacked(mandate_.decayCurve)),
+                    mandate_.salt
+                )
+            ),
             witnessTypestring: witnessTypeString,
+            qualificationTypehash: erc7683Allocator.QUALIFICATION_TYPEHASH(),
+            qualificationPayload: abi.encode(defaultTargetBlock, defaultMaximumBlocksAfterTarget),
+            id: usdcId,
+            allocatedAmount: defaultAmount,
+            claimant: filler,
+            amount: defaultAmount
+        });
+        vm.prank(arbiter);
+        compactContract.claim(claim);
+
+        vm.assertEq(compactContract.balanceOf(user, usdcId), 0);
+        vm.assertEq(compactContract.balanceOf(filler, usdcId), defaultAmount);
+    }
+
+    function test_isValidSignature_successful_openFor() public {
+        // Deposit tokens
+        vm.startPrank(user);
+        usdc.mint(user, defaultAmount);
+        usdc.approve(address(compactContract), defaultAmount);
+        compactContract.deposit(
+            address(usdc), address(erc7683Allocator), defaultResetPeriod, defaultScope, defaultAmount, user
+        );
+
+        // register a claim
+        Compact memory compact_ = _getCompact();
+        Mandate memory mandate_ = _getMandate();
+
+        bytes32 claimHash = _hashCompact(compact_, mandate_);
+        bytes32 typeHash = _getTypeHash();
+        compactContract.register(claimHash, typeHash, defaultResetPeriodTimestamp);
+
+        address filler = makeAddr('filler');
+        vm.assertEq(compactContract.balanceOf(user, usdcId), defaultAmount);
+        vm.assertEq(compactContract.balanceOf(filler, usdcId), 0);
+
+        // we open the order and lock the tokens
+        (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, bytes memory sponsorSignature) =
+            _getGaslessCrossChainOrder();
+        erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
+        vm.stopPrank();
+
+        // claim should be successful
+        QualifiedClaimWithWitness memory claim = QualifiedClaimWithWitness({
+            allocatorSignature: '',
+            sponsorSignature: '',
+            sponsor: user,
+            nonce: defaultNonce,
+            expires: compact_.expires,
+            witness: keccak256(
+                abi.encode(
+                    keccak256(bytes(mandateTypeString)),
+                    defaultOutputChainId,
+                    tribunal,
+                    mandate_.recipient,
+                    mandate_.expires,
+                    mandate_.token,
+                    mandate_.minimumAmount,
+                    mandate_.baselinePriorityFee,
+                    mandate_.scalingFactor,
+                    keccak256(abi.encodePacked(mandate_.decayCurve)),
+                    mandate_.salt
+                )
+            ),
+            witnessTypestring: witnessTypeString,
+            qualificationTypehash: erc7683Allocator.QUALIFICATION_TYPEHASH(),
+            qualificationPayload: abi.encode(uint256(0), uint256(0)),
             id: usdcId,
             allocatedAmount: defaultAmount,
             claimant: filler,
@@ -862,7 +982,7 @@ contract ERC7683Allocator_resolveFor is GaslessCrossChainOrderData {
         fillInstructions[0] = IOriginSettler.FillInstruction({
             destinationChainId: defaultOutputChainId,
             destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate())
+            originData: abi.encode(claim, _getMandate(), uint256(0), uint256(0))
         });
 
         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
@@ -928,7 +1048,7 @@ contract ERC7683Allocator_resolve is OnChainCrossChainOrderData {
         fillInstructions[0] = IOriginSettler.FillInstruction({
             destinationChainId: defaultOutputChainId,
             destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate())
+            originData: abi.encode(claim, _getMandate(), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
         });
 
         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
@@ -974,7 +1094,7 @@ contract ERC7683Allocator_getCompactWitnessTypeString is MocksSetup {
     function test_getCompactWitnessTypeString() public view {
         assertEq(
             erc7683Allocator.getCompactWitnessTypeString(),
-            'Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,bytes32 salt))'
+            'Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt))'
         );
     }
 }
