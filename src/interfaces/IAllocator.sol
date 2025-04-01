@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
+import {IERC1271} from '@openzeppelin/contracts/interfaces/IERC1271.sol';
 
 interface IAllocator is IERC1271 {
     // Called on standard transfers; must return this function selector (0x1a808f91).
