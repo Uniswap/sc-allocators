@@ -122,8 +122,9 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
 
         // We trust the compact to check the nonce and that this contract is the allocator connected to the id
         _checkExpiration(expires);
-        bytes32 tokenHash = _checkForActiveAllocation(sponsor, idsAndAmounts[0][0]);
-        _checkForcedWithdrawal(sponsor, expires, idsAndAmounts[0][0]);
+        (bytes12 lockTag, address token) = _separateId(idsAndAmounts[0][0]);
+        bytes32 tokenHash = _checkForActiveAllocation(sponsor, lockTag, token);
+        _checkForcedWithdrawal(sponsor, expires, lockTag, token);
         _checkBalance(sponsor, idsAndAmounts[0][0], idsAndAmounts[0][1]); // TODO: Should the Compact check this prior to the callback?
 
         OderDataCallback memory orderDataCallback = abi.decode(allocatorData, (OderDataCallback));
@@ -143,12 +144,13 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
             sponsor: sponsor,
             nonce: nonce,
             expires: expires,
-            id: idsAndAmounts[0][0],
+            lockTag: lockTag,
+            inputToken: token,
             amount: idsAndAmounts[0][1],
             chainId: orderDataCallback.chainId,
             tribunal: orderDataCallback.tribunal,
             recipient: orderDataCallback.recipient,
-            token: orderDataCallback.token,
+            settlementToken: orderDataCallback.settlementToken,
             minimumAmount: orderDataCallback.minimumAmount,
             baselinePriorityFee: orderDataCallback.baselinePriorityFee,
             scalingFactor: orderDataCallback.scalingFactor,
@@ -247,8 +249,9 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         // We do not enforce a specific tribunal or arbiter. This will allow to support new arbiters and tribunals after the deployment of the allocator
         // Going with an immutable arbiter and tribunal would limit support for new chains with a fully decentralized allocator
 
-        bytes32 tokenHash =
-            _verifyAllocation(sponsor_, orderData_.id, orderData_.amount, orderData_.expires, orderData_.nonce);
+        bytes32 tokenHash = _verifyAllocation(
+            sponsor_, orderData_.lockTag, orderData_.inputToken, orderData_.amount, orderData_.expires, orderData_.nonce
+        );
 
         // Create the Compact claim hash
         bytes32 claimHash = keccak256(
@@ -258,7 +261,8 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
                 sponsor_,
                 orderData_.nonce,
                 orderData_.expires,
-                orderData_.id,
+                orderData_.lockTag,
+                orderData_.inputToken,
                 orderData_.amount,
                 keccak256(
                     abi.encode(
@@ -267,7 +271,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
                         orderData_.tribunal,
                         orderData_.recipient,
                         fillDeadline_,
-                        orderData_.token,
+                        orderData_.settlementToken,
                         orderData_.minimumAmount,
                         orderData_.baselinePriorityFee,
                         orderData_.scalingFactor,
@@ -288,9 +292,8 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
             }
         } else {
             // confirm the claim hash is registered on the compact
-            (bool isActive, uint256 registrationExpiration) =
-                ITheCompact(COMPACT_CONTRACT).getRegistrationStatus(sponsor_, claimHash, COMPACT_WITNESS_TYPEHASH);
-            if (!isActive || registrationExpiration < orderData_.expires) {
+            (bool isActive) = ITheCompact(COMPACT_CONTRACT).isRegistered(sponsor_, claimHash, COMPACT_WITNESS_TYPEHASH);
+            if (!isActive) {
                 revert InvalidRegistration(sponsor_, claimHash);
             }
         }
@@ -305,18 +308,21 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         emit Open(bytes32(orderData_.nonce), _resolveOrder(sponsor_, fillDeadline_, orderData_, sponsorSignature_));
     }
 
-    function _verifyAllocation(address sponsor, uint256 id, uint256 amount, uint256 expires, uint256 nonce)
-        internal
-        view
-        returns (bytes32 tokenHash_)
-    {
+    function _verifyAllocation(
+        address sponsor,
+        bytes12 lockTag,
+        address token,
+        uint256 amount,
+        uint256 expires,
+        uint256 nonce
+    ) internal view returns (bytes32 tokenHash_) {
         // Check for a valid allocation
-        tokenHash_ = _checkForActiveAllocation(sponsor, id);
-        _checkAllocator(id);
+        tokenHash_ = _checkForActiveAllocation(sponsor, lockTag, token);
+        _checkAllocator(lockTag, token);
         _checkExpiration(expires);
         _checkNonce(nonce);
-        _checkForcedWithdrawal(sponsor, expires, id);
-        _checkBalance(sponsor, id, amount);
+        _checkForcedWithdrawal(sponsor, expires, lockTag, token);
+        _checkBalance(sponsor, _getTokenId(lockTag, token), amount);
 
         return tokenHash_;
     }
@@ -338,7 +344,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         Mandate memory mandate = Mandate({
             recipient: orderData.recipient,
             expires: fillDeadline,
-            token: orderData.token,
+            token: orderData.settlementToken,
             minimumAmount: orderData.minimumAmount,
             baselinePriorityFee: orderData.baselinePriorityFee,
             scalingFactor: orderData.scalingFactor,
@@ -352,7 +358,8 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
                 sponsor: sponsor,
                 nonce: orderData.nonce,
                 expires: orderData.expires,
-                id: orderData.id,
+                lockTag: orderData.lockTag,
+                token: orderData.inputToken,
                 amount: orderData.amount
             }),
             sponsorSignature: sponsorSignature,
@@ -366,13 +373,13 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         });
 
         Output memory spent = Output({
-            token: _addressToBytes32(orderData.token),
+            token: _addressToBytes32(orderData.settlementToken),
             amount: type(uint256).max,
             recipient: _addressToBytes32(orderData.recipient),
             chainId: orderData.chainId
         });
         Output memory received = Output({
-            token: _addressToBytes32(_idToToken(orderData.id)),
+            token: _addressToBytes32(orderData.inputToken),
             amount: orderData.amount,
             recipient: bytes32(0),
             chainId: block.chainid
@@ -428,12 +435,6 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         }
     }
 
-    function _idToToken(uint256 id_) internal pure returns (address token_) {
-        assembly ("memory-safe") {
-            token_ := shr(96, shl(96, id_))
-        }
-    }
-
     function _addressToBytes32(address address_) internal pure returns (bytes32 output_) {
         assembly ("memory-safe") {
             output_ := shr(96, shl(96, address_))
@@ -451,12 +452,13 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
             sponsor: sponsor_,
             nonce: nonce_,
             expires: openDeadline_,
-            id: orderDataGasless_.id,
+            lockTag: orderDataGasless_.lockTag,
+            inputToken: orderDataGasless_.inputToken,
             amount: orderDataGasless_.amount,
             chainId: orderDataGasless_.chainId,
             tribunal: orderDataGasless_.tribunal,
             recipient: orderDataGasless_.recipient,
-            token: orderDataGasless_.token,
+            settlementToken: orderDataGasless_.settlementToken,
             minimumAmount: orderDataGasless_.minimumAmount,
             baselinePriorityFee: orderDataGasless_.baselinePriorityFee,
             scalingFactor: orderDataGasless_.scalingFactor,

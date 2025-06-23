@@ -38,6 +38,7 @@ abstract contract MocksSetup is Test, TestHelper {
     ERC20Mock usdc;
     TheCompact compactContract;
     ERC7683Allocator erc7683Allocator;
+    bytes12 usdcLockTag;
     uint256 usdcId;
 
     ResetPeriod defaultResetPeriod = ResetPeriod.OneMinute;
@@ -66,6 +67,7 @@ abstract contract MocksSetup is Test, TestHelper {
         compactContract = new TheCompact();
         erc7683Allocator = new ERC7683Allocator(address(compactContract), 5, 100);
 
+        usdcLockTag = _toLockTag(address(erc7683Allocator), defaultScope, defaultResetPeriod);
         usdcId = _toId(defaultScope, defaultResetPeriod, address(erc7683Allocator), address(usdc));
         (attacker, attackerPK) = makeAddrAndKey('attacker');
         defaultNonce = uint256(bytes32(abi.encodePacked(user, uint96(1))));
@@ -117,7 +119,8 @@ abstract contract CreateHash is MocksSetup {
                 data.sponsor,
                 data.nonce,
                 data.expires,
-                data.id,
+                data.lockTag,
+                data.token,
                 data.amount,
                 keccak256(
                     abi.encode(
@@ -182,7 +185,8 @@ abstract contract CompactData is CreateHash {
             sponsor: user,
             nonce: defaultNonce,
             expires: _getClaimExpiration(),
-            id: usdcId,
+            lockTag: usdcLockTag,
+            token: address(usdc),
             amount: defaultAmount
         });
 
@@ -237,12 +241,13 @@ abstract contract GaslessCrossChainOrderData is CompactData {
             orderData: abi.encode(
                 IERC7683Allocator.OrderDataGasless({
                     arbiter: compact_.arbiter,
-                    id: compact_.id,
+                    lockTag: compact_.lockTag,
+                    inputToken: compact_.token,
                     amount: compact_.amount,
                     chainId: defaultOutputChainId,
                     tribunal: tribunal,
                     recipient: mandate_.recipient,
-                    token: mandate_.token,
+                    settlementToken: mandate_.token,
                     minimumAmount: mandate_.minimumAmount,
                     baselinePriorityFee: mandate_.baselinePriorityFee,
                     scalingFactor: mandate_.scalingFactor,
@@ -273,12 +278,13 @@ abstract contract GaslessCrossChainOrderData is CompactData {
             orderData: abi.encode(
                 IERC7683Allocator.OrderDataGasless({
                     arbiter: compact_.arbiter,
-                    id: compact_.id,
+                    lockTag: compact_.lockTag,
+                    inputToken: compact_.token,
                     amount: compact_.amount,
                     chainId: defaultOutputChainId,
                     tribunal: tribunal,
                     recipient: mandate_.recipient,
-                    token: mandate_.token,
+                    settlementToken: mandate_.token,
                     minimumAmount: mandate_.minimumAmount,
                     baselinePriorityFee: mandate_.baselinePriorityFee,
                     scalingFactor: mandate_.scalingFactor,
@@ -319,12 +325,13 @@ abstract contract OnChainCrossChainOrderData is CompactData {
                     sponsor: compact_.sponsor,
                     nonce: compact_.nonce,
                     expires: compact_.expires,
-                    id: compact_.id,
+                    lockTag: compact_.lockTag,
+                    inputToken: compact_.token,
                     amount: compact_.amount,
                     chainId: defaultOutputChainId,
                     tribunal: tribunal,
                     recipient: mandate_.recipient,
-                    token: mandate_.token,
+                    settlementToken: mandate_.token,
                     minimumAmount: mandate_.minimumAmount,
                     baselinePriorityFee: mandate_.baselinePriorityFee,
                     scalingFactor: mandate_.scalingFactor,
@@ -355,12 +362,13 @@ abstract contract OnChainCrossChainOrderData is CompactData {
                     sponsor: compact_.sponsor,
                     nonce: compact_.nonce,
                     expires: compact_.expires,
-                    id: compact_.id,
+                    lockTag: compact_.lockTag,
+                    inputToken: compact_.token,
                     amount: compact_.amount,
                     chainId: defaultOutputChainId,
                     tribunal: tribunal,
                     recipient: mandate_.recipient,
-                    token: mandate_.token,
+                    settlementToken: mandate_.token,
                     minimumAmount: mandate_.minimumAmount,
                     baselinePriorityFee: mandate_.baselinePriorityFee,
                     scalingFactor: mandate_.scalingFactor,
@@ -383,9 +391,7 @@ abstract contract Deposited is MocksSetup {
 
         usdc.mint(user, defaultAmount);
         usdc.approve(address(compactContract), defaultAmount);
-        compactContract.deposit(
-            address(usdc), address(erc7683Allocator), defaultResetPeriod, defaultScope, defaultAmount, user
-        );
+        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
 
         vm.stopPrank();
     }
@@ -468,9 +474,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         vm.startPrank(user);
         usdc.mint(user, defaultAmount);
         usdc.approve(address(compactContract), defaultAmount);
-        compactContract.deposit(
-            address(usdc), address(erc7683Allocator), defaultResetPeriod, defaultScope, defaultAmount, user
-        );
+        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
         vm.stopPrank();
 
         // Create a malicious signature
@@ -494,9 +498,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         vm.startPrank(user);
         usdc.mint(user, defaultAmount);
         usdc.approve(address(compactContract), defaultAmount);
-        compactContract.deposit(
-            address(usdc), address(erc7683Allocator), defaultResetPeriod, defaultScope, defaultAmount, user
-        );
+        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
         vm.stopPrank();
 
         (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, bytes memory sponsorSignature) =
@@ -549,9 +551,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         vm.startPrank(user);
         usdc.mint(user, defaultAmount);
         usdc.approve(address(compactContract), defaultAmount);
-        compactContract.deposit(
-            address(usdc), address(erc7683Allocator), defaultResetPeriod, defaultScope, defaultAmount, user
-        );
+        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
         vm.stopPrank();
 
         (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, bytes memory sponsorSignature) =
@@ -606,9 +606,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         vm.startPrank(user);
         usdc.mint(user, defaultAmount);
         usdc.approve(address(compactContract), defaultAmount);
-        compactContract.deposit(
-            address(usdc), address(erc7683Allocator), defaultResetPeriod, defaultScope, defaultAmount, user
-        );
+        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
         vm.stopPrank();
 
         // use the nonce once
@@ -648,7 +646,7 @@ contract ERC7683Allocator_open is OnChainCrossChainOrderData {
         IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_ = _getOnChainCrossChainOrder();
 
         vm.prank(attacker);
-        vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidSponsor.selector, user, attacker));
+        vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidSignature.selector, user, attacker));
         erc7683Allocator.open(onChainCrossChainOrder_);
     }
 
@@ -657,9 +655,7 @@ contract ERC7683Allocator_open is OnChainCrossChainOrderData {
         vm.startPrank(user);
         usdc.mint(user, defaultAmount);
         usdc.approve(address(compactContract), defaultAmount);
-        compactContract.deposit(
-            address(usdc), address(erc7683Allocator), defaultResetPeriod, defaultScope, defaultAmount, user
-        );
+        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
 
         // we do NOT register a claim
 
@@ -676,39 +672,12 @@ contract ERC7683Allocator_open is OnChainCrossChainOrderData {
         erc7683Allocator.open(onChainCrossChainOrder_);
     }
 
-    function test_revert_InvalidRegistration_Expired() public {
-        // we deposit tokens
-        vm.startPrank(user);
-        usdc.mint(user, defaultAmount);
-        usdc.approve(address(compactContract), defaultAmount);
-        compactContract.deposit(
-            address(usdc), address(erc7683Allocator), defaultResetPeriod, defaultScope, defaultAmount, user
-        );
-
-        // we register a claim with a expiration that is too short
-        Compact memory compact_ = _getCompact();
-        Mandate memory mandate_ = _getMandate();
-
-        bytes32 claimHash = _hashCompact(compact_, mandate_);
-        bytes32 typeHash = _getTypeHash();
-        compactContract.register(claimHash, typeHash, defaultResetPeriodTimestamp - 1);
-
-        vm.stopPrank();
-        (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
-
-        vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidRegistration.selector, user, claimHash));
-        erc7683Allocator.open(onChainCrossChainOrder_);
-    }
-
     function test_successful() public {
         // Deposit tokens
         vm.startPrank(user);
         usdc.mint(user, defaultAmount);
         usdc.approve(address(compactContract), defaultAmount);
-        compactContract.deposit(
-            address(usdc), address(erc7683Allocator), defaultResetPeriod, defaultScope, defaultAmount, user
-        );
+        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
 
         // register a claim
         Compact memory compact_ = _getCompact();
@@ -716,7 +685,7 @@ contract ERC7683Allocator_open is OnChainCrossChainOrderData {
 
         bytes32 claimHash = _hashCompact(compact_, mandate_);
         bytes32 typeHash = _getTypeHash();
-        compactContract.register(claimHash, typeHash, defaultResetPeriodTimestamp);
+        compactContract.register(claimHash, typeHash);
 
         vm.stopPrank();
 
@@ -775,9 +744,7 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
         vm.startPrank(user);
         usdc.mint(user, defaultAmount);
         usdc.approve(address(compactContract), defaultAmount);
-        compactContract.deposit(
-            address(usdc), address(erc7683Allocator), defaultResetPeriod, defaultScope, defaultAmount, user
-        );
+        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
 
         // register a claim
         Compact memory compact_ = _getCompact();
@@ -785,7 +752,7 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
 
         bytes32 claimHash = _hashCompact(compact_, mandate_);
         bytes32 typeHash = _getTypeHash();
-        compactContract.register(claimHash, typeHash, defaultResetPeriodTimestamp);
+        compactContract.register(claimHash, typeHash);
 
         address filler = makeAddr('filler');
         vm.assertEq(compactContract.balanceOf(user, usdcId), defaultAmount);
@@ -796,7 +763,9 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
         // we do NOT open the order or lock the tokens
 
         // claim should be fail, because we mess with the nonce
-        Component memory component = Component({claimant: filler, amount: defaultAmount});
+        Component memory component = Component({claimant: uint256(uint160(filler)), amount: defaultAmount});
+        Component[] memory components = new Component[](1);
+        components[0] = component;
         Claim memory claim = Claim({
             allocatorData: abi.encode(
                 erc7683Allocator.QUALIFICATION_TYPEHASH(), defaultTargetBlock, defaultMaximumBlocksAfterTarget
@@ -809,7 +778,7 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
             witnessTypestring: witnessTypeString,
             id: usdcId,
             allocatedAmount: defaultAmount,
-            claimants: component
+            claimants: components
         });
         vm.prank(arbiter);
         vm.expectRevert(abi.encodeWithSelector(0x8baa579f)); // check for the InvalidSignature() error in the Compact contract
@@ -824,9 +793,7 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
         vm.startPrank(user);
         usdc.mint(user, defaultAmount);
         usdc.approve(address(compactContract), defaultAmount);
-        compactContract.deposit(
-            address(usdc), address(erc7683Allocator), defaultResetPeriod, defaultScope, defaultAmount, user
-        );
+        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
 
         // register a claim
         Compact memory compact_ = _getCompact();
@@ -834,7 +801,7 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
 
         bytes32 claimHash = _hashCompact(compact_, mandate_);
         bytes32 typeHash = _getTypeHash();
-        compactContract.register(claimHash, typeHash, defaultResetPeriodTimestamp);
+        compactContract.register(claimHash, typeHash);
 
         address filler = makeAddr('filler');
         vm.assertEq(compactContract.balanceOf(user, usdcId), defaultAmount);
@@ -846,7 +813,9 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
         vm.stopPrank();
 
         // claim should be successful
-        Component memory component = Component({claimant: filler, amount: defaultAmount});
+        Component memory component = Component({claimant: uint256(uint160(filler)), amount: defaultAmount});
+        Component[] memory components = new Component[](1);
+        components[0] = component;
         Claim memory claim = Claim({
             allocatorData: abi.encode(
                 erc7683Allocator.QUALIFICATION_TYPEHASH(), defaultTargetBlock, defaultMaximumBlocksAfterTarget
@@ -873,7 +842,7 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
             witnessTypestring: witnessTypeString,
             id: usdcId,
             allocatedAmount: defaultAmount,
-            claimants: component
+            claimants: components
         });
         vm.prank(arbiter);
         compactContract.claim(claim);
@@ -887,9 +856,7 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
         vm.startPrank(user);
         usdc.mint(user, defaultAmount);
         usdc.approve(address(compactContract), defaultAmount);
-        compactContract.deposit(
-            address(usdc), address(erc7683Allocator), defaultResetPeriod, defaultScope, defaultAmount, user
-        );
+        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
 
         // register a claim
         Compact memory compact_ = _getCompact();
@@ -897,7 +864,7 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
 
         bytes32 claimHash = _hashCompact(compact_, mandate_);
         bytes32 typeHash = _getTypeHash();
-        compactContract.register(claimHash, typeHash, defaultResetPeriodTimestamp);
+        compactContract.register(claimHash, typeHash);
 
         address filler = makeAddr('filler');
         vm.assertEq(compactContract.balanceOf(user, usdcId), defaultAmount);
@@ -910,7 +877,9 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
         vm.stopPrank();
 
         // claim should be successful
-        Component memory component = Component({claimant: filler, amount: defaultAmount});
+        Component memory component = Component({claimant: uint256(uint160(filler)), amount: defaultAmount});
+        Component[] memory components = new Component[](1);
+        components[0] = component;
         Claim memory claim = Claim({
             allocatorData: abi.encode(erc7683Allocator.QUALIFICATION_TYPEHASH(), uint256(0), uint256(0)),
             sponsorSignature: '',
@@ -935,7 +904,7 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
             witnessTypestring: witnessTypeString,
             id: usdcId,
             allocatedAmount: defaultAmount,
-            claimants: component
+            claimants: components
         });
         vm.prank(arbiter);
         compactContract.claim(claim);
@@ -1127,9 +1096,7 @@ contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
         vm.startPrank(user);
         usdc.mint(user, defaultAmount);
         usdc.approve(address(compactContract), defaultAmount);
-        compactContract.deposit(
-            address(usdc), address(erc7683Allocator), defaultResetPeriod, defaultScope, defaultAmount, user
-        );
+        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
 
         // register a claim
         Compact memory compact_ = _getCompact();
@@ -1137,7 +1104,7 @@ contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
 
         bytes32 claimHash = _hashCompact(compact_, mandate_);
         bytes32 typeHash = _getTypeHash();
-        compactContract.register(claimHash, typeHash, defaultResetPeriodTimestamp);
+        compactContract.register(claimHash, typeHash);
 
         (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
         erc7683Allocator.open(onChainCrossChainOrder_);
@@ -1155,9 +1122,7 @@ contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
         vm.startPrank(user);
         usdc.mint(user, defaultAmount);
         usdc.approve(address(compactContract), defaultAmount);
-        compactContract.deposit(
-            address(usdc), address(erc7683Allocator), defaultResetPeriod, defaultScope, defaultAmount, user
-        );
+        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
 
         // register a claim
         Compact memory compact_ = _getCompact();
@@ -1165,7 +1130,7 @@ contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
 
         bytes32 claimHash = _hashCompact(compact_, mandate_);
         bytes32 typeHash = _getTypeHash();
-        compactContract.register(claimHash, typeHash, defaultResetPeriodTimestamp);
+        compactContract.register(claimHash, typeHash);
 
         (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
         erc7683Allocator.open(onChainCrossChainOrder_);

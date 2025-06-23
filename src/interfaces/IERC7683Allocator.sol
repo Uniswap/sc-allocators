@@ -11,14 +11,15 @@ interface IERC7683Allocator is IOriginSettler {
         address sponsor; // The account to source the tokens from.
         uint256 nonce; // A parameter to enforce replay protection, scoped to allocator.
         uint256 expires; // The time at which the claim expires.
-        uint256 id; // The token ID of the ERC6909 token to allocate.
+        bytes12 lockTag; // The token ID of the ERC6909 token to allocate.
+        address inputToken; // The token address of the ERC6909 token to allocate.
         uint256 amount; // The amount of ERC6909 tokens to allocate.
         // MANDATE
         uint256 chainId; // (implicit arg, included in EIP712 payload)
         address tribunal; // (implicit arg, included in EIP712 payload)
         address recipient; // Recipient of settled tokens
         // uint256 expires; // Mandate expiration timestamp
-        address token; // Settlement token (address(0) for native)
+        address settlementToken; // Settlement token (address(0) for native)
         uint256 minimumAmount; // Minimum settlement amount
         uint256 baselinePriorityFee; // Base fee threshold where scaling kicks in
         uint256 scalingFactor; // Fee scaling multiplier (1e18 baseline)
@@ -35,14 +36,15 @@ interface IERC7683Allocator is IOriginSettler {
         // address sponsor; // The account to source the tokens from.
         // uint256 nonce; // A parameter to enforce replay protection, scoped to allocator.
         // uint256 expires; // The time at which the claim expires.
-        uint256 id; // The token ID of the ERC6909 token to allocate.
+        bytes12 lockTag; // The lock tag of the ERC6909 token to allocate.
+        address inputToken; // The token address of the ERC6909 token to allocate.
         uint256 amount; // The amount of ERC6909 tokens to allocate.
         // MANDATE
         uint256 chainId; // (implicit arg, included in EIP712 payload)
         address tribunal; // (implicit arg, included in EIP712 payload)
         address recipient; // Recipient of settled tokens
         // uint256 expires; // Mandate expiration timestamp
-        address token; // Settlement token (address(0) for native)
+        address settlementToken; // Settlement token (address(0) for native)
         uint256 minimumAmount; // Minimum settlement amount
         uint256 baselinePriorityFee; // Base fee threshold where scaling kicks in
         uint256 scalingFactor; // Fee scaling multiplier (1e18 baseline)
@@ -63,7 +65,7 @@ interface IERC7683Allocator is IOriginSettler {
         address tribunal; // (implicit arg, included in EIP712 payload)
         address recipient; // Recipient of settled tokens
         uint256 expires; // Mandate expiration timestamp
-        address token; // Settlement token (address(0) for native)
+        address settlementToken; // Settlement token (address(0) for native)
         uint256 minimumAmount; // Minimum settlement amount
         uint256 baselinePriorityFee; // Base fee threshold where scaling kicks in
         uint256 scalingFactor; // Fee scaling multiplier (1e18 baseline)
