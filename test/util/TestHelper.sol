@@ -7,6 +7,15 @@ import {ResetPeriod} from 'lib/the-compact/src/types/ResetPeriod.sol';
 import {Scope} from 'lib/the-compact/src/types/Scope.sol';
 
 contract TestHelper {
+    function _toLockTag(address allocator, Scope scope, ResetPeriod resetPeriod)
+        internal
+        pure
+        returns (bytes12 lockTag)
+    {
+        uint96 allocatorId = _toAllocatorId(allocator);
+        return IdLib.toLockTag(allocatorId, scope, resetPeriod);
+    }
+
     function _toId(Scope scope, ResetPeriod resetPeriod, address allocator, address token)
         internal
         pure
