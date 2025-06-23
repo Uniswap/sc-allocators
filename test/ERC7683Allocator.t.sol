@@ -8,15 +8,19 @@ import {TheCompact} from '@uniswap/the-compact/TheCompact.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 
 import {IdLib} from '@uniswap/the-compact/lib/IdLib.sol';
+
+import {Claim} from '@uniswap/the-compact/types/Claims.sol';
+import {Component} from '@uniswap/the-compact/types/Components.sol';
 import {COMPACT_TYPEHASH, Compact} from '@uniswap/the-compact/types/EIP712Types.sol';
 import {ForcedWithdrawalStatus} from '@uniswap/the-compact/types/ForcedWithdrawalStatus.sol';
 import {ResetPeriod} from '@uniswap/the-compact/types/ResetPeriod.sol';
 import {Scope} from '@uniswap/the-compact/types/Scope.sol';
-import {Test} from 'forge-std/Test.sol';
+import {Test, console} from 'forge-std/Test.sol';
 
-import {console} from 'forge-std/console.sol';
+import {TestHelper} from 'test/util/TestHelper.sol';
+
 import {ERC7683Allocator} from 'src/allocators/ERC7683Allocator.sol';
-import {Claim, Mandate} from 'src/allocators/types/TribunalStructs.sol';
+import {Claim as TribunalClaim, Mandate} from 'src/allocators/types/TribunalStructs.sol';
 import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 import {IERC7683Allocator} from 'src/interfaces/IERC7683Allocator.sol';
 
@@ -24,7 +28,7 @@ import {ISimpleAllocator} from 'src/interfaces/ISimpleAllocator.sol';
 import {ERC20Mock} from 'src/test/ERC20Mock.sol';
 import {TheCompactMock} from 'src/test/TheCompactMock.sol';
 
-abstract contract MocksSetup is Test {
+abstract contract MocksSetup is Test, TestHelper {
     address user;
     uint256 userPK;
     address attacker;
@@ -61,13 +65,8 @@ abstract contract MocksSetup is Test {
         usdc = new ERC20Mock('USDC', 'USDC');
         compactContract = new TheCompact();
         erc7683Allocator = new ERC7683Allocator(address(compactContract), 5, 100);
-        Lock memory lock = Lock({
-            token: address(usdc),
-            allocator: address(erc7683Allocator),
-            resetPeriod: defaultResetPeriod,
-            scope: defaultScope
-        });
-        usdcId = IdLib.toId(lock);
+
+        usdcId = _toId(defaultScope, defaultResetPeriod, address(erc7683Allocator), address(usdc));
         (attacker, attackerPK) = makeAddrAndKey('attacker');
         defaultNonce = uint256(bytes32(abi.encodePacked(user, uint96(1))));
 
@@ -517,7 +516,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
             recipient: '',
             chainId: block.chainid
         });
-        Claim memory claim = Claim({
+        TribunalClaim memory claim = TribunalClaim({
             chainId: block.chainid,
             compact: _getCompact(),
             sponsorSignature: sponsorSignature,
@@ -572,7 +571,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
             recipient: '',
             chainId: block.chainid
         });
-        Claim memory claim = Claim({
+        TribunalClaim memory claim = TribunalClaim({
             chainId: block.chainid,
             compact: _getCompact(),
             sponsorSignature: sponsorSignature,
@@ -737,8 +736,12 @@ contract ERC7683Allocator_open is OnChainCrossChainOrderData {
             recipient: '',
             chainId: block.chainid
         });
-        Claim memory claim =
-            Claim({chainId: block.chainid, compact: _getCompact(), sponsorSignature: '', allocatorSignature: ''});
+        TribunalClaim memory claim = TribunalClaim({
+            chainId: block.chainid,
+            compact: _getCompact(),
+            sponsorSignature: '',
+            allocatorSignature: ''
+        });
         fillInstructions[0] = IOriginSettler.FillInstruction({
             destinationChainId: defaultOutputChainId,
             destinationSettler: bytes32(uint256(uint160(tribunal))),
@@ -793,20 +796,20 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
         // we do NOT open the order or lock the tokens
 
         // claim should be fail, because we mess with the nonce
-        QualifiedClaimWithWitness memory claim = QualifiedClaimWithWitness({
-            allocatorSignature: '',
+        Component memory component = Component({claimant: filler, amount: defaultAmount});
+        Claim memory claim = Claim({
+            allocatorData: abi.encode(
+                erc7683Allocator.QUALIFICATION_TYPEHASH(), defaultTargetBlock, defaultMaximumBlocksAfterTarget
+            ),
             sponsorSignature: '',
             sponsor: user,
             nonce: defaultNonce,
             expires: compact_.expires,
             witness: keccak256(abi.encode(keccak256(bytes(mandateTypeString)), mandate_)),
             witnessTypestring: witnessTypeString,
-            qualificationTypehash: erc7683Allocator.QUALIFICATION_TYPEHASH(),
-            qualificationPayload: abi.encode(defaultTargetBlock, defaultMaximumBlocksAfterTarget),
             id: usdcId,
             allocatedAmount: defaultAmount,
-            claimant: filler,
-            amount: defaultAmount
+            claimants: component
         });
         vm.prank(arbiter);
         vm.expectRevert(abi.encodeWithSelector(0x8baa579f)); // check for the InvalidSignature() error in the Compact contract
@@ -843,8 +846,11 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
         vm.stopPrank();
 
         // claim should be successful
-        QualifiedClaimWithWitness memory claim = QualifiedClaimWithWitness({
-            allocatorSignature: '',
+        Component memory component = Component({claimant: filler, amount: defaultAmount});
+        Claim memory claim = Claim({
+            allocatorData: abi.encode(
+                erc7683Allocator.QUALIFICATION_TYPEHASH(), defaultTargetBlock, defaultMaximumBlocksAfterTarget
+            ),
             sponsorSignature: '',
             sponsor: user,
             nonce: defaultNonce,
@@ -865,12 +871,9 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
                 )
             ),
             witnessTypestring: witnessTypeString,
-            qualificationTypehash: erc7683Allocator.QUALIFICATION_TYPEHASH(),
-            qualificationPayload: abi.encode(defaultTargetBlock, defaultMaximumBlocksAfterTarget),
             id: usdcId,
             allocatedAmount: defaultAmount,
-            claimant: filler,
-            amount: defaultAmount
+            claimants: component
         });
         vm.prank(arbiter);
         compactContract.claim(claim);
@@ -907,8 +910,9 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
         vm.stopPrank();
 
         // claim should be successful
-        QualifiedClaimWithWitness memory claim = QualifiedClaimWithWitness({
-            allocatorSignature: '',
+        Component memory component = Component({claimant: filler, amount: defaultAmount});
+        Claim memory claim = Claim({
+            allocatorData: abi.encode(erc7683Allocator.QUALIFICATION_TYPEHASH(), uint256(0), uint256(0)),
             sponsorSignature: '',
             sponsor: user,
             nonce: defaultNonce,
@@ -929,12 +933,9 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
                 )
             ),
             witnessTypestring: witnessTypeString,
-            qualificationTypehash: erc7683Allocator.QUALIFICATION_TYPEHASH(),
-            qualificationPayload: abi.encode(uint256(0), uint256(0)),
             id: usdcId,
             allocatedAmount: defaultAmount,
-            claimant: filler,
-            amount: defaultAmount
+            claimants: component
         });
         vm.prank(arbiter);
         compactContract.claim(claim);
@@ -970,7 +971,7 @@ contract ERC7683Allocator_resolveFor is GaslessCrossChainOrderData {
             recipient: '',
             chainId: block.chainid
         });
-        Claim memory claim = Claim({
+        TribunalClaim memory claim = TribunalClaim({
             chainId: block.chainid,
             compact: _getCompact(),
             sponsorSignature: '', // sponsorSignature, // THE SIGNATURE MUST BE ADDED MANUALLY BY THE FILLER WITH THE CURRENT SYSTEM, BEFORE FILLING THE ORDER ON THE TARGET CHAIN
@@ -1040,8 +1041,12 @@ contract ERC7683Allocator_resolve is OnChainCrossChainOrderData {
             recipient: '',
             chainId: block.chainid
         });
-        Claim memory claim =
-            Claim({chainId: block.chainid, compact: _getCompact(), sponsorSignature: '', allocatorSignature: ''});
+        TribunalClaim memory claim = TribunalClaim({
+            chainId: block.chainid,
+            compact: _getCompact(),
+            sponsorSignature: '',
+            allocatorSignature: ''
+        });
         fillInstructions[0] = IOriginSettler.FillInstruction({
             destinationChainId: defaultOutputChainId,
             destinationSettler: bytes32(uint256(uint160(tribunal))),
