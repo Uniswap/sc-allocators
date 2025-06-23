@@ -197,23 +197,6 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         return this.authorizeClaim.selector;
     }
 
-    function allocatorDataSpecification()
-        external
-        pure
-        override
-        returns (
-            uint256 specificationId, // An identifier indicating a required "standard" for allocatorData.
-            string memory claimEncoding, // The encoding of the `allocatorData` payload on claim processing.
-            string memory registrationEncoding, // The encoding of the `allocatorData` payload on claim registration.
-            bytes memory context // Any additional context as defined by the specificationId.
-        )
-    {
-        specificationId = 0;
-        claimEncoding = '';
-        registrationEncoding = '';
-        context = '';
-    }
-
     /// @inheritdoc IERC7683Allocator
     function getCompactWitnessTypeString() external pure returns (string memory) {
         return
