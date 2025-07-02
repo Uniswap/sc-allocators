@@ -8,8 +8,11 @@ import {Claim, Mandate} from './types/TribunalStructs.sol';
 
 import {IERC1271} from '@openzeppelin/contracts/interfaces/IERC1271.sol';
 import {ECDSA} from '@openzeppelin/contracts/utils/cryptography/ECDSA.sol';
+
+import {LibBytes} from '@solady/utils/LibBytes.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {Compact} from '@uniswap/the-compact/types/EIP712Types.sol';
+import {console} from 'forge-std/console.sol';
 
 contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
     /// @notice The typehash of the OrderData struct
@@ -37,6 +40,10 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
     /// @notice uint256(uint8(keccak256("ERC7683Allocator.nonce")))
     uint8 internal constant NONCE_MASTER_SLOT_SEED = 0x39;
 
+    uint8 internal constant ORDERDATA_OFFSET = 0xa0;
+
+    uint8 internal constant ORDERDATA_GASLESS_OFFSET = 0x40;
+
     bytes32 immutable _COMPACT_DOMAIN_SEPARATOR;
 
     constructor(address compactContract_, uint256 minWithdrawalDelay_, uint256 maxWithdrawalDelay_)
@@ -60,12 +67,27 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         }
 
         // Decode the orderData
-        OrderDataGasless memory orderDataGasless = abi.decode(order_.orderData, (OrderDataGasless));
+        bytes calldata orderDataGaslessBytes = LibBytes.dynamicStructInCalldata(order_.orderData, 0x00);
+        uint256 mandateOffset;
+        assembly ("memory-safe") {
+            mandateOffset := add(orderDataGaslessBytes.offset, 0xa0) // mandate starts at orderData.chainId (0x80). Add 0x20, as the offset points at the length
+        }
 
-        OrderData memory orderData =
-            _convertGaslessOrderData(order_.user, order_.nonce, order_.openDeadline, orderDataGasless);
+        // Extract the resolved order early to reduce stack pressure
+        ResolvedCrossChainOrder memory resolvedOrder = _resolveOrder(
+            order_.user,
+            order_.nonce,
+            order_.openDeadline,
+            order_.fillDeadline,
+            orderDataGaslessBytes,
+            ORDERDATA_GASLESS_OFFSET,
+            sponsorSignature_
+        );
 
-        _open(orderData, order_.fillDeadline, order_.user, sponsorSignature_);
+        // Extract mandateHash early to reduce stack pressure
+        bytes32 mandateHash = _mandateHash(mandateOffset, order_.fillDeadline);
+
+        _open(orderDataGaslessBytes, ORDERDATA_GASLESS_OFFSET, sponsorSignature_, mandateHash, resolvedOrder);
     }
 
     /// @inheritdoc IERC7683Allocator
@@ -76,10 +98,35 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         }
 
         // Decode the orderData
-        OrderData memory orderData = abi.decode(order.orderData, (OrderData));
-        _checkMsgSender(orderData.sponsor);
+        bytes calldata orderDataBytes = LibBytes.dynamicStructInCalldata(order.orderData, 0x00);
+        OrderData calldata orderData;
+        uint256 mandateOffset;
+        assembly ("memory-safe") {
+            orderData := orderDataBytes.offset
+            mandateOffset := add(orderDataBytes.offset, 0xe0) // mandate starts at orderData.chainId
+        }
 
-        _open(orderData, order.fillDeadline, msg.sender, '');
+        console.log('-1');
+
+        _checkMsgSender(orderData.sponsor);
+        console.log('0');
+
+        // Extract mandateHash early to reduce stack pressure
+        bytes32 mandateHash = _mandateHash(mandateOffset, order.fillDeadline);
+        // Extract the resolved order early to reduce stack pressure
+        ResolvedCrossChainOrder memory resolvedOrder = _resolveOrder(
+            orderData.sponsor,
+            orderData.nonce,
+            uint32(orderData.expires),
+            order.fillDeadline,
+            orderDataBytes,
+            ORDERDATA_OFFSET,
+            LibBytes.emptyCalldata()
+        );
+
+        console.log('1');
+
+        _open(orderDataBytes, ORDERDATA_OFFSET, LibBytes.emptyCalldata(), mandateHash, resolvedOrder);
     }
 
     /// @inheritdoc IERC7683Allocator
@@ -88,82 +135,105 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         view
         returns (ResolvedCrossChainOrder memory)
     {
-        OrderDataGasless memory orderDataGasless = abi.decode(order_.orderData, (OrderDataGasless));
+        bytes calldata orderDataGaslessBytes = LibBytes.dynamicStructInCalldata(order_.orderData, 0x00);
+        OrderDataGasless calldata orderDataGasless;
+        assembly ("memory-safe") {
+            orderDataGasless := orderDataGaslessBytes.offset
+        }
 
-        OrderData memory orderData =
-            _convertGaslessOrderData(order_.user, order_.nonce, order_.openDeadline, orderDataGasless);
-        return _resolveOrder(order_.user, order_.fillDeadline, orderData, '');
+        return _resolveOrder(
+            order_.user,
+            order_.nonce,
+            order_.openDeadline,
+            order_.fillDeadline,
+            orderDataGaslessBytes,
+            ORDERDATA_GASLESS_OFFSET,
+            LibBytes.emptyCalldata()
+        );
     }
 
     /// @inheritdoc IERC7683Allocator
     function resolve(OnchainCrossChainOrder calldata order_) external view returns (ResolvedCrossChainOrder memory) {
-        OrderData memory orderData = abi.decode(order_.orderData, (OrderData));
-        return _resolveOrder(orderData.sponsor, order_.fillDeadline, orderData, '');
-    }
-
-    function registerClaim(
-        bytes32 claimHash, // The message hash representing the claim.
-        address, /* caller */ // The account initiating the registration.
-        address arbiter, // The account tasked with verifying and submitting the claim.
-        address sponsor, // The account to source the tokens from.
-        uint256 nonce, // A parameter to enforce replay protection, scoped to allocator.
-        uint256 expires, // The time at which the claim expires.
-        uint256[2][] calldata idsAndAmounts, // The allocated token IDs and amounts.
-        bytes calldata allocatorData // Arbitrary data provided by the caller.
-    ) external override onlyCompact returns (bytes4) {
-        if (idsAndAmounts.length > 1) {
-            revert BatchCompactsNotSupported();
+        bytes calldata orderDataBytes = LibBytes.dynamicStructInCalldata(order_.orderData, 0x00);
+        OrderData calldata orderData;
+        assembly ("memory-safe") {
+            orderData := orderDataBytes.offset
         }
-
-        // Enforce a nonce where the most significant 96 bits are the nonce and the least significant 160 bits are the sponsor
-        uint96 nonceWithoutAddress = _nonceValidation(sponsor, nonce);
-        // Set a nonce or revert if it is already used
-        _setNonce(sponsor, nonceWithoutAddress);
-
-        // We trust the compact to check the nonce and that this contract is the allocator connected to the id
-        _checkExpiration(expires);
-        (bytes12 lockTag, address token) = _separateId(idsAndAmounts[0][0]);
-        bytes32 tokenHash = _checkForActiveAllocation(sponsor, lockTag, token);
-        _checkForcedWithdrawal(sponsor, expires, lockTag, token);
-        _checkBalance(sponsor, idsAndAmounts[0][0], idsAndAmounts[0][1]); // TODO: Should the Compact check this prior to the callback?
-
-        OderDataCallback memory orderDataCallback = abi.decode(allocatorData, (OderDataCallback));
-        bytes32 qualifiedClaimHash = keccak256(
-            abi.encode(
-                QUALIFICATION_TYPEHASH,
-                claimHash,
-                orderDataCallback.targetBlock,
-                orderDataCallback.maximumBlocksAfterTarget
-            )
+        _nonceValidation(orderData.sponsor, orderData.nonce);
+        return _resolveOrder(
+            orderData.sponsor,
+            orderData.nonce,
+            orderData.expires,
+            order_.fillDeadline,
+            orderDataBytes,
+            ORDERDATA_OFFSET,
+            LibBytes.emptyCalldata()
         );
-
-        _lockTokens(tokenHash, idsAndAmounts[0][1], orderDataCallback.expires, qualifiedClaimHash);
-
-        OrderData memory orderData = OrderData({
-            arbiter: arbiter,
-            sponsor: sponsor,
-            nonce: nonce,
-            expires: expires,
-            lockTag: lockTag,
-            inputToken: token,
-            amount: idsAndAmounts[0][1],
-            chainId: orderDataCallback.chainId,
-            tribunal: orderDataCallback.tribunal,
-            recipient: orderDataCallback.recipient,
-            settlementToken: orderDataCallback.settlementToken,
-            minimumAmount: orderDataCallback.minimumAmount,
-            baselinePriorityFee: orderDataCallback.baselinePriorityFee,
-            scalingFactor: orderDataCallback.scalingFactor,
-            decayCurve: orderDataCallback.decayCurve,
-            salt: orderDataCallback.salt,
-            targetBlock: orderDataCallback.targetBlock,
-            maximumBlocksAfterTarget: orderDataCallback.maximumBlocksAfterTarget
-        });
-        // Emit an open event
-        emit Open(bytes32(nonce), _resolveOrder(sponsor, uint32(orderDataCallback.expires), orderData, ''));
-
-        return this.registerClaim.selector;
     }
+
+    // function registerClaim(
+    //     bytes32 claimHash, // The message hash representing the claim.
+    //     address, /* caller */ // The account initiating the registration.
+    //     address arbiter, // The account tasked with verifying and submitting the claim.
+    //     address sponsor, // The account to source the tokens from.
+    //     uint256 nonce, // A parameter to enforce replay protection, scoped to allocator.
+    //     uint256 expires, // The time at which the claim expires.
+    //     uint256[2][] calldata idsAndAmounts, // The allocated token IDs and amounts.
+    //     bytes calldata allocatorData // Arbitrary data provided by the caller.
+    // ) external override onlyCompact returns (bytes4) {
+    //     if (idsAndAmounts.length > 1) {
+    //         revert BatchCompactsNotSupported();
+    //     }
+
+    //     // Enforce a nonce where the most significant 96 bits are the nonce and the least significant 160 bits are the sponsor
+    //     uint96 nonceWithoutAddress = _nonceValidation(sponsor, nonce);
+    //     // Set a nonce or revert if it is already used
+    //     _setNonce(sponsor, nonceWithoutAddress);
+
+    //     // We trust the compact to check the nonce and that this contract is the allocator connected to the id
+    //     _checkExpiration(expires);
+    //     (bytes12 lockTag, address token) = _separateId(idsAndAmounts[0][0]);
+    //     bytes32 tokenHash = _checkForActiveAllocation(sponsor, lockTag, token);
+    //     _checkForcedWithdrawal(sponsor, expires, lockTag, token);
+    //     _checkBalance(sponsor, idsAndAmounts[0][0], idsAndAmounts[0][1]); // TODO: Should the Compact check this prior to the callback?
+
+    //     OderDataCallback memory orderDataCallback = abi.decode(allocatorData, (OderDataCallback));
+    //     bytes32 qualifiedClaimHash = keccak256(
+    //         abi.encode(
+    //             QUALIFICATION_TYPEHASH,
+    //             claimHash,
+    //             orderDataCallback.targetBlock,
+    //             orderDataCallback.maximumBlocksAfterTarget
+    //         )
+    //     );
+
+    //     _lockTokens(tokenHash, idsAndAmounts[0][1], orderDataCallback.expires, qualifiedClaimHash);
+
+    //     OrderData memory orderData = OrderData({
+    //         arbiter: arbiter,
+    //         sponsor: sponsor,
+    //         nonce: nonce,
+    //         expires: expires,
+    //         lockTag: lockTag,
+    //         inputToken: token,
+    //         amount: idsAndAmounts[0][1],
+    //         chainId: orderDataCallback.chainId,
+    //         tribunal: orderDataCallback.tribunal,
+    //         recipient: orderDataCallback.recipient,
+    //         settlementToken: orderDataCallback.settlementToken,
+    //         minimumAmount: orderDataCallback.minimumAmount,
+    //         baselinePriorityFee: orderDataCallback.baselinePriorityFee,
+    //         scalingFactor: orderDataCallback.scalingFactor,
+    //         decayCurve: orderDataCallback.decayCurve,
+    //         salt: orderDataCallback.salt,
+    //         targetBlock: orderDataCallback.targetBlock,
+    //         maximumBlocksAfterTarget: orderDataCallback.maximumBlocksAfterTarget
+    //     });
+    //     // Emit an open event
+    //     emit Open(bytes32(nonce), _resolveOrder(sponsor, uint32(orderDataCallback.expires), orderData, ''));
+
+    //     return this.registerClaim.selector;
+    // }
 
     function authorizeClaim(
         bytes32 claimHash, // The message hash representing the claim.
@@ -221,91 +291,120 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         return fillerData;
     }
 
-    function _open(OrderData memory orderData_, uint32 fillDeadline_, address sponsor_, bytes memory sponsorSignature_)
-        internal
-    {
+    function _open(
+        bytes calldata orderData_,
+        uint256 lockTagOffset,
+        bytes calldata sponsorSignature_,
+        bytes32 mandateHash_,
+        ResolvedCrossChainOrder memory resolvedOrder_
+    ) internal {
+        uint256 nonce_ = uint256(resolvedOrder_.orderId);
         // Enforce a nonce where the most significant 96 bits are the nonce and the least significant 160 bits are the sponsor
-        uint96 nonceWithoutAddress = _nonceValidation(sponsor_, orderData_.nonce);
+        uint96 nonceWithoutAddress = _nonceValidation(resolvedOrder_.user, nonce_);
         // Set a nonce or revert if it is already used
-        _setNonce(sponsor_, nonceWithoutAddress);
+        _setNonce(resolvedOrder_.user, nonceWithoutAddress);
 
         // We do not enforce a specific tribunal or arbiter. This will allow to support new arbiters and tribunals after the deployment of the allocator
         // Going with an immutable arbiter and tribunal would limit support for new chains with a fully decentralized allocator
 
-        bytes32 tokenHash = _verifyAllocation(
-            sponsor_, orderData_.lockTag, orderData_.inputToken, orderData_.amount, orderData_.expires, orderData_.nonce
-        );
+        bytes32 tokenHash =
+            _verifyAllocation(resolvedOrder_.user, nonce_, resolvedOrder_.openDeadline, orderData_, lockTagOffset);
+
+        console.log('2');
+
+        uint256 lockTagAbsoluteOffset;
+        assembly ("memory-safe") {
+            lockTagAbsoluteOffset := add(orderData_.offset, lockTagOffset)
+        }
 
         // Create the Compact claim hash
-        bytes32 claimHash = keccak256(
-            abi.encode(
-                COMPACT_WITNESS_TYPEHASH,
-                orderData_.arbiter,
-                sponsor_,
-                orderData_.nonce,
-                orderData_.expires,
-                orderData_.lockTag,
-                orderData_.inputToken,
-                orderData_.amount,
-                keccak256(
-                    abi.encode(
-                        MANDATE_TYPEHASH,
-                        orderData_.chainId,
-                        orderData_.tribunal,
-                        orderData_.recipient,
-                        fillDeadline_,
-                        orderData_.settlementToken,
-                        orderData_.minimumAmount,
-                        orderData_.baselinePriorityFee,
-                        orderData_.scalingFactor,
-                        keccak256(abi.encodePacked(orderData_.decayCurve)),
-                        orderData_.salt
-                    )
-                )
-            )
-        );
+        bytes32 claimHash;
+        assembly ("memory-safe") {
+            let m := mload(0x40)
+            mstore(m, COMPACT_WITNESS_TYPEHASH)
+            calldatacopy(add(m, 0x20), orderData_.offset, 0x20) // arbiter
+            mstore(add(m, 0x40), mload(resolvedOrder_)) // sponsor (first item in resolvedOrder_)
+            mstore(add(m, 0x60), nonce_) // nonce
+            mstore(add(m, 0x80), add(resolvedOrder_, 0x40)) // Compact.expires (third item in resolvedOrder_)
+            calldatacopy(add(m, 0xa0), lockTagAbsoluteOffset, 0x60) // lockTag, inputToken, amount
+            mstore(add(m, 0x100), mandateHash_)
+            claimHash := keccak256(m, 0x120)
+        }
+
+        console.log('3');
 
         // We check for the length, which means this could also be triggered by a zero length signature provided in the openFor function. This enables relaying of orders if the claim was registered on the compact.
         if (sponsorSignature_.length > 0) {
             bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), _COMPACT_DOMAIN_SEPARATOR, claimHash));
             // confirm the signature matches the digest
-            address signer = ECDSA.recover(digest, sponsorSignature_);
-            if (sponsor_ != signer) {
-                revert InvalidSignature(sponsor_, signer);
+            address signer_ = ECDSA.recover(digest, sponsorSignature_);
+            if (resolvedOrder_.user != signer_) {
+                revert InvalidSignature(resolvedOrder_.user, signer_);
             }
         } else {
             // confirm the claim hash is registered on the compact
-            (bool isActive) = ITheCompact(COMPACT_CONTRACT).isRegistered(sponsor_, claimHash, COMPACT_WITNESS_TYPEHASH);
+            (bool isActive) =
+                ITheCompact(COMPACT_CONTRACT).isRegistered(resolvedOrder_.user, claimHash, COMPACT_WITNESS_TYPEHASH);
             if (!isActive) {
-                revert InvalidRegistration(sponsor_, claimHash);
+                revert InvalidRegistration(resolvedOrder_.user, claimHash);
             }
         }
 
-        bytes32 qualifiedClaimHash = keccak256(
-            abi.encode(QUALIFICATION_TYPEHASH, claimHash, orderData_.targetBlock, orderData_.maximumBlocksAfterTarget)
-        );
+        console.log('4');
 
-        _lockTokens(tokenHash, orderData_.amount, orderData_.expires, qualifiedClaimHash);
+        bytes32 qualifiedClaimHash;
+        assembly ("memory-safe") {
+            let m := mload(0x40)
+            mstore(m, QUALIFICATION_TYPEHASH)
+            mstore(add(m, 0x20), claimHash)
+
+            mstore(add(m, 0x40), 0x0) // clear targetBlock
+            mstore(add(m, 0x60), 0x0) // clear maximumBlocksAfterTarget
+            if eq(lockTagOffset, ORDERDATA_OFFSET) {
+                // if data is of type OrderData, copy targetBlock and maximumBlocksAfterTarget
+                calldatacopy(add(m, 0x40), add(lockTagAbsoluteOffset, 0x180), 0x40) // targetBlock, maximumBlocksAfterTarget
+            }
+            qualifiedClaimHash := keccak256(m, 0x80)
+        }
+        uint256 amount;
+        assembly ("memory-safe") {
+            // load amount from orderData_
+            amount := calldataload(add(lockTagAbsoluteOffset, 0x40))
+            let m := mload(0x40)
+        }
+
+        console.log('5');
+
+        _lockTokens(tokenHash, amount, resolvedOrder_.openDeadline, qualifiedClaimHash);
 
         // Emit an open event
-        emit Open(bytes32(orderData_.nonce), _resolveOrder(sponsor_, fillDeadline_, orderData_, sponsorSignature_));
+        emit Open(bytes32(nonce_), resolvedOrder_);
     }
 
     function _verifyAllocation(
-        address sponsor,
-        bytes12 lockTag,
-        address token,
-        uint256 amount,
-        uint256 expires,
-        uint256 nonce
+        address sponsor_,
+        uint256 nonce_,
+        uint32 openDeadline_,
+        bytes calldata orderData_,
+        uint256 lockTagOffset
     ) internal view returns (bytes32 tokenHash_) {
+        bytes12 lockTag;
+        address inputToken;
+        uint256 amount;
+
+        assembly ("memory-safe") {
+            lockTag := calldataload(add(orderData_.offset, lockTagOffset))
+            inputToken := calldataload(add(orderData_.offset, add(lockTagOffset, 0x20)))
+            amount := calldataload(add(orderData_.offset, add(lockTagOffset, 0x40)))
+        }
+
         // Check for a valid allocation
-        tokenHash_ = _checkForActiveAllocation(sponsor, lockTag, token);
-        _checkAllocator(lockTag, token);
-        _checkExpiration(expires);
-        _checkNonce(nonce);
-        _checkForcedWithdrawal(sponsor, expires, lockTag, token);
-        _checkBalance(sponsor, _getTokenId(lockTag, token), amount);
+        tokenHash_ = _checkForActiveAllocation(sponsor_, lockTag, inputToken);
+        _checkAllocator(lockTag, inputToken);
+        _checkExpiration(openDeadline_);
+        _checkNonce(nonce_);
+        _checkForcedWithdrawal(sponsor_, openDeadline_, lockTag, inputToken);
+        _checkBalance(sponsor_, _getTokenId(lockTag, inputToken), amount);
 
         return tokenHash_;
     }
@@ -318,71 +417,112 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
 
     function _resolveOrder(
         address sponsor,
+        uint256 nonce,
+        uint256 expires,
         uint32 fillDeadline,
-        OrderData memory orderData,
-        bytes memory sponsorSignature
+        bytes calldata orderData,
+        uint256 lockTagOffset,
+        bytes calldata sponsorSignature
     ) internal view returns (ResolvedCrossChainOrder memory) {
-        FillInstruction[] memory fillInstructions = new FillInstruction[](1);
-
-        Mandate memory mandate = Mandate({
-            recipient: orderData.recipient,
-            expires: fillDeadline,
-            token: orderData.settlementToken,
-            minimumAmount: orderData.minimumAmount,
-            baselinePriorityFee: orderData.baselinePriorityFee,
-            scalingFactor: orderData.scalingFactor,
-            decayCurve: orderData.decayCurve,
-            salt: orderData.salt
+        ResolvedCrossChainOrder memory resolvedOrder = ResolvedCrossChainOrder({
+            user: sponsor,
+            originChainId: block.chainid,
+            openDeadline: uint32(expires),
+            fillDeadline: fillDeadline,
+            orderId: bytes32(nonce),
+            maxSpent: new Output[](0),
+            minReceived: new Output[](0),
+            fillInstructions: new FillInstruction[](0)
         });
+
+        Compact memory compact;
+
+        assembly ("memory-safe") {
+            let m := mload(0x40)
+
+            calldatacopy(m, orderData.offset, 0x20) // arbiter
+            mstore(add(m, 0x20), sponsor) // sponsor
+            mstore(add(m, 0x40), nonce) // nonce
+            mstore(add(m, 0x60), expires) // expires
+            calldatacopy(add(m, 0x80), add(orderData.offset, lockTagOffset), 0x60) // lockTag, inputToken, amount
+
+            compact := m
+            mstore(0x40, add(m, 0xe0)) // update free memory pointer
+        }
+
         Claim memory claim = Claim({
             chainId: block.chainid,
-            compact: Compact({
-                arbiter: orderData.arbiter,
-                sponsor: sponsor,
-                nonce: orderData.nonce,
-                expires: orderData.expires,
-                lockTag: orderData.lockTag,
-                token: orderData.inputToken,
-                amount: orderData.amount
-            }),
+            compact: compact,
             sponsorSignature: sponsorSignature,
             allocatorSignature: '' // No signature required from this allocator, it will verify the claim on chain via ERC1271.
         });
 
+        Mandate memory mandate;
+        assembly ("memory-safe") {
+            let m := mload(0x40)
+
+            let mandateOffset := add(add(orderData.offset, lockTagOffset), 0x60)
+
+            calldatacopy(m, add(mandateOffset, 0x40), 0x20) // recipient
+            mstore(add(m, 0x20), fillDeadline) // expires
+            calldatacopy(add(m, 0x40), add(mandateOffset, 0x60), 0xc0) // settlementToken, minimumAmount, baselinePriorityFee, scalingFactor, decayCurve.offset, salt
+            mstore(add(m, 0xc0), add(m, 0x100)) // update decayCurve.offset to point to the absolute memory location of decayCurve.length
+
+            let decayCurveOffset := calldataload(add(mandateOffset, 0xe0))
+            let decayCurveLength := calldataload(decayCurveOffset)
+
+            calldatacopy(add(m, 0x100), decayCurveOffset, add(decayCurveLength, 0x20)) // decayCurve.length, decayCurve.content
+
+            mandate := m
+
+            let length := add(0x120, decayCurveLength)
+
+            mstore(0x40, add(m, length)) // update free memory pointer
+        }
+
+        uint256 chainId;
+        bytes32 tribunal;
+        uint256 targetBlock;
+        uint256 maximumBlocksAfterTarget;
+
+        assembly ("memory-safe") {
+            let mandateOffset := add(add(orderData.offset, lockTagOffset), 0x60)
+            chainId := calldataload(mandateOffset)
+            tribunal := calldataload(add(mandateOffset, 0x20))
+            let isOrderData := eq(lockTagOffset, ORDERDATA_OFFSET)
+            // Multiply the data calldata value by 0 if OrderDataGasless, as OrderDataGasless does not support targetBlock and maximumBlocksAfterTarget
+            targetBlock := mul(calldataload(add(mandateOffset, mul(0x120, isOrderData))), isOrderData) // Multiply targetBlock offset by 0 if OrderDataGasless to prevent out of bounds calldata read
+            maximumBlocksAfterTarget := mul(calldataload(add(mandateOffset, mul(0x140, isOrderData))), isOrderData) // Multiply maximumBlocksAfterTarget offset by 0 if OrderDataGasless to prevent out of bounds calldata read
+        }
+
+        FillInstruction[] memory fillInstructions = new FillInstruction[](1);
         fillInstructions[0] = FillInstruction({
-            destinationChainId: orderData.chainId,
-            destinationSettler: _addressToBytes32(orderData.tribunal),
-            originData: abi.encode(claim, mandate, orderData.targetBlock, orderData.maximumBlocksAfterTarget)
+            destinationChainId: chainId,
+            destinationSettler: tribunal,
+            originData: abi.encode(claim, mandate, targetBlock, maximumBlocksAfterTarget)
         });
+        resolvedOrder.fillInstructions = fillInstructions;
 
         Output memory spent = Output({
-            token: _addressToBytes32(orderData.settlementToken),
+            token: _addressToBytes32(mandate.token),
             amount: type(uint256).max,
-            recipient: _addressToBytes32(orderData.recipient),
-            chainId: orderData.chainId
+            recipient: _addressToBytes32(mandate.recipient),
+            chainId: chainId
         });
+        Output[] memory maxSpent = new Output[](1);
+        maxSpent[0] = spent;
+        resolvedOrder.maxSpent = maxSpent;
+
         Output memory received = Output({
-            token: _addressToBytes32(orderData.inputToken),
-            amount: orderData.amount,
+            token: _addressToBytes32(compact.token),
+            amount: compact.amount,
             recipient: bytes32(0),
             chainId: block.chainid
         });
-
-        Output[] memory maxSpent = new Output[](1);
-        maxSpent[0] = spent;
         Output[] memory minReceived = new Output[](1);
         minReceived[0] = received;
+        resolvedOrder.minReceived = minReceived;
 
-        ResolvedCrossChainOrder memory resolvedOrder = ResolvedCrossChainOrder({
-            user: sponsor,
-            originChainId: block.chainid,
-            openDeadline: uint32(orderData.expires),
-            fillDeadline: fillDeadline,
-            orderId: bytes32(orderData.nonce),
-            maxSpent: maxSpent,
-            minReceived: minReceived,
-            fillInstructions: fillInstructions
-        });
         return resolvedOrder;
     }
 
@@ -424,11 +564,46 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         }
     }
 
+    function _mandateHash(uint256 mandateOffset, uint32 fillDeadline) internal pure returns (bytes32 mandateHash_) {
+        // total mandate length: x140 + decayCurve.length
+        assembly ("memory-safe") {
+            let m := mload(0x40)
+
+            let decayCurveOffset := calldataload(add(mandateOffset, 0xe0))
+            let decayCurveLength := calldataload(decayCurveOffset)
+
+            let l := add(0x140, decayCurveLength) // length if decayCurve.length was 0 (0x120) + decayCurve.length
+
+            mstore(m, MANDATE_TYPEHASH)
+            calldatacopy(add(m, 0x20), mandateOffset, 0x60) // chainid, tribunal and recipient
+            mstore(add(m, 0x80), fillDeadline)
+            calldatacopy(add(m, 0xa0), add(mandateOffset, 0x60), 0xc0) // settlementToken, minimumAmount, baselinePriorityFee, scalingFactor, decayCurve.offset, salt
+            mstore(add(m, 0x120), add(m, 0x160)) // update decayCurve.offset to point to the absolute memory location of decayCurve.length
+            calldatacopy(add(m, 0x160), decayCurveOffset, add(decayCurveLength, 0x20)) // decayCurve.length, decayCurve.content
+
+            mandateHash_ := keccak256(m, add(l, 0x20)) // mandate typehash + mandate data length
+        }
+
+        // 0x00:  MANDATE_TYPEHASH
+        // 0x20:  chainid
+        // 0x40:  tribunal
+        // 0x60:  recipient
+        // 0x80:  fillDeadline
+        // 0xa0:  settlementToken
+        // 0xc0:  minimumAmount
+        // 0xe0:  baselinePriorityFee
+        // 0x100: scalingFactor
+        // 0x120: decayCurve.offset
+        // 0x140: salt
+        // 0x160: decayCurve.length
+        // 0x180: decayCurve.content
+    }
+
     function _convertGaslessOrderData(
         address sponsor_,
         uint256 nonce_,
         uint32 openDeadline_,
-        OrderDataGasless memory orderDataGasless_
+        OrderDataGasless calldata orderDataGasless_
     ) internal pure returns (OrderData memory orderData_) {
         orderData_ = OrderData({
             arbiter: orderDataGasless_.arbiter,
