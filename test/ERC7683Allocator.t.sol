@@ -112,6 +112,7 @@ abstract contract CreateHash is MocksSetup {
     }
 
     function _hashCompact(Compact memory data, Mandate memory mandate) internal view returns (bytes32 compactHash) {
+        bytes32 mandateHash = _hashMandate(mandate);
         return keccak256(
             abi.encode(
                 keccak256(bytes(compactWitnessTypeString)),
@@ -122,21 +123,25 @@ abstract contract CreateHash is MocksSetup {
                 data.lockTag,
                 data.token,
                 data.amount,
-                keccak256(
-                    abi.encode(
-                        keccak256(bytes(mandateTypeString)),
-                        defaultOutputChainId,
-                        tribunal,
-                        mandate.recipient,
-                        mandate.expires,
-                        mandate.token,
-                        mandate.minimumAmount,
-                        mandate.baselinePriorityFee,
-                        mandate.scalingFactor,
-                        keccak256(abi.encodePacked(mandate.decayCurve)),
-                        mandate.salt
-                    )
-                )
+                mandateHash
+            )
+        );
+    }
+
+    function _hashMandate(Mandate memory mandate) internal view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                keccak256(bytes(mandateTypeString)),
+                defaultOutputChainId,
+                tribunal,
+                mandate.recipient,
+                mandate.expires,
+                mandate.token,
+                mandate.minimumAmount,
+                mandate.baselinePriorityFee,
+                mandate.scalingFactor,
+                keccak256(abi.encodePacked(mandate.decayCurve)),
+                mandate.salt
             )
         );
     }
@@ -397,233 +402,6 @@ abstract contract Deposited is MocksSetup {
     }
 }
 
-contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
-    function test_revert_InvalidOrderDataType() public {
-        // Order data type is invalid
-        bytes32 falseOrderDataType = keccak256('false');
-
-        vm.prank(user);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IERC7683Allocator.InvalidOrderDataType.selector,
-                falseOrderDataType,
-                erc7683Allocator.ORDERDATA_GASLESS_TYPEHASH()
-            )
-        );
-        (IOriginSettler.GaslessCrossChainOrder memory falseGaslessCrossChainOrder, bytes memory signature) =
-            _getGaslessCrossChainOrder();
-        falseGaslessCrossChainOrder.orderDataType = falseOrderDataType;
-        erc7683Allocator.openFor(falseGaslessCrossChainOrder, signature, '');
-    }
-
-    function test_revert_InvalidDecoding() public {
-        // Decoding fails because of additional data
-        vm.prank(user);
-        vm.expectRevert();
-        (IOriginSettler.GaslessCrossChainOrder memory falseGaslessCrossChainOrder, bytes memory signature) =
-            _getGaslessCrossChainOrder();
-        falseGaslessCrossChainOrder.orderData = abi.encode(falseGaslessCrossChainOrder.orderData, uint8(1));
-        erc7683Allocator.openFor(falseGaslessCrossChainOrder, signature, '');
-    }
-
-    function test_revert_InvalidOriginSettler() public {
-        // Origin settler is not the allocator
-        address falseOriginSettler = makeAddr('falseOriginSettler');
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IERC7683Allocator.InvalidOriginSettler.selector, falseOriginSettler, address(erc7683Allocator)
-            )
-        );
-        (IOriginSettler.GaslessCrossChainOrder memory falseGaslessCrossChainOrder, bytes memory signature) =
-        _getGaslessCrossChainOrder(
-            falseOriginSettler,
-            _getCompact(),
-            _getMandate(),
-            block.chainid,
-            ORDERDATA_GASLESS_TYPEHASH,
-            address(erc7683Allocator),
-            userPK
-        );
-        vm.prank(user);
-        erc7683Allocator.openFor(falseGaslessCrossChainOrder, signature, '');
-    }
-
-    function test_revert_InvalidNonce() public {
-        // Nonce is invalid because the least significant 160 bits are not the sponsor address
-        Compact memory compact_ = _getCompact();
-        compact_.nonce = uint256(bytes32(abi.encodePacked(uint96(1), attacker)));
-        vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidNonce.selector, compact_.nonce));
-        (IOriginSettler.GaslessCrossChainOrder memory falseGaslessCrossChainOrder, bytes memory signature) =
-        _getGaslessCrossChainOrder(
-            address(erc7683Allocator),
-            compact_,
-            _getMandate(),
-            block.chainid,
-            ORDERDATA_GASLESS_TYPEHASH,
-            address(erc7683Allocator),
-            userPK
-        );
-        vm.prank(user);
-        erc7683Allocator.openFor(falseGaslessCrossChainOrder, signature, '');
-    }
-
-    function test_revert_InvalidSponsorSignature() public {
-        // Sponsor signature is invalid
-
-        // Deposit tokens
-        vm.startPrank(user);
-        usdc.mint(user, defaultAmount);
-        usdc.approve(address(compactContract), defaultAmount);
-        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
-        vm.stopPrank();
-
-        // Create a malicious signature
-        (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, bytes memory sponsorSignature) =
-        _getGaslessCrossChainOrder(
-            address(erc7683Allocator),
-            _getCompact(),
-            _getMandate(),
-            block.chainid,
-            ORDERDATA_GASLESS_TYPEHASH,
-            address(compactContract),
-            attackerPK
-        );
-        vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidSignature.selector, user, attacker));
-        erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
-    }
-
-    function test_successful_userHimself() public {
-        // Deposit tokens
-        vm.startPrank(user);
-        usdc.mint(user, defaultAmount);
-        usdc.approve(address(compactContract), defaultAmount);
-        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
-        vm.stopPrank();
-
-        (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, bytes memory sponsorSignature) =
-            _getGaslessCrossChainOrder();
-        IOriginSettler.Output[] memory maxSpent = new IOriginSettler.Output[](1);
-        IOriginSettler.Output[] memory minReceived = new IOriginSettler.Output[](1);
-        IOriginSettler.FillInstruction[] memory fillInstructions = new IOriginSettler.FillInstruction[](1);
-        maxSpent[0] = IOriginSettler.Output({
-            token: bytes32(uint256(uint160(defaultOutputToken))),
-            amount: type(uint256).max,
-            recipient: bytes32(uint256(uint160(user))),
-            chainId: defaultOutputChainId
-        });
-        minReceived[0] = IOriginSettler.Output({
-            token: bytes32(uint256(uint160(address(usdc)))),
-            amount: defaultAmount,
-            recipient: '',
-            chainId: block.chainid
-        });
-        TribunalClaim memory claim = TribunalClaim({
-            chainId: block.chainid,
-            compact: _getCompact(),
-            sponsorSignature: sponsorSignature,
-            allocatorSignature: ''
-        });
-        fillInstructions[0] = IOriginSettler.FillInstruction({
-            destinationChainId: defaultOutputChainId,
-            destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate(), uint256(0), uint256(0))
-        });
-
-        IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
-            user: user,
-            originChainId: block.chainid,
-            openDeadline: uint32(_getClaimExpiration()),
-            fillDeadline: uint32(_getFillExpiration()),
-            orderId: bytes32(defaultNonce),
-            maxSpent: maxSpent,
-            minReceived: minReceived,
-            fillInstructions: fillInstructions
-        });
-        vm.prank(user);
-        vm.expectEmit(true, false, false, true, address(erc7683Allocator));
-        emit IOriginSettler.Open(bytes32(defaultNonce), resolvedCrossChainOrder);
-        erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
-    }
-
-    function test_successful_relayed() public {
-        // Deposit tokens
-        vm.startPrank(user);
-        usdc.mint(user, defaultAmount);
-        usdc.approve(address(compactContract), defaultAmount);
-        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
-        vm.stopPrank();
-
-        (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, bytes memory sponsorSignature) =
-            _getGaslessCrossChainOrder();
-        IOriginSettler.Output[] memory maxSpent = new IOriginSettler.Output[](1);
-        IOriginSettler.Output[] memory minReceived = new IOriginSettler.Output[](1);
-        IOriginSettler.FillInstruction[] memory fillInstructions = new IOriginSettler.FillInstruction[](1);
-        maxSpent[0] = IOriginSettler.Output({
-            token: bytes32(uint256(uint160(defaultOutputToken))),
-            amount: type(uint256).max,
-            recipient: bytes32(uint256(uint160(user))),
-            chainId: defaultOutputChainId
-        });
-        minReceived[0] = IOriginSettler.Output({
-            token: bytes32(uint256(uint160(address(usdc)))),
-            amount: defaultAmount,
-            recipient: '',
-            chainId: block.chainid
-        });
-        TribunalClaim memory claim = TribunalClaim({
-            chainId: block.chainid,
-            compact: _getCompact(),
-            sponsorSignature: sponsorSignature,
-            allocatorSignature: ''
-        });
-        fillInstructions[0] = IOriginSettler.FillInstruction({
-            destinationChainId: defaultOutputChainId,
-            destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate(), uint256(0), uint256(0))
-        });
-
-        IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
-            user: user,
-            originChainId: block.chainid,
-            openDeadline: uint32(_getClaimExpiration()),
-            fillDeadline: uint32(_getFillExpiration()),
-            orderId: bytes32(defaultNonce),
-            maxSpent: maxSpent,
-            minReceived: minReceived,
-            fillInstructions: fillInstructions
-        });
-        vm.prank(makeAddr('filler'));
-        vm.expectEmit(true, false, false, true, address(erc7683Allocator));
-        emit IOriginSettler.Open(bytes32(defaultNonce), resolvedCrossChainOrder);
-        erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
-    }
-
-    function test_revert_NonceAlreadyInUse() public {
-        // Nonce is already used
-
-        // Deposit tokens
-        vm.startPrank(user);
-        usdc.mint(user, defaultAmount);
-        usdc.approve(address(compactContract), defaultAmount);
-        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
-        vm.stopPrank();
-
-        // use the nonce once
-        (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, bytes memory sponsorSignature) =
-            _getGaslessCrossChainOrder();
-        vm.prank(user);
-        erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
-
-        // try to use the nonce again
-        (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder2, bytes memory sponsorSignature2) =
-            _getGaslessCrossChainOrder();
-        vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.NonceAlreadyInUse.selector, defaultNonce));
-        erc7683Allocator.openFor(gaslessCrossChainOrder2, sponsorSignature2, '');
-    }
-}
-
 contract ERC7683Allocator_open is OnChainCrossChainOrderData {
     function test_revert_InvalidOrderDataType() public {
         // Order data type is invalid
@@ -646,11 +424,11 @@ contract ERC7683Allocator_open is OnChainCrossChainOrderData {
         IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_ = _getOnChainCrossChainOrder();
 
         vm.prank(attacker);
-        vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidSignature.selector, user, attacker));
+        vm.expectRevert(abi.encodeWithSelector(ISimpleAllocator.InvalidCaller.selector, attacker, user));
         erc7683Allocator.open(onChainCrossChainOrder_);
     }
 
-    function test_revert_InvalidRegistration_Unavailable() public {
+    function test_revert_InvalidRegistration() public {
         // we deposit tokens
         vm.startPrank(user);
         usdc.mint(user, defaultAmount);
@@ -734,409 +512,746 @@ contract ERC7683Allocator_open is OnChainCrossChainOrderData {
     }
 }
 
-contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, GaslessCrossChainOrderData {
-    function setUp() public override(OnChainCrossChainOrderData, GaslessCrossChainOrderData) {
-        super.setUp();
-    }
+// contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
+//     function test_revert_InvalidOrderDataType() public {
+//         // Order data type is invalid
+//         bytes32 falseOrderDataType = keccak256('false');
 
-    function test_revert_InvalidLock() public {
-        // Deposit tokens
-        vm.startPrank(user);
-        usdc.mint(user, defaultAmount);
-        usdc.approve(address(compactContract), defaultAmount);
-        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
+//         vm.prank(user);
+//         vm.expectRevert(
+//             abi.encodeWithSelector(
+//                 IERC7683Allocator.InvalidOrderDataType.selector,
+//                 falseOrderDataType,
+//                 erc7683Allocator.ORDERDATA_GASLESS_TYPEHASH()
+//             )
+//         );
+//         (IOriginSettler.GaslessCrossChainOrder memory falseGaslessCrossChainOrder, bytes memory signature) =
+//             _getGaslessCrossChainOrder();
+//         falseGaslessCrossChainOrder.orderDataType = falseOrderDataType;
+//         erc7683Allocator.openFor(falseGaslessCrossChainOrder, signature, '');
+//     }
 
-        // register a claim
-        Compact memory compact_ = _getCompact();
-        Mandate memory mandate_ = _getMandate();
+//     function test_revert_InvalidDecoding() public {
+//         // Decoding fails because of additional data
+//         vm.prank(user);
+//         vm.expectRevert();
+//         (IOriginSettler.GaslessCrossChainOrder memory falseGaslessCrossChainOrder, bytes memory signature) =
+//             _getGaslessCrossChainOrder();
+//         falseGaslessCrossChainOrder.orderData = abi.encode(falseGaslessCrossChainOrder.orderData, uint8(1));
+//         erc7683Allocator.openFor(falseGaslessCrossChainOrder, signature, '');
+//     }
 
-        bytes32 claimHash = _hashCompact(compact_, mandate_);
-        bytes32 typeHash = _getTypeHash();
-        compactContract.register(claimHash, typeHash);
+//     function test_revert_InvalidOriginSettler() public {
+//         // Origin settler is not the allocator
+//         address falseOriginSettler = makeAddr('falseOriginSettler');
+//         vm.expectRevert(
+//             abi.encodeWithSelector(
+//                 IERC7683Allocator.InvalidOriginSettler.selector, falseOriginSettler, address(erc7683Allocator)
+//             )
+//         );
+//         (IOriginSettler.GaslessCrossChainOrder memory falseGaslessCrossChainOrder, bytes memory signature) =
+//         _getGaslessCrossChainOrder(
+//             falseOriginSettler,
+//             _getCompact(),
+//             _getMandate(),
+//             block.chainid,
+//             ORDERDATA_GASLESS_TYPEHASH,
+//             address(erc7683Allocator),
+//             userPK
+//         );
+//         vm.prank(user);
+//         erc7683Allocator.openFor(falseGaslessCrossChainOrder, signature, '');
+//     }
 
-        address filler = makeAddr('filler');
-        vm.assertEq(compactContract.balanceOf(user, usdcId), defaultAmount);
-        vm.assertEq(compactContract.balanceOf(filler, usdcId), 0);
+//     function test_revert_InvalidNonce() public {
+//         // Nonce is invalid because the least significant 160 bits are not the sponsor address
+//         Compact memory compact_ = _getCompact();
+//         compact_.nonce = uint256(bytes32(abi.encodePacked(uint96(1), attacker)));
+//         vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidNonce.selector, compact_.nonce));
+//         (IOriginSettler.GaslessCrossChainOrder memory falseGaslessCrossChainOrder, bytes memory signature) =
+//         _getGaslessCrossChainOrder(
+//             address(erc7683Allocator),
+//             compact_,
+//             _getMandate(),
+//             block.chainid,
+//             ORDERDATA_GASLESS_TYPEHASH,
+//             address(erc7683Allocator),
+//             userPK
+//         );
+//         vm.prank(user);
+//         erc7683Allocator.openFor(falseGaslessCrossChainOrder, signature, '');
+//     }
 
-        vm.stopPrank();
+//     function test_revert_InvalidSponsorSignature() public {
+//         // Sponsor signature is invalid
 
-        // we do NOT open the order or lock the tokens
+//         // Deposit tokens
+//         vm.startPrank(user);
+//         usdc.mint(user, defaultAmount);
+//         usdc.approve(address(compactContract), defaultAmount);
+//         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
+//         vm.stopPrank();
 
-        // claim should be fail, because we mess with the nonce
-        Component memory component = Component({claimant: uint256(uint160(filler)), amount: defaultAmount});
-        Component[] memory components = new Component[](1);
-        components[0] = component;
-        Claim memory claim = Claim({
-            allocatorData: abi.encode(
-                erc7683Allocator.QUALIFICATION_TYPEHASH(), defaultTargetBlock, defaultMaximumBlocksAfterTarget
-            ),
-            sponsorSignature: '',
-            sponsor: user,
-            nonce: defaultNonce,
-            expires: compact_.expires,
-            witness: keccak256(abi.encode(keccak256(bytes(mandateTypeString)), mandate_)),
-            witnessTypestring: witnessTypeString,
-            id: usdcId,
-            allocatedAmount: defaultAmount,
-            claimants: components
-        });
-        vm.prank(arbiter);
-        vm.expectRevert(abi.encodeWithSelector(0x8baa579f)); // check for the InvalidSignature() error in the Compact contract
-        compactContract.claim(claim);
+//         // Create a malicious signature
+//         (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, bytes memory sponsorSignature) =
+//         _getGaslessCrossChainOrder(
+//             address(erc7683Allocator),
+//             _getCompact(),
+//             _getMandate(),
+//             block.chainid,
+//             ORDERDATA_GASLESS_TYPEHASH,
+//             address(compactContract),
+//             attackerPK
+//         );
+//         vm.prank(user);
+//         vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidSignature.selector, user, attacker));
+//         erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
+//     }
 
-        vm.assertEq(compactContract.balanceOf(user, usdcId), defaultAmount);
-        vm.assertEq(compactContract.balanceOf(filler, usdcId), 0);
-    }
+//     function test_successful_userHimself() public {
+//         // Deposit tokens
+//         vm.startPrank(user);
+//         usdc.mint(user, defaultAmount);
+//         usdc.approve(address(compactContract), defaultAmount);
+//         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
+//         vm.stopPrank();
 
-    function test_isValidSignature_successful_open() public {
-        // Deposit tokens
-        vm.startPrank(user);
-        usdc.mint(user, defaultAmount);
-        usdc.approve(address(compactContract), defaultAmount);
-        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
+//         (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, bytes memory sponsorSignature) =
+//             _getGaslessCrossChainOrder();
+//         IOriginSettler.Output[] memory maxSpent = new IOriginSettler.Output[](1);
+//         IOriginSettler.Output[] memory minReceived = new IOriginSettler.Output[](1);
+//         IOriginSettler.FillInstruction[] memory fillInstructions = new IOriginSettler.FillInstruction[](1);
+//         maxSpent[0] = IOriginSettler.Output({
+//             token: bytes32(uint256(uint160(defaultOutputToken))),
+//             amount: type(uint256).max,
+//             recipient: bytes32(uint256(uint160(user))),
+//             chainId: defaultOutputChainId
+//         });
+//         minReceived[0] = IOriginSettler.Output({
+//             token: bytes32(uint256(uint160(address(usdc)))),
+//             amount: defaultAmount,
+//             recipient: '',
+//             chainId: block.chainid
+//         });
+//         TribunalClaim memory claim = TribunalClaim({
+//             chainId: block.chainid,
+//             compact: _getCompact(),
+//             sponsorSignature: sponsorSignature,
+//             allocatorSignature: ''
+//         });
+//         fillInstructions[0] = IOriginSettler.FillInstruction({
+//             destinationChainId: defaultOutputChainId,
+//             destinationSettler: bytes32(uint256(uint160(tribunal))),
+//             originData: abi.encode(claim, _getMandate(), uint256(0), uint256(0))
+//         });
 
-        // register a claim
-        Compact memory compact_ = _getCompact();
-        Mandate memory mandate_ = _getMandate();
+//         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
+//             user: user,
+//             originChainId: block.chainid,
+//             openDeadline: uint32(_getClaimExpiration()),
+//             fillDeadline: uint32(_getFillExpiration()),
+//             orderId: bytes32(defaultNonce),
+//             maxSpent: maxSpent,
+//             minReceived: minReceived,
+//             fillInstructions: fillInstructions
+//         });
+//         vm.prank(user);
+//         vm.expectEmit(true, false, false, true, address(erc7683Allocator));
+//         emit IOriginSettler.Open(bytes32(defaultNonce), resolvedCrossChainOrder);
+//         erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
+//     }
 
-        bytes32 claimHash = _hashCompact(compact_, mandate_);
-        bytes32 typeHash = _getTypeHash();
-        compactContract.register(claimHash, typeHash);
+//     function test_successful_relayed() public {
+//         // Deposit tokens
+//         vm.startPrank(user);
+//         usdc.mint(user, defaultAmount);
+//         usdc.approve(address(compactContract), defaultAmount);
+//         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
+//         vm.stopPrank();
 
-        address filler = makeAddr('filler');
-        vm.assertEq(compactContract.balanceOf(user, usdcId), defaultAmount);
-        vm.assertEq(compactContract.balanceOf(filler, usdcId), 0);
+//         (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, bytes memory sponsorSignature) =
+//             _getGaslessCrossChainOrder();
+//         IOriginSettler.Output[] memory maxSpent = new IOriginSettler.Output[](1);
+//         IOriginSettler.Output[] memory minReceived = new IOriginSettler.Output[](1);
+//         IOriginSettler.FillInstruction[] memory fillInstructions = new IOriginSettler.FillInstruction[](1);
+//         maxSpent[0] = IOriginSettler.Output({
+//             token: bytes32(uint256(uint160(defaultOutputToken))),
+//             amount: type(uint256).max,
+//             recipient: bytes32(uint256(uint160(user))),
+//             chainId: defaultOutputChainId
+//         });
+//         minReceived[0] = IOriginSettler.Output({
+//             token: bytes32(uint256(uint160(address(usdc)))),
+//             amount: defaultAmount,
+//             recipient: '',
+//             chainId: block.chainid
+//         });
+//         TribunalClaim memory claim = TribunalClaim({
+//             chainId: block.chainid,
+//             compact: _getCompact(),
+//             sponsorSignature: sponsorSignature,
+//             allocatorSignature: ''
+//         });
+//         fillInstructions[0] = IOriginSettler.FillInstruction({
+//             destinationChainId: defaultOutputChainId,
+//             destinationSettler: bytes32(uint256(uint160(tribunal))),
+//             originData: abi.encode(claim, _getMandate(), uint256(0), uint256(0))
+//         });
 
-        // we open the order and lock the tokens
-        (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
-        erc7683Allocator.open(onChainCrossChainOrder_);
-        vm.stopPrank();
+//         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
+//             user: user,
+//             originChainId: block.chainid,
+//             openDeadline: uint32(_getClaimExpiration()),
+//             fillDeadline: uint32(_getFillExpiration()),
+//             orderId: bytes32(defaultNonce),
+//             maxSpent: maxSpent,
+//             minReceived: minReceived,
+//             fillInstructions: fillInstructions
+//         });
+//         vm.prank(makeAddr('filler'));
+//         vm.expectEmit(true, false, false, true, address(erc7683Allocator));
+//         emit IOriginSettler.Open(bytes32(defaultNonce), resolvedCrossChainOrder);
+//         erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
+//     }
 
-        // claim should be successful
-        Component memory component = Component({claimant: uint256(uint160(filler)), amount: defaultAmount});
-        Component[] memory components = new Component[](1);
-        components[0] = component;
-        Claim memory claim = Claim({
-            allocatorData: abi.encode(
-                erc7683Allocator.QUALIFICATION_TYPEHASH(), defaultTargetBlock, defaultMaximumBlocksAfterTarget
-            ),
-            sponsorSignature: '',
-            sponsor: user,
-            nonce: defaultNonce,
-            expires: compact_.expires,
-            witness: keccak256(
-                abi.encode(
-                    keccak256(bytes(mandateTypeString)),
-                    defaultOutputChainId,
-                    tribunal,
-                    mandate_.recipient,
-                    mandate_.expires,
-                    mandate_.token,
-                    mandate_.minimumAmount,
-                    mandate_.baselinePriorityFee,
-                    mandate_.scalingFactor,
-                    keccak256(abi.encodePacked(mandate_.decayCurve)),
-                    mandate_.salt
-                )
-            ),
-            witnessTypestring: witnessTypeString,
-            id: usdcId,
-            allocatedAmount: defaultAmount,
-            claimants: components
-        });
-        vm.prank(arbiter);
-        compactContract.claim(claim);
+//     function test_revert_NonceAlreadyInUse() public {
+//         // Nonce is already used
 
-        vm.assertEq(compactContract.balanceOf(user, usdcId), 0);
-        vm.assertEq(compactContract.balanceOf(filler, usdcId), defaultAmount);
-    }
+//         // Deposit tokens
+//         vm.startPrank(user);
+//         usdc.mint(user, defaultAmount);
+//         usdc.approve(address(compactContract), defaultAmount);
+//         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
+//         vm.stopPrank();
 
-    function test_isValidSignature_successful_openFor() public {
-        // Deposit tokens
-        vm.startPrank(user);
-        usdc.mint(user, defaultAmount);
-        usdc.approve(address(compactContract), defaultAmount);
-        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
+//         // use the nonce once
+//         (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, bytes memory sponsorSignature) =
+//             _getGaslessCrossChainOrder();
+//         vm.prank(user);
+//         erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
 
-        // register a claim
-        Compact memory compact_ = _getCompact();
-        Mandate memory mandate_ = _getMandate();
+//         // try to use the nonce again
+//         (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder2, bytes memory sponsorSignature2) =
+//             _getGaslessCrossChainOrder();
+//         vm.prank(user);
+//         vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.NonceAlreadyInUse.selector, defaultNonce));
+//         erc7683Allocator.openFor(gaslessCrossChainOrder2, sponsorSignature2, '');
+//     }
+// }
 
-        bytes32 claimHash = _hashCompact(compact_, mandate_);
-        bytes32 typeHash = _getTypeHash();
-        compactContract.register(claimHash, typeHash);
+// contract ERC7683Allocator_open is OnChainCrossChainOrderData {
+//     function test_revert_InvalidOrderDataType() public {
+//         // Order data type is invalid
+//         bytes32 falseOrderDataType = keccak256('false');
+//         IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_ = _getOnChainCrossChainOrder();
+//         onChainCrossChainOrder_.orderDataType = falseOrderDataType;
 
-        address filler = makeAddr('filler');
-        vm.assertEq(compactContract.balanceOf(user, usdcId), defaultAmount);
-        vm.assertEq(compactContract.balanceOf(filler, usdcId), 0);
+//         vm.prank(user);
+//         vm.expectRevert(
+//             abi.encodeWithSelector(
+//                 IERC7683Allocator.InvalidOrderDataType.selector,
+//                 falseOrderDataType,
+//                 erc7683Allocator.ORDERDATA_TYPEHASH()
+//             )
+//         );
+//         erc7683Allocator.open(onChainCrossChainOrder_);
+//     }
 
-        // we open the order and lock the tokens
-        (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, bytes memory sponsorSignature) =
-            _getGaslessCrossChainOrder();
-        erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
-        vm.stopPrank();
+//     function test_revert_InvalidSponsor() public {
+//         IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_ = _getOnChainCrossChainOrder();
 
-        // claim should be successful
-        Component memory component = Component({claimant: uint256(uint160(filler)), amount: defaultAmount});
-        Component[] memory components = new Component[](1);
-        components[0] = component;
-        Claim memory claim = Claim({
-            allocatorData: abi.encode(erc7683Allocator.QUALIFICATION_TYPEHASH(), uint256(0), uint256(0)),
-            sponsorSignature: '',
-            sponsor: user,
-            nonce: defaultNonce,
-            expires: compact_.expires,
-            witness: keccak256(
-                abi.encode(
-                    keccak256(bytes(mandateTypeString)),
-                    defaultOutputChainId,
-                    tribunal,
-                    mandate_.recipient,
-                    mandate_.expires,
-                    mandate_.token,
-                    mandate_.minimumAmount,
-                    mandate_.baselinePriorityFee,
-                    mandate_.scalingFactor,
-                    keccak256(abi.encodePacked(mandate_.decayCurve)),
-                    mandate_.salt
-                )
-            ),
-            witnessTypestring: witnessTypeString,
-            id: usdcId,
-            allocatedAmount: defaultAmount,
-            claimants: components
-        });
-        vm.prank(arbiter);
-        compactContract.claim(claim);
+//         vm.prank(attacker);
+//         vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidSignature.selector, user, attacker));
+//         erc7683Allocator.open(onChainCrossChainOrder_);
+//     }
 
-        vm.assertEq(compactContract.balanceOf(user, usdcId), 0);
-        vm.assertEq(compactContract.balanceOf(filler, usdcId), defaultAmount);
-    }
-}
+//     function test_revert_InvalidRegistration_Unavailable() public {
+//         // we deposit tokens
+//         vm.startPrank(user);
+//         usdc.mint(user, defaultAmount);
+//         usdc.approve(address(compactContract), defaultAmount);
+//         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
 
-contract ERC7683Allocator_resolveFor is GaslessCrossChainOrderData {
-    function test_resolve_successful() public {
-        // WITH THE CURRENT ERC7683 DESIGN, THE SPONSOR SIGNATURE IS NOT PROVIDED TO THE RESOLVE FUNCTION
-        // WHILE THE ResolvedCrossChainOrder WITHOUT THE SIGNATURE COULD STILL BE USED TO SIMULATE THE FILL,
-        // ACTUALLY USING THIS DATA WOULD RESULT IN A LOSS OF THE REWARD TOKENS FOR THE FILLER.
-        // THIS FEELS RISKY.
-        // THE CURRENT ALTERNATIVE WOULD BE HAVE THE INPUT SIGNATURE BEING LEFT EMPTY AND INSTEAD BE PROVIDED IN THE THE orderData OF THE GaslessCrossChainOrderData.
-        // THIS IS BOTH NOT IDEAL, SO CURRENTLY CHECKING FOR A SOLUTION.
+//         // we do NOT register a claim
 
-        (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, /*bytes memory sponsorSignature*/ ) =
-            _getGaslessCrossChainOrder();
-        IOriginSettler.Output[] memory maxSpent = new IOriginSettler.Output[](1);
-        IOriginSettler.Output[] memory minReceived = new IOriginSettler.Output[](1);
-        IOriginSettler.FillInstruction[] memory fillInstructions = new IOriginSettler.FillInstruction[](1);
-        maxSpent[0] = IOriginSettler.Output({
-            token: bytes32(uint256(uint160(defaultOutputToken))),
-            amount: type(uint256).max,
-            recipient: bytes32(uint256(uint160(user))),
-            chainId: defaultOutputChainId
-        });
-        minReceived[0] = IOriginSettler.Output({
-            token: bytes32(uint256(uint160(address(usdc)))),
-            amount: defaultAmount,
-            recipient: '',
-            chainId: block.chainid
-        });
-        TribunalClaim memory claim = TribunalClaim({
-            chainId: block.chainid,
-            compact: _getCompact(),
-            sponsorSignature: '', // sponsorSignature, // THE SIGNATURE MUST BE ADDED MANUALLY BY THE FILLER WITH THE CURRENT SYSTEM, BEFORE FILLING THE ORDER ON THE TARGET CHAIN
-            allocatorSignature: ''
-        });
-        fillInstructions[0] = IOriginSettler.FillInstruction({
-            destinationChainId: defaultOutputChainId,
-            destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate(), uint256(0), uint256(0))
-        });
+//         vm.stopPrank();
 
-        IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
-            user: user,
-            originChainId: block.chainid,
-            openDeadline: uint32(_getClaimExpiration()),
-            fillDeadline: uint32(_getFillExpiration()),
-            orderId: bytes32(defaultNonce),
-            maxSpent: maxSpent,
-            minReceived: minReceived,
-            fillInstructions: fillInstructions
-        });
-        IOriginSettler.ResolvedCrossChainOrder memory resolved =
-            erc7683Allocator.resolveFor(gaslessCrossChainOrder_, '');
-        assertEq(resolved.user, resolvedCrossChainOrder.user);
-        assertEq(resolved.originChainId, resolvedCrossChainOrder.originChainId);
-        assertEq(resolved.openDeadline, resolvedCrossChainOrder.openDeadline);
-        assertEq(resolved.fillDeadline, resolvedCrossChainOrder.fillDeadline);
-        assertEq(resolved.orderId, resolvedCrossChainOrder.orderId);
-        assertEq(resolved.maxSpent.length, resolvedCrossChainOrder.maxSpent.length);
-        assertEq(resolved.maxSpent[0].token, resolvedCrossChainOrder.maxSpent[0].token);
-        assertEq(resolved.maxSpent[0].amount, resolvedCrossChainOrder.maxSpent[0].amount);
-        assertEq(resolved.maxSpent[0].recipient, resolvedCrossChainOrder.maxSpent[0].recipient);
-        assertEq(resolved.maxSpent[0].chainId, resolvedCrossChainOrder.maxSpent[0].chainId);
-        assertEq(resolved.minReceived.length, resolvedCrossChainOrder.minReceived.length);
-        assertEq(resolved.minReceived[0].token, resolvedCrossChainOrder.minReceived[0].token);
-        assertEq(resolved.minReceived[0].amount, resolvedCrossChainOrder.minReceived[0].amount);
-        assertEq(resolved.minReceived[0].recipient, resolvedCrossChainOrder.minReceived[0].recipient);
-        assertEq(resolved.minReceived[0].chainId, resolvedCrossChainOrder.minReceived[0].chainId);
-        assertEq(resolved.fillInstructions.length, resolvedCrossChainOrder.fillInstructions.length);
-        assertEq(
-            resolved.fillInstructions[0].destinationChainId,
-            resolvedCrossChainOrder.fillInstructions[0].destinationChainId
-        );
-        assertEq(
-            resolved.fillInstructions[0].destinationSettler,
-            resolvedCrossChainOrder.fillInstructions[0].destinationSettler
-        );
-        assertEq(resolved.fillInstructions[0].originData, resolvedCrossChainOrder.fillInstructions[0].originData);
-    }
-}
+//         (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
 
-contract ERC7683Allocator_resolve is OnChainCrossChainOrderData {
-    function test_resolve_successful() public {
-        (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
-        IOriginSettler.Output[] memory maxSpent = new IOriginSettler.Output[](1);
-        IOriginSettler.Output[] memory minReceived = new IOriginSettler.Output[](1);
-        IOriginSettler.FillInstruction[] memory fillInstructions = new IOriginSettler.FillInstruction[](1);
-        maxSpent[0] = IOriginSettler.Output({
-            token: bytes32(uint256(uint160(defaultOutputToken))),
-            amount: type(uint256).max,
-            recipient: bytes32(uint256(uint160(user))),
-            chainId: defaultOutputChainId
-        });
-        minReceived[0] = IOriginSettler.Output({
-            token: bytes32(uint256(uint160(address(usdc)))),
-            amount: defaultAmount,
-            recipient: '',
-            chainId: block.chainid
-        });
-        TribunalClaim memory claim = TribunalClaim({
-            chainId: block.chainid,
-            compact: _getCompact(),
-            sponsorSignature: '',
-            allocatorSignature: ''
-        });
-        fillInstructions[0] = IOriginSettler.FillInstruction({
-            destinationChainId: defaultOutputChainId,
-            destinationSettler: bytes32(uint256(uint160(tribunal))),
-            originData: abi.encode(claim, _getMandate(), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
-        });
+//         Compact memory compact_ = _getCompact();
+//         Mandate memory mandate_ = _getMandate();
+//         bytes32 claimHash = _hashCompact(compact_, mandate_);
 
-        IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
-            user: user,
-            originChainId: block.chainid,
-            openDeadline: uint32(_getClaimExpiration()),
-            fillDeadline: uint32(_getFillExpiration()),
-            orderId: bytes32(defaultNonce),
-            maxSpent: maxSpent,
-            minReceived: minReceived,
-            fillInstructions: fillInstructions
-        });
-        IOriginSettler.ResolvedCrossChainOrder memory resolved = erc7683Allocator.resolve(onChainCrossChainOrder_);
-        assertEq(resolved.user, resolvedCrossChainOrder.user);
-        assertEq(resolved.originChainId, resolvedCrossChainOrder.originChainId);
-        assertEq(resolved.openDeadline, resolvedCrossChainOrder.openDeadline);
-        assertEq(resolved.fillDeadline, resolvedCrossChainOrder.fillDeadline);
-        assertEq(resolved.orderId, resolvedCrossChainOrder.orderId);
-        assertEq(resolved.maxSpent.length, resolvedCrossChainOrder.maxSpent.length);
-        assertEq(resolved.maxSpent[0].token, resolvedCrossChainOrder.maxSpent[0].token);
-        assertEq(resolved.maxSpent[0].amount, resolvedCrossChainOrder.maxSpent[0].amount);
-        assertEq(resolved.maxSpent[0].recipient, resolvedCrossChainOrder.maxSpent[0].recipient);
-        assertEq(resolved.maxSpent[0].chainId, resolvedCrossChainOrder.maxSpent[0].chainId);
-        assertEq(resolved.minReceived.length, resolvedCrossChainOrder.minReceived.length);
-        assertEq(resolved.minReceived[0].token, resolvedCrossChainOrder.minReceived[0].token);
-        assertEq(resolved.minReceived[0].amount, resolvedCrossChainOrder.minReceived[0].amount);
-        assertEq(resolved.minReceived[0].recipient, resolvedCrossChainOrder.minReceived[0].recipient);
-        assertEq(resolved.minReceived[0].chainId, resolvedCrossChainOrder.minReceived[0].chainId);
-        assertEq(resolved.fillInstructions.length, resolvedCrossChainOrder.fillInstructions.length);
-        assertEq(
-            resolved.fillInstructions[0].destinationChainId,
-            resolvedCrossChainOrder.fillInstructions[0].destinationChainId
-        );
-        assertEq(
-            resolved.fillInstructions[0].destinationSettler,
-            resolvedCrossChainOrder.fillInstructions[0].destinationSettler
-        );
-        assertEq(resolved.fillInstructions[0].originData, resolvedCrossChainOrder.fillInstructions[0].originData);
-    }
-}
+//         vm.prank(user);
+//         vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidRegistration.selector, user, claimHash));
+//         erc7683Allocator.open(onChainCrossChainOrder_);
+//     }
 
-contract ERC7683Allocator_getCompactWitnessTypeString is MocksSetup {
-    function test_getCompactWitnessTypeString() public view {
-        assertEq(
-            erc7683Allocator.getCompactWitnessTypeString(),
-            'Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt))'
-        );
-    }
-}
+//     function test_successful() public {
+//         // Deposit tokens
+//         vm.startPrank(user);
+//         usdc.mint(user, defaultAmount);
+//         usdc.approve(address(compactContract), defaultAmount);
+//         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
 
-contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
-    function test_revert_invalidNonce(uint256 nonce_) public {
-        address expectedSponsor;
-        assembly ("memory-safe") {
-            expectedSponsor := shr(96, nonce_)
-        }
-        vm.assume(user != expectedSponsor);
+//         // register a claim
+//         Compact memory compact_ = _getCompact();
+//         Mandate memory mandate_ = _getMandate();
 
-        vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidNonce.selector, nonce_));
-        erc7683Allocator.checkNonce(user, nonce_);
-    }
+//         bytes32 claimHash = _hashCompact(compact_, mandate_);
+//         bytes32 typeHash = _getTypeHash();
+//         compactContract.register(claimHash, typeHash);
 
-    function test_checkNonce_unused(uint96 nonce_) public view {
-        address sponsor = user;
-        uint256 nonce;
-        assembly ("memory-safe") {
-            nonce := or(shl(96, sponsor), shr(160, shl(160, nonce_)))
-        }
-        assertEq(erc7683Allocator.checkNonce(sponsor, nonce), true);
-    }
+//         vm.stopPrank();
 
-    function test_checkNonce_used() public {
-        // Deposit tokens
-        vm.startPrank(user);
-        usdc.mint(user, defaultAmount);
-        usdc.approve(address(compactContract), defaultAmount);
-        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
+//         (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
+//         IOriginSettler.Output[] memory maxSpent = new IOriginSettler.Output[](1);
+//         IOriginSettler.Output[] memory minReceived = new IOriginSettler.Output[](1);
+//         IOriginSettler.FillInstruction[] memory fillInstructions = new IOriginSettler.FillInstruction[](1);
+//         maxSpent[0] = IOriginSettler.Output({
+//             token: bytes32(uint256(uint160(defaultOutputToken))),
+//             amount: type(uint256).max,
+//             recipient: bytes32(uint256(uint160(user))),
+//             chainId: defaultOutputChainId
+//         });
+//         minReceived[0] = IOriginSettler.Output({
+//             token: bytes32(uint256(uint160(address(usdc)))),
+//             amount: defaultAmount,
+//             recipient: '',
+//             chainId: block.chainid
+//         });
+//         TribunalClaim memory claim = TribunalClaim({
+//             chainId: block.chainid,
+//             compact: _getCompact(),
+//             sponsorSignature: '',
+//             allocatorSignature: ''
+//         });
+//         fillInstructions[0] = IOriginSettler.FillInstruction({
+//             destinationChainId: defaultOutputChainId,
+//             destinationSettler: bytes32(uint256(uint160(tribunal))),
+//             originData: abi.encode(claim, _getMandate(), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
+//         });
 
-        // register a claim
-        Compact memory compact_ = _getCompact();
-        Mandate memory mandate_ = _getMandate();
+//         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
+//             user: user,
+//             originChainId: block.chainid,
+//             openDeadline: uint32(_getClaimExpiration()),
+//             fillDeadline: uint32(_getFillExpiration()),
+//             orderId: bytes32(defaultNonce),
+//             maxSpent: maxSpent,
+//             minReceived: minReceived,
+//             fillInstructions: fillInstructions
+//         });
+//         vm.prank(user);
+//         vm.expectEmit(true, false, false, true, address(erc7683Allocator));
+//         emit IOriginSettler.Open(bytes32(defaultNonce), resolvedCrossChainOrder);
+//         erc7683Allocator.open(onChainCrossChainOrder_);
+//     }
+// }
 
-        bytes32 claimHash = _hashCompact(compact_, mandate_);
-        bytes32 typeHash = _getTypeHash();
-        compactContract.register(claimHash, typeHash);
+// contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, GaslessCrossChainOrderData {
+//     function setUp() public override(OnChainCrossChainOrderData, GaslessCrossChainOrderData) {
+//         super.setUp();
+//     }
 
-        (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
-        erc7683Allocator.open(onChainCrossChainOrder_);
+//     function test_revert_InvalidLock() public {
+//         // Deposit tokens
+//         vm.startPrank(user);
+//         usdc.mint(user, defaultAmount);
+//         usdc.approve(address(compactContract), defaultAmount);
+//         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
 
-        vm.assertEq(erc7683Allocator.checkNonce(user, defaultNonce), false);
-        vm.stopPrank();
-    }
+//         // register a claim
+//         Compact memory compact_ = _getCompact();
+//         Mandate memory mandate_ = _getMandate();
 
-    function test_checkNonce_fuzz(uint8 nonce_) public {
-        uint256 nonce = uint256(bytes32(abi.encodePacked(user, uint96(nonce_))));
+//         bytes32 claimHash = _hashCompact(compact_, mandate_);
+//         bytes32 typeHash = _getTypeHash();
+//         compactContract.register(claimHash, typeHash);
 
-        bool sameNonce = nonce == defaultNonce;
+//         address filler = makeAddr('filler');
+//         vm.assertEq(compactContract.balanceOf(user, usdcId), defaultAmount);
+//         vm.assertEq(compactContract.balanceOf(filler, usdcId), 0);
 
-        // Deposit tokens
-        vm.startPrank(user);
-        usdc.mint(user, defaultAmount);
-        usdc.approve(address(compactContract), defaultAmount);
-        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
+//         vm.stopPrank();
 
-        // register a claim
-        Compact memory compact_ = _getCompact();
-        Mandate memory mandate_ = _getMandate();
+//         // we do NOT open the order or lock the tokens
 
-        bytes32 claimHash = _hashCompact(compact_, mandate_);
-        bytes32 typeHash = _getTypeHash();
-        compactContract.register(claimHash, typeHash);
+//         // claim should be fail, because we mess with the nonce
+//         Component memory component = Component({claimant: uint256(uint160(filler)), amount: defaultAmount});
+//         Component[] memory components = new Component[](1);
+//         components[0] = component;
+//         Claim memory claim = Claim({
+//             allocatorData: abi.encode(
+//                 erc7683Allocator.QUALIFICATION_TYPEHASH(), defaultTargetBlock, defaultMaximumBlocksAfterTarget
+//             ),
+//             sponsorSignature: '',
+//             sponsor: user,
+//             nonce: defaultNonce,
+//             expires: compact_.expires,
+//             witness: keccak256(abi.encode(keccak256(bytes(mandateTypeString)), mandate_)),
+//             witnessTypestring: witnessTypeString,
+//             id: usdcId,
+//             allocatedAmount: defaultAmount,
+//             claimants: components
+//         });
+//         vm.prank(arbiter);
+//         vm.expectRevert(abi.encodeWithSelector(0x8baa579f)); // check for the InvalidSignature() error in the Compact contract
+//         compactContract.claim(claim);
 
-        (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
-        erc7683Allocator.open(onChainCrossChainOrder_);
+//         vm.assertEq(compactContract.balanceOf(user, usdcId), defaultAmount);
+//         vm.assertEq(compactContract.balanceOf(filler, usdcId), 0);
+//     }
 
-        vm.assertEq(erc7683Allocator.checkNonce(user, nonce), !sameNonce);
+//     function test_isValidSignature_successful_open() public {
+//         // Deposit tokens
+//         vm.startPrank(user);
+//         usdc.mint(user, defaultAmount);
+//         usdc.approve(address(compactContract), defaultAmount);
+//         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
 
-        vm.stopPrank();
-    }
-}
+//         // register a claim
+//         Compact memory compact_ = _getCompact();
+//         Mandate memory mandate_ = _getMandate();
+
+//         bytes32 claimHash = _hashCompact(compact_, mandate_);
+//         bytes32 typeHash = _getTypeHash();
+//         compactContract.register(claimHash, typeHash);
+
+//         address filler = makeAddr('filler');
+//         vm.assertEq(compactContract.balanceOf(user, usdcId), defaultAmount);
+//         vm.assertEq(compactContract.balanceOf(filler, usdcId), 0);
+
+//         // we open the order and lock the tokens
+//         (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
+//         erc7683Allocator.open(onChainCrossChainOrder_);
+//         vm.stopPrank();
+
+//         // claim should be successful
+//         Component memory component = Component({claimant: uint256(uint160(filler)), amount: defaultAmount});
+//         Component[] memory components = new Component[](1);
+//         components[0] = component;
+//         Claim memory claim = Claim({
+//             allocatorData: abi.encode(
+//                 erc7683Allocator.QUALIFICATION_TYPEHASH(), defaultTargetBlock, defaultMaximumBlocksAfterTarget
+//             ),
+//             sponsorSignature: '',
+//             sponsor: user,
+//             nonce: defaultNonce,
+//             expires: compact_.expires,
+//             witness: keccak256(
+//                 abi.encode(
+//                     keccak256(bytes(mandateTypeString)),
+//                     defaultOutputChainId,
+//                     tribunal,
+//                     mandate_.recipient,
+//                     mandate_.expires,
+//                     mandate_.token,
+//                     mandate_.minimumAmount,
+//                     mandate_.baselinePriorityFee,
+//                     mandate_.scalingFactor,
+//                     keccak256(abi.encodePacked(mandate_.decayCurve)),
+//                     mandate_.salt
+//                 )
+//             ),
+//             witnessTypestring: witnessTypeString,
+//             id: usdcId,
+//             allocatedAmount: defaultAmount,
+//             claimants: components
+//         });
+//         vm.prank(arbiter);
+//         compactContract.claim(claim);
+
+//         vm.assertEq(compactContract.balanceOf(user, usdcId), 0);
+//         vm.assertEq(compactContract.balanceOf(filler, usdcId), defaultAmount);
+//     }
+
+//     function test_isValidSignature_successful_openFor() public {
+//         // Deposit tokens
+//         vm.startPrank(user);
+//         usdc.mint(user, defaultAmount);
+//         usdc.approve(address(compactContract), defaultAmount);
+//         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
+
+//         // register a claim
+//         Compact memory compact_ = _getCompact();
+//         Mandate memory mandate_ = _getMandate();
+
+//         bytes32 claimHash = _hashCompact(compact_, mandate_);
+//         bytes32 typeHash = _getTypeHash();
+//         compactContract.register(claimHash, typeHash);
+
+//         address filler = makeAddr('filler');
+//         vm.assertEq(compactContract.balanceOf(user, usdcId), defaultAmount);
+//         vm.assertEq(compactContract.balanceOf(filler, usdcId), 0);
+
+//         // we open the order and lock the tokens
+//         (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, bytes memory sponsorSignature) =
+//             _getGaslessCrossChainOrder();
+//         erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
+//         vm.stopPrank();
+
+//         // claim should be successful
+//         Component memory component = Component({claimant: uint256(uint160(filler)), amount: defaultAmount});
+//         Component[] memory components = new Component[](1);
+//         components[0] = component;
+//         Claim memory claim = Claim({
+//             allocatorData: abi.encode(erc7683Allocator.QUALIFICATION_TYPEHASH(), uint256(0), uint256(0)),
+//             sponsorSignature: '',
+//             sponsor: user,
+//             nonce: defaultNonce,
+//             expires: compact_.expires,
+//             witness: keccak256(
+//                 abi.encode(
+//                     keccak256(bytes(mandateTypeString)),
+//                     defaultOutputChainId,
+//                     tribunal,
+//                     mandate_.recipient,
+//                     mandate_.expires,
+//                     mandate_.token,
+//                     mandate_.minimumAmount,
+//                     mandate_.baselinePriorityFee,
+//                     mandate_.scalingFactor,
+//                     keccak256(abi.encodePacked(mandate_.decayCurve)),
+//                     mandate_.salt
+//                 )
+//             ),
+//             witnessTypestring: witnessTypeString,
+//             id: usdcId,
+//             allocatedAmount: defaultAmount,
+//             claimants: components
+//         });
+//         vm.prank(arbiter);
+//         compactContract.claim(claim);
+
+//         vm.assertEq(compactContract.balanceOf(user, usdcId), 0);
+//         vm.assertEq(compactContract.balanceOf(filler, usdcId), defaultAmount);
+//     }
+// }
+
+// contract ERC7683Allocator_resolveFor is GaslessCrossChainOrderData {
+//     function test_resolve_successful() public {
+//         // WITH THE CURRENT ERC7683 DESIGN, THE SPONSOR SIGNATURE IS NOT PROVIDED TO THE RESOLVE FUNCTION
+//         // WHILE THE ResolvedCrossChainOrder WITHOUT THE SIGNATURE COULD STILL BE USED TO SIMULATE THE FILL,
+//         // ACTUALLY USING THIS DATA WOULD RESULT IN A LOSS OF THE REWARD TOKENS FOR THE FILLER.
+//         // THIS FEELS RISKY.
+//         // THE CURRENT ALTERNATIVE WOULD BE HAVE THE INPUT SIGNATURE BEING LEFT EMPTY AND INSTEAD BE PROVIDED IN THE THE orderData OF THE GaslessCrossChainOrderData.
+//         // THIS IS BOTH NOT IDEAL, SO CURRENTLY CHECKING FOR A SOLUTION.
+
+//         (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, /*bytes memory sponsorSignature*/ ) =
+//             _getGaslessCrossChainOrder();
+//         IOriginSettler.Output[] memory maxSpent = new IOriginSettler.Output[](1);
+//         IOriginSettler.Output[] memory minReceived = new IOriginSettler.Output[](1);
+//         IOriginSettler.FillInstruction[] memory fillInstructions = new IOriginSettler.FillInstruction[](1);
+//         maxSpent[0] = IOriginSettler.Output({
+//             token: bytes32(uint256(uint160(defaultOutputToken))),
+//             amount: type(uint256).max,
+//             recipient: bytes32(uint256(uint160(user))),
+//             chainId: defaultOutputChainId
+//         });
+//         minReceived[0] = IOriginSettler.Output({
+//             token: bytes32(uint256(uint160(address(usdc)))),
+//             amount: defaultAmount,
+//             recipient: '',
+//             chainId: block.chainid
+//         });
+//         TribunalClaim memory claim = TribunalClaim({
+//             chainId: block.chainid,
+//             compact: _getCompact(),
+//             sponsorSignature: '', // sponsorSignature, // THE SIGNATURE MUST BE ADDED MANUALLY BY THE FILLER WITH THE CURRENT SYSTEM, BEFORE FILLING THE ORDER ON THE TARGET CHAIN
+//             allocatorSignature: ''
+//         });
+//         fillInstructions[0] = IOriginSettler.FillInstruction({
+//             destinationChainId: defaultOutputChainId,
+//             destinationSettler: bytes32(uint256(uint160(tribunal))),
+//             originData: abi.encode(claim, _getMandate(), uint256(0), uint256(0))
+//         });
+
+//         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
+//             user: user,
+//             originChainId: block.chainid,
+//             openDeadline: uint32(_getClaimExpiration()),
+//             fillDeadline: uint32(_getFillExpiration()),
+//             orderId: bytes32(defaultNonce),
+//             maxSpent: maxSpent,
+//             minReceived: minReceived,
+//             fillInstructions: fillInstructions
+//         });
+//         IOriginSettler.ResolvedCrossChainOrder memory resolved =
+//             erc7683Allocator.resolveFor(gaslessCrossChainOrder_, '');
+//         assertEq(resolved.user, resolvedCrossChainOrder.user);
+//         assertEq(resolved.originChainId, resolvedCrossChainOrder.originChainId);
+//         assertEq(resolved.openDeadline, resolvedCrossChainOrder.openDeadline);
+//         assertEq(resolved.fillDeadline, resolvedCrossChainOrder.fillDeadline);
+//         assertEq(resolved.orderId, resolvedCrossChainOrder.orderId);
+//         assertEq(resolved.maxSpent.length, resolvedCrossChainOrder.maxSpent.length);
+//         assertEq(resolved.maxSpent[0].token, resolvedCrossChainOrder.maxSpent[0].token);
+//         assertEq(resolved.maxSpent[0].amount, resolvedCrossChainOrder.maxSpent[0].amount);
+//         assertEq(resolved.maxSpent[0].recipient, resolvedCrossChainOrder.maxSpent[0].recipient);
+//         assertEq(resolved.maxSpent[0].chainId, resolvedCrossChainOrder.maxSpent[0].chainId);
+//         assertEq(resolved.minReceived.length, resolvedCrossChainOrder.minReceived.length);
+//         assertEq(resolved.minReceived[0].token, resolvedCrossChainOrder.minReceived[0].token);
+//         assertEq(resolved.minReceived[0].amount, resolvedCrossChainOrder.minReceived[0].amount);
+//         assertEq(resolved.minReceived[0].recipient, resolvedCrossChainOrder.minReceived[0].recipient);
+//         assertEq(resolved.minReceived[0].chainId, resolvedCrossChainOrder.minReceived[0].chainId);
+//         assertEq(resolved.fillInstructions.length, resolvedCrossChainOrder.fillInstructions.length);
+//         assertEq(
+//             resolved.fillInstructions[0].destinationChainId,
+//             resolvedCrossChainOrder.fillInstructions[0].destinationChainId
+//         );
+//         assertEq(
+//             resolved.fillInstructions[0].destinationSettler,
+//             resolvedCrossChainOrder.fillInstructions[0].destinationSettler
+//         );
+//         assertEq(resolved.fillInstructions[0].originData, resolvedCrossChainOrder.fillInstructions[0].originData);
+//     }
+// }
+
+// contract ERC7683Allocator_resolve is OnChainCrossChainOrderData {
+//     function test_resolve_successful() public {
+//         (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
+//         IOriginSettler.Output[] memory maxSpent = new IOriginSettler.Output[](1);
+//         IOriginSettler.Output[] memory minReceived = new IOriginSettler.Output[](1);
+//         IOriginSettler.FillInstruction[] memory fillInstructions = new IOriginSettler.FillInstruction[](1);
+//         maxSpent[0] = IOriginSettler.Output({
+//             token: bytes32(uint256(uint160(defaultOutputToken))),
+//             amount: type(uint256).max,
+//             recipient: bytes32(uint256(uint160(user))),
+//             chainId: defaultOutputChainId
+//         });
+//         minReceived[0] = IOriginSettler.Output({
+//             token: bytes32(uint256(uint160(address(usdc)))),
+//             amount: defaultAmount,
+//             recipient: '',
+//             chainId: block.chainid
+//         });
+//         TribunalClaim memory claim = TribunalClaim({
+//             chainId: block.chainid,
+//             compact: _getCompact(),
+//             sponsorSignature: '',
+//             allocatorSignature: ''
+//         });
+//         fillInstructions[0] = IOriginSettler.FillInstruction({
+//             destinationChainId: defaultOutputChainId,
+//             destinationSettler: bytes32(uint256(uint160(tribunal))),
+//             originData: abi.encode(claim, _getMandate(), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
+//         });
+
+//         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
+//             user: user,
+//             originChainId: block.chainid,
+//             openDeadline: uint32(_getClaimExpiration()),
+//             fillDeadline: uint32(_getFillExpiration()),
+//             orderId: bytes32(defaultNonce),
+//             maxSpent: maxSpent,
+//             minReceived: minReceived,
+//             fillInstructions: fillInstructions
+//         });
+//         IOriginSettler.ResolvedCrossChainOrder memory resolved = erc7683Allocator.resolve(onChainCrossChainOrder_);
+//         assertEq(resolved.user, resolvedCrossChainOrder.user);
+//         assertEq(resolved.originChainId, resolvedCrossChainOrder.originChainId);
+//         assertEq(resolved.openDeadline, resolvedCrossChainOrder.openDeadline);
+//         assertEq(resolved.fillDeadline, resolvedCrossChainOrder.fillDeadline);
+//         assertEq(resolved.orderId, resolvedCrossChainOrder.orderId);
+//         assertEq(resolved.maxSpent.length, resolvedCrossChainOrder.maxSpent.length);
+//         assertEq(resolved.maxSpent[0].token, resolvedCrossChainOrder.maxSpent[0].token);
+//         assertEq(resolved.maxSpent[0].amount, resolvedCrossChainOrder.maxSpent[0].amount);
+//         assertEq(resolved.maxSpent[0].recipient, resolvedCrossChainOrder.maxSpent[0].recipient);
+//         assertEq(resolved.maxSpent[0].chainId, resolvedCrossChainOrder.maxSpent[0].chainId);
+//         assertEq(resolved.minReceived.length, resolvedCrossChainOrder.minReceived.length);
+//         assertEq(resolved.minReceived[0].token, resolvedCrossChainOrder.minReceived[0].token);
+//         assertEq(resolved.minReceived[0].amount, resolvedCrossChainOrder.minReceived[0].amount);
+//         assertEq(resolved.minReceived[0].recipient, resolvedCrossChainOrder.minReceived[0].recipient);
+//         assertEq(resolved.minReceived[0].chainId, resolvedCrossChainOrder.minReceived[0].chainId);
+//         assertEq(resolved.fillInstructions.length, resolvedCrossChainOrder.fillInstructions.length);
+//         assertEq(
+//             resolved.fillInstructions[0].destinationChainId,
+//             resolvedCrossChainOrder.fillInstructions[0].destinationChainId
+//         );
+//         assertEq(
+//             resolved.fillInstructions[0].destinationSettler,
+//             resolvedCrossChainOrder.fillInstructions[0].destinationSettler
+//         );
+//         assertEq(resolved.fillInstructions[0].originData, resolvedCrossChainOrder.fillInstructions[0].originData);
+//     }
+// }
+
+// contract ERC7683Allocator_getCompactWitnessTypeString is MocksSetup {
+//     function test_getCompactWitnessTypeString() public view {
+//         assertEq(
+//             erc7683Allocator.getCompactWitnessTypeString(),
+//             'Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt))'
+//         );
+//     }
+// }
+
+// contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
+//     function test_revert_invalidNonce(uint256 nonce_) public {
+//         address expectedSponsor;
+//         assembly ("memory-safe") {
+//             expectedSponsor := shr(96, nonce_)
+//         }
+//         vm.assume(user != expectedSponsor);
+
+//         vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidNonce.selector, nonce_));
+//         erc7683Allocator.checkNonce(user, nonce_);
+//     }
+
+//     function test_checkNonce_unused(uint96 nonce_) public view {
+//         address sponsor = user;
+//         uint256 nonce;
+//         assembly ("memory-safe") {
+//             nonce := or(shl(96, sponsor), shr(160, shl(160, nonce_)))
+//         }
+//         assertEq(erc7683Allocator.checkNonce(sponsor, nonce), true);
+//     }
+
+//     function test_checkNonce_used() public {
+//         // Deposit tokens
+//         vm.startPrank(user);
+//         usdc.mint(user, defaultAmount);
+//         usdc.approve(address(compactContract), defaultAmount);
+//         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
+
+//         // register a claim
+//         Compact memory compact_ = _getCompact();
+//         Mandate memory mandate_ = _getMandate();
+
+//         bytes32 claimHash = _hashCompact(compact_, mandate_);
+//         bytes32 typeHash = _getTypeHash();
+//         compactContract.register(claimHash, typeHash);
+
+//         (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
+//         erc7683Allocator.open(onChainCrossChainOrder_);
+
+//         vm.assertEq(erc7683Allocator.checkNonce(user, defaultNonce), false);
+//         vm.stopPrank();
+//     }
+
+//     function test_checkNonce_fuzz(uint8 nonce_) public {
+//         uint256 nonce = uint256(bytes32(abi.encodePacked(user, uint96(nonce_))));
+
+//         bool sameNonce = nonce == defaultNonce;
+
+//         // Deposit tokens
+//         vm.startPrank(user);
+//         usdc.mint(user, defaultAmount);
+//         usdc.approve(address(compactContract), defaultAmount);
+//         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
+
+//         // register a claim
+//         Compact memory compact_ = _getCompact();
+//         Mandate memory mandate_ = _getMandate();
+
+//         bytes32 claimHash = _hashCompact(compact_, mandate_);
+//         bytes32 typeHash = _getTypeHash();
+//         compactContract.register(claimHash, typeHash);
+
+//         (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
+//         erc7683Allocator.open(onChainCrossChainOrder_);
+
+//         vm.assertEq(erc7683Allocator.checkNonce(user, nonce), !sameNonce);
+
+//         vm.stopPrank();
+//     }
+// }
