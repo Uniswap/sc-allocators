@@ -12,27 +12,26 @@ import {ECDSA} from '@openzeppelin/contracts/utils/cryptography/ECDSA.sol';
 import {LibBytes} from '@solady/utils/LibBytes.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {Compact} from '@uniswap/the-compact/types/EIP712Types.sol';
-import {console} from 'forge-std/console.sol';
 
 contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
     /// @notice The typehash of the OrderData struct
-    //          keccak256("OrderData(address arbiter,address sponsor,uint256 nonce,uint256 id,uint256 amount,
-    //          uint256 chainId,address tribunal,address recipient,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt,uint256 targetBlock,uint256 maximumBlocksAfterTarget)")
-    bytes32 public constant ORDERDATA_TYPEHASH = 0x9687614112a074c792f7035dc9365f34672a3aa8d3c312500bd47ddcaa0383b5;
+    //          keccak256("OrderData(address arbiter,address sponsor,uint256 nonce,uint256 expires,bytes12 lockTag,address inputToken,uint256 amount,
+    //          uint256 chainId,address tribunal,address recipient,address settlementToken,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt,uint256 targetBlock,uint256 maximumBlocksAfterTarget)")
+    bytes32 public constant ORDERDATA_TYPEHASH = 0x2ec2bf7ae42e14efd81070a06d7410420dad2cf15d1d09c8a7d77d82f9e5eae5;
 
     /// @notice The typehash of the OrderDataGasless struct
-    //          keccak256("OrderDataGasless(address arbiter,uint256 id,uint256 amount,
-    //          uint256 chainId,address tribunal,address recipient,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
+    //          keccak256("OrderDataGasless(address arbiter,bytes12 lockTag,address inputToken,uint256 amount,
+    //          uint256 chainId,address tribunal,address recipient,address settlementToken,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
     bytes32 public constant ORDERDATA_GASLESS_TYPEHASH =
-        0xe9b624fa654c7f07ce16d31bf0165a4030d4022f62987afad8ef9d30fc8a0b88;
+        0x29d853cc0f7a1e24319ad92f2404fd0ff5806cd6ac6f6325dfaa7c547074e912;
 
     /// @notice keccak256("QualifiedClaim(bytes32 claimHash,uint256 targetBlock,uint256 maximumBlocksAfterTarget)")
     bytes32 public constant QUALIFICATION_TYPEHASH = 0x59866b84bd1f6c909cf2a31efd20c59e6c902e50f2c196994e5aa85cdc7d7ce0;
 
-    /// @notice keccak256("Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,uint256 id,uint256 amount,Mandate mandate)
+    /// @notice keccak256("Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,bytes12 lockTag,address token,uint256 amount,Mandate mandate)
     //          Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
     bytes32 public constant COMPACT_WITNESS_TYPEHASH =
-        0xfd9cda0e5e31a3a3476cb5b57b07e2a4d6a12815506f69c880696448cd9897a5;
+        0x2ec0d30491bb66a6eb554b9d53f490d79b54fc5f4963bed4b2bb8096b4790f1f;
 
     /// @notice keccak256("Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
     bytes32 internal constant MANDATE_TYPEHASH = 0x74d9c10530859952346f3e046aa2981a24bb7524b8394eb45a9deddced9d6501;
@@ -40,9 +39,9 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
     /// @notice uint256(uint8(keccak256("ERC7683Allocator.nonce")))
     uint8 internal constant NONCE_MASTER_SLOT_SEED = 0x39;
 
-    uint8 internal constant ORDERDATA_OFFSET = 0xa0;
+    uint8 internal constant ORDERDATA_LOCKTAG_OFFSET = 0x80;
 
-    uint8 internal constant ORDERDATA_GASLESS_OFFSET = 0x40;
+    uint8 internal constant ORDERDATA_GASLESS_LOCKTAG_OFFSET = 0x20;
 
     bytes32 immutable _COMPACT_DOMAIN_SEPARATOR;
 
@@ -70,7 +69,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         bytes calldata orderDataGaslessBytes = LibBytes.dynamicStructInCalldata(order_.orderData, 0x00);
         uint256 mandateOffset;
         assembly ("memory-safe") {
-            mandateOffset := add(orderDataGaslessBytes.offset, 0xa0) // mandate starts at orderData.chainId (0x80). Add 0x20, as the offset points at the length
+            mandateOffset := add(orderDataGaslessBytes.offset, 0x80) // mandate starts at orderData.chainId (0x80)
         }
 
         // Extract the resolved order early to reduce stack pressure
@@ -80,14 +79,14 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
             order_.openDeadline,
             order_.fillDeadline,
             orderDataGaslessBytes,
-            ORDERDATA_GASLESS_OFFSET,
+            ORDERDATA_GASLESS_LOCKTAG_OFFSET,
             sponsorSignature_
         );
 
         // Extract mandateHash early to reduce stack pressure
-        bytes32 mandateHash = _mandateHash(mandateOffset, order_.fillDeadline);
+        bytes32 mandateHash = _mandateHash(orderDataGaslessBytes, mandateOffset, order_.fillDeadline);
 
-        _open(orderDataGaslessBytes, ORDERDATA_GASLESS_OFFSET, sponsorSignature_, mandateHash, resolvedOrder);
+        _open(orderDataGaslessBytes, ORDERDATA_GASLESS_LOCKTAG_OFFSET, sponsorSignature_, mandateHash, resolvedOrder);
     }
 
     /// @inheritdoc IERC7683Allocator
@@ -106,13 +105,11 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
             mandateOffset := add(orderDataBytes.offset, 0xe0) // mandate starts at orderData.chainId
         }
 
-        console.log('-1');
-
         _checkMsgSender(orderData.sponsor);
-        console.log('0');
 
         // Extract mandateHash early to reduce stack pressure
-        bytes32 mandateHash = _mandateHash(mandateOffset, order.fillDeadline);
+        bytes32 mandateHash = _mandateHash(orderDataBytes, mandateOffset, order.fillDeadline);
+
         // Extract the resolved order early to reduce stack pressure
         ResolvedCrossChainOrder memory resolvedOrder = _resolveOrder(
             orderData.sponsor,
@@ -120,13 +117,11 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
             uint32(orderData.expires),
             order.fillDeadline,
             orderDataBytes,
-            ORDERDATA_OFFSET,
+            ORDERDATA_LOCKTAG_OFFSET,
             LibBytes.emptyCalldata()
         );
 
-        console.log('1');
-
-        _open(orderDataBytes, ORDERDATA_OFFSET, LibBytes.emptyCalldata(), mandateHash, resolvedOrder);
+        _open(orderDataBytes, ORDERDATA_LOCKTAG_OFFSET, LibBytes.emptyCalldata(), mandateHash, resolvedOrder);
     }
 
     /// @inheritdoc IERC7683Allocator
@@ -136,10 +131,6 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         returns (ResolvedCrossChainOrder memory)
     {
         bytes calldata orderDataGaslessBytes = LibBytes.dynamicStructInCalldata(order_.orderData, 0x00);
-        OrderDataGasless calldata orderDataGasless;
-        assembly ("memory-safe") {
-            orderDataGasless := orderDataGaslessBytes.offset
-        }
 
         return _resolveOrder(
             order_.user,
@@ -147,7 +138,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
             order_.openDeadline,
             order_.fillDeadline,
             orderDataGaslessBytes,
-            ORDERDATA_GASLESS_OFFSET,
+            ORDERDATA_GASLESS_LOCKTAG_OFFSET,
             LibBytes.emptyCalldata()
         );
     }
@@ -166,7 +157,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
             orderData.expires,
             order_.fillDeadline,
             orderDataBytes,
-            ORDERDATA_OFFSET,
+            ORDERDATA_LOCKTAG_OFFSET,
             LibBytes.emptyCalldata()
         );
     }
@@ -310,28 +301,22 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         bytes32 tokenHash =
             _verifyAllocation(resolvedOrder_.user, nonce_, resolvedOrder_.openDeadline, orderData_, lockTagOffset);
 
-        console.log('2');
-
+        // Create the Compact claim hash
+        bytes32 claimHash;
         uint256 lockTagAbsoluteOffset;
         assembly ("memory-safe") {
             lockTagAbsoluteOffset := add(orderData_.offset, lockTagOffset)
-        }
 
-        // Create the Compact claim hash
-        bytes32 claimHash;
-        assembly ("memory-safe") {
             let m := mload(0x40)
             mstore(m, COMPACT_WITNESS_TYPEHASH)
             calldatacopy(add(m, 0x20), orderData_.offset, 0x20) // arbiter
             mstore(add(m, 0x40), mload(resolvedOrder_)) // sponsor (first item in resolvedOrder_)
             mstore(add(m, 0x60), nonce_) // nonce
-            mstore(add(m, 0x80), add(resolvedOrder_, 0x40)) // Compact.expires (third item in resolvedOrder_)
+            mstore(add(m, 0x80), mload(add(resolvedOrder_, 0x40))) // Compact.expires (third item in resolvedOrder_)
             calldatacopy(add(m, 0xa0), lockTagAbsoluteOffset, 0x60) // lockTag, inputToken, amount
             mstore(add(m, 0x100), mandateHash_)
             claimHash := keccak256(m, 0x120)
         }
-
-        console.log('3');
 
         // We check for the length, which means this could also be triggered by a zero length signature provided in the openFor function. This enables relaying of orders if the claim was registered on the compact.
         if (sponsorSignature_.length > 0) {
@@ -350,8 +335,6 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
             }
         }
 
-        console.log('4');
-
         bytes32 qualifiedClaimHash;
         assembly ("memory-safe") {
             let m := mload(0x40)
@@ -360,7 +343,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
 
             mstore(add(m, 0x40), 0x0) // clear targetBlock
             mstore(add(m, 0x60), 0x0) // clear maximumBlocksAfterTarget
-            if eq(lockTagOffset, ORDERDATA_OFFSET) {
+            if eq(lockTagOffset, ORDERDATA_LOCKTAG_OFFSET) {
                 // if data is of type OrderData, copy targetBlock and maximumBlocksAfterTarget
                 calldatacopy(add(m, 0x40), add(lockTagAbsoluteOffset, 0x180), 0x40) // targetBlock, maximumBlocksAfterTarget
             }
@@ -372,8 +355,6 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
             amount := calldataload(add(lockTagAbsoluteOffset, 0x40))
             let m := mload(0x40)
         }
-
-        console.log('5');
 
         _lockTokens(tokenHash, amount, resolvedOrder_.openDeadline, qualifiedClaimHash);
 
@@ -463,21 +444,23 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
 
             let mandateOffset := add(add(orderData.offset, lockTagOffset), 0x60)
 
+            // Skip the chainId and tribunal, as they are implicit arguments in the Tribunal.Mandate
+
             calldatacopy(m, add(mandateOffset, 0x40), 0x20) // recipient
             mstore(add(m, 0x20), fillDeadline) // expires
             calldatacopy(add(m, 0x40), add(mandateOffset, 0x60), 0xc0) // settlementToken, minimumAmount, baselinePriorityFee, scalingFactor, decayCurve.offset, salt
-            mstore(add(m, 0xc0), add(m, 0x100)) // update decayCurve.offset to point to the absolute memory location of decayCurve.length
+            mstore(add(m, 0xc0), add(m, 0x100)) // update decayCurve.offset to point to the relative memory location of decayCurve.length within Mandate
 
             let decayCurveOffset := calldataload(add(mandateOffset, 0xe0))
-            let decayCurveLength := calldataload(decayCurveOffset)
+            let decayCurveLength := calldataload(add(orderData.offset, decayCurveOffset))
 
-            calldatacopy(add(m, 0x100), decayCurveOffset, add(decayCurveLength, 0x20)) // decayCurve.length, decayCurve.content
+            calldatacopy(add(m, 0x100), add(orderData.offset, decayCurveOffset), add(decayCurveLength, 0x20)) // decayCurve.length, decayCurve.content
 
             mandate := m
 
-            let length := add(0x120, decayCurveLength)
+            let totalMandateLength := add(0x120, decayCurveLength)
 
-            mstore(0x40, add(m, length)) // update free memory pointer
+            mstore(0x40, add(m, totalMandateLength)) // update free memory pointer
         }
 
         uint256 chainId;
@@ -489,7 +472,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
             let mandateOffset := add(add(orderData.offset, lockTagOffset), 0x60)
             chainId := calldataload(mandateOffset)
             tribunal := calldataload(add(mandateOffset, 0x20))
-            let isOrderData := eq(lockTagOffset, ORDERDATA_OFFSET)
+            let isOrderData := eq(lockTagOffset, ORDERDATA_LOCKTAG_OFFSET)
             // Multiply the data calldata value by 0 if OrderDataGasless, as OrderDataGasless does not support targetBlock and maximumBlocksAfterTarget
             targetBlock := mul(calldataload(add(mandateOffset, mul(0x120, isOrderData))), isOrderData) // Multiply targetBlock offset by 0 if OrderDataGasless to prevent out of bounds calldata read
             maximumBlocksAfterTarget := mul(calldataload(add(mandateOffset, mul(0x140, isOrderData))), isOrderData) // Multiply maximumBlocksAfterTarget offset by 0 if OrderDataGasless to prevent out of bounds calldata read
@@ -564,24 +547,29 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         }
     }
 
-    function _mandateHash(uint256 mandateOffset, uint32 fillDeadline) internal pure returns (bytes32 mandateHash_) {
-        // total mandate length: x140 + decayCurve.length
+    function _mandateHash(bytes calldata orderData, uint256 mandateOffset, uint32 fillDeadline)
+        internal
+        pure
+        returns (bytes32 mandateHash_)
+    {
+        // total mandate length: x160 + decayCurve.length
         assembly ("memory-safe") {
-            let m := mload(0x40)
-
             let decayCurveOffset := calldataload(add(mandateOffset, 0xe0))
-            let decayCurveLength := calldataload(decayCurveOffset)
+            let decayCurveLength := calldataload(add(orderData.offset, decayCurveOffset))
 
-            let l := add(0x140, decayCurveLength) // length if decayCurve.length was 0 (0x120) + decayCurve.length
-
+            let m := mload(0x40)
             mstore(m, MANDATE_TYPEHASH)
             calldatacopy(add(m, 0x20), mandateOffset, 0x60) // chainid, tribunal and recipient
-            mstore(add(m, 0x80), fillDeadline)
+            mstore(add(m, 0x80), fillDeadline) // mandate.expires
             calldatacopy(add(m, 0xa0), add(mandateOffset, 0x60), 0xc0) // settlementToken, minimumAmount, baselinePriorityFee, scalingFactor, decayCurve.offset, salt
-            mstore(add(m, 0x120), add(m, 0x160)) // update decayCurve.offset to point to the absolute memory location of decayCurve.length
-            calldatacopy(add(m, 0x160), decayCurveOffset, add(decayCurveLength, 0x20)) // decayCurve.length, decayCurve.content
 
-            mandateHash_ := keccak256(m, add(l, 0x20)) // mandate typehash + mandate data length
+            for { let i := 0 } lt(i, decayCurveLength) { i := add(i, 0x20) } {
+                mstore(add(m, add(0x160, i)), calldataload(add(add(orderData.offset, decayCurveOffset), add(i, 0x20)))) // copy the content of decayCurve to memory
+            }
+
+            mstore(add(m, 0x120), keccak256(add(m, 0x160), mul(decayCurveLength, 0x20))) // create and store the decayCurve hash
+
+            mandateHash_ := keccak256(m, 0x160) // mandate typehash + mandate data length
         }
 
         // 0x00:  MANDATE_TYPEHASH
@@ -593,10 +581,8 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         // 0xc0:  minimumAmount
         // 0xe0:  baselinePriorityFee
         // 0x100: scalingFactor
-        // 0x120: decayCurve.offset
+        // 0x120: decayCurve hash
         // 0x140: salt
-        // 0x160: decayCurve.length
-        // 0x180: decayCurve.content
     }
 
     function _convertGaslessOrderData(
