@@ -109,8 +109,6 @@ abstract contract CreateHash is MocksSetup {
                 compactHash
             )
         );
-        console.log('digest');
-        console.logBytes32(digest);
     }
 
     function _hashCompact(Compact memory data, Mandate memory mandate) internal view returns (bytes32 compactHash) {
@@ -128,12 +126,6 @@ abstract contract CreateHash is MocksSetup {
                 mandateHash
             )
         );
-        console.log('mandateHash');
-        console.logBytes32(mandateHash);
-        console.log('compactHash');
-        console.logBytes32(compactHash);
-        console.log('typehash');
-        console.logBytes32(keccak256(bytes(compactWitnessTypeString)));
     }
 
     function _hashMandate(Mandate memory mandate) internal view returns (bytes32) {
