@@ -132,20 +132,14 @@ contract HybridERC7683 is HybridAllocator, IOriginSettler {
         return _convertToResolvedCrossChainOrder(orderData, order.fillDeadline, batchCompact);
     }
 
-    /**
-     * OnChainCrossChainOrder
-     * - 1 word for fillDeadline
-     * - 1 word for orderDataType
-     * - 1 word for orderData offset
-     */
     function _decodeOrderData(OnchainCrossChainOrder calldata order_)
         internal
         pure
         returns (OrderData calldata orderData)
     {
-        // bytes calldata rawOrderData = LibBytes.dynamicStructInCalldata(order_.orderData, 0x40);
+        bytes calldata rawOrderData = LibBytes.dynamicStructInCalldata(order_.orderData, 0x00);
         assembly ("memory-safe") {
-            orderData := order_
+            orderData := rawOrderData.offset
         }
     }
 
@@ -211,5 +205,9 @@ contract HybridERC7683 is HybridAllocator, IOriginSettler {
 
     function _convertAddressToBytes32(address address_) internal pure returns (bytes32) {
         return bytes32(uint256(uint160(address_)));
+    }
+
+    function _createLock(uint256 id, uint256 amount) internal pure returns (Lock memory) {
+        return Lock({lockTag: bytes12(bytes32(id)), token: _splitToken(id), amount: amount});
     }
 }

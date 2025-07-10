@@ -171,7 +171,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertEq(registeredAmounts.length, 1);
         assertEq(address(compact).balance, defaultAmount);
         assertEq(compact.balanceOf(address(user), idsAndAmounts[0][0]), defaultAmount);
-        assertEq(nonce, type(uint128).max + 1);
+        assertEq(nonce, uint256(type(uint128).max) + 1);
     }
 
     function test_registerClaim_success_erc20Token() public {
@@ -193,7 +193,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertEq(registeredAmounts[0], defaultAmount);
         assertEq(usdc.balanceOf(address(compact)), defaultAmount);
         assertEq(compact.balanceOf(address(user), idsAndAmounts[0][0]), defaultAmount);
-        assertEq(nonce, type(uint128).max + 1);
+        assertEq(nonce, uint256(type(uint128).max) + 1);
     }
 
     function test_registerClaim_success_nativeTokenWithEmptyAmountInput() public {
@@ -211,7 +211,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertEq(registeredAmounts[0], defaultAmount);
         assertEq(address(compact).balance, defaultAmount);
         assertEq(compact.balanceOf(address(user), idsAndAmounts[0][0]), defaultAmount);
-        assertEq(nonce, type(uint128).max + 1);
+        assertEq(nonce, uint256(type(uint128).max) + 1);
     }
 
     function test_registerClaim_success_erc20TokenWithEmptyAmountInput() public {
@@ -234,7 +234,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertEq(registeredAmounts.length, 1);
         assertEq(usdc.balanceOf(address(compact)), defaultAmount);
         assertEq(compact.balanceOf(address(user), idsAndAmounts[0][0]), defaultAmount);
-        assertEq(nonce, type(uint128).max + 1);
+        assertEq(nonce, uint256(type(uint128).max) + 1);
     }
 
     function test_registerClaim_success_multipleTokens() public {
@@ -264,7 +264,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertEq(address(compact).balance, defaultAmount);
         assertEq(compact.balanceOf(address(user), idsAndAmounts[0][0]), defaultAmount);
         assertEq(compact.balanceOf(address(user), idsAndAmounts[1][0]), defaultAmount);
-        assertEq(nonce, type(uint128).max + 1);
+        assertEq(nonce, uint256(type(uint128).max) + 1);
     }
 
     function test_registerClaim_checkNonceIncrements() public {
@@ -272,10 +272,14 @@ contract HybridAllocatorTest is Test, TestHelper {
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0));
         idsAndAmounts[0][1] = 0;
 
+        assertEq(allocator.nonce(), type(uint128).max);
+
         // Register first claim
         allocator.registerClaim{value: 5e17}(
             user, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, ''
         );
+        assertEq(allocator.nonce(), uint256(type(uint128).max) + 1);
+
         // Register second claim
         (bytes32 claimHash, uint256[] memory registeredAmounts,) = allocator.registerClaim{value: 5e17}(
             user, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, ''
@@ -285,9 +289,8 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertTrue(allocator.isClaimAuthorized(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
         assertEq(registeredAmounts[0], 5e17);
         assertEq(registeredAmounts.length, 1);
-        assertEq(address(compact).balance, defaultAmount);
-        assertEq(compact.balanceOf(address(user), idsAndAmounts[0][0]), defaultAmount);
-        assertEq(allocator.nonce(), type(uint128).max + 1);
+
+        assertEq(allocator.nonce(), uint256(type(uint128).max) + 2);
     }
 
     function test_registerClaim_checkClaimHashNoWitness() public {
@@ -448,6 +451,76 @@ contract HybridAllocatorTest is Test, TestHelper {
         allocator.authorizeClaim(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), '');
     }
 
+    function test_revert_authorizeClaim_InvalidSignature(uint128 nonce) public {
+        uint256[2][] memory idsAndAmounts = new uint256[2][](2);
+        idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0));
+        idsAndAmounts[0][1] = defaultAmount;
+
+        idsAndAmounts[1][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
+        idsAndAmounts[1][1] = defaultAmount;
+
+        // Approve tokens
+        vm.prank(user);
+        usdc.approve(address(compact), defaultAmount);
+
+        bytes32 witness = keccak256(abi.encode(WITNESS_TYPEHASH, 1));
+
+        bytes32 claimHash = _toBatchCompactHashWithWitness(
+            BATCH_COMPACT_TYPEHASH_WITH_WITNESS,
+            BatchCompact({
+                arbiter: arbiter,
+                sponsor: user,
+                nonce: nonce,
+                expires: defaultExpiration,
+                commitments: _idsAndAmountsToCommitments(idsAndAmounts)
+            }),
+            witness
+        );
+
+        bytes32[2][] memory claimHashesAndTypehashes = new bytes32[2][](1);
+        claimHashesAndTypehashes[0][0] = claimHash;
+        claimHashesAndTypehashes[0][1] = BATCH_COMPACT_TYPEHASH_WITH_WITNESS;
+
+        // Deposit and register
+        vm.prank(user);
+        compact.batchDepositAndRegisterMultiple{value: defaultAmount}(idsAndAmounts, claimHashesAndTypehashes);
+
+        // Off chain signing the claim
+        bytes32 digest = _toDigest(claimHash, compact.DOMAIN_SEPARATOR());
+        (address attacker, uint256 attackerPK) = makeAddrAndKey('attacker');
+        (bytes32 r, bytes32 vs) = vm.signCompact(attackerPK, digest);
+        bytes memory allocatorData = abi.encodePacked(r, vs);
+
+        BatchClaimComponent[] memory claims = new BatchClaimComponent[](2);
+        {
+            Component[] memory portions = new Component[](1);
+            portions[0] = Component({
+                claimant: uint256(bytes32(abi.encodePacked(bytes12(0), attacker))), // indicating a withdrawal
+                amount: defaultAmount
+            });
+
+            claims[0] =
+                BatchClaimComponent({id: idsAndAmounts[0][0], allocatedAmount: defaultAmount, portions: portions});
+            claims[1] =
+                BatchClaimComponent({id: idsAndAmounts[1][0], allocatedAmount: defaultAmount, portions: portions});
+        }
+
+        BatchClaim memory claim = BatchClaim({
+            allocatorData: allocatorData,
+            sponsorSignature: '',
+            sponsor: user,
+            nonce: nonce,
+            expires: defaultExpiration,
+            witness: witness,
+            witnessTypestring: WITNESS_STRING,
+            claims: claims
+        });
+
+        vm.prank(arbiter);
+        vm.expectRevert(abi.encodeWithSelector(HybridAllocator.InvalidSignature.selector));
+        compact.batchClaim(claim);
+    }
+
     function test_authorizeClaim_success_onChain() public {
         uint256[2][] memory idsAndAmounts = new uint256[2][](2);
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0));
@@ -469,10 +542,6 @@ contract HybridAllocatorTest is Test, TestHelper {
             user, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH_WITH_WITNESS, witness
         );
 
-        bytes32 digest = _toDigest(claimHash, compact.DOMAIN_SEPARATOR());
-        (bytes32 r, bytes32 vs) = vm.signCompact(userPrivateKey, digest);
-        bytes memory sponsorSignature = abi.encodePacked(r, vs);
-
         address target = makeAddr('target');
 
         bytes32 returnedClaimHash;
@@ -491,7 +560,7 @@ contract HybridAllocatorTest is Test, TestHelper {
 
             BatchClaim memory claim = BatchClaim({
                 allocatorData: '',
-                sponsorSignature: sponsorSignature,
+                sponsorSignature: '',
                 sponsor: user,
                 nonce: nonce,
                 expires: defaultExpiration,

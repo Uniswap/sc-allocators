@@ -152,7 +152,8 @@ contract HybridAllocator is IAllocator {
         return (_splitAllocatorId(id), _splitToken(id));
     }
 
-    function _splitAllocatorId(uint256 id) internal pure returns (uint96 allocatorId_) {
+    function _splitAllocatorId(uint256 id) internal pure returns (uint96) {
+        uint96 allocatorId_;
         assembly ("memory-safe") {
             allocatorId_ := shr(164, shl(4, id))
         }
@@ -161,10 +162,6 @@ contract HybridAllocator is IAllocator {
 
     function _splitToken(uint256 id) internal pure returns (address) {
         return address(uint160(id));
-    }
-
-    function _createLock(uint256 id, uint256 amount) internal pure returns (Lock memory) {
-        return Lock({lockTag: bytes12(bytes32(id)), token: _splitToken(id), amount: amount});
     }
 
     function _checkAllocatorData(bytes32 digest, bytes memory allocatorData_) private view returns (bool) {
