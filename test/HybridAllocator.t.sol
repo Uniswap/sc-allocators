@@ -324,6 +324,22 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertTrue(allocator.isClaimAuthorized(createdHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
     }
 
+    function test_registerClaim_slot() public {
+        uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+        idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0));
+        idsAndAmounts[0][1] = 0;
+
+        bytes32 witness = keccak256(abi.encode(WITNESS_TYPEHASH, 1));
+
+        (bytes32 claimHash,,) = allocator.registerClaim{value: defaultAmount}(
+            user, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH_WITH_WITNESS, witness
+        );
+
+        bytes32 claimSlot = keccak256(abi.encode(claimHash, 0x00));
+        bytes32 claimSlotData = vm.load(address(allocator), claimSlot);
+        assertEq(claimSlotData, bytes32(uint256(1)));
+    }
+
     function test_isClaimAuthorized_unauthorized() public {
         uint256[2][] memory idsAndAmounts = new uint256[2][](1);
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0));

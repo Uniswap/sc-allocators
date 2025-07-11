@@ -2,9 +2,9 @@
 
 pragma solidity ^0.8.27;
 
-import {LibBytes} from 'solady/utils/LibBytes.sol';
-
 import {BatchClaim, Mandate} from './types/TribunalStructs.sol';
+import {LibBytes} from '@solady/utils/LibBytes.sol';
+import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 import {BatchCompact, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 import {HybridAllocator} from 'src/allocators/HybridAllocator.sol';
@@ -13,9 +13,18 @@ import {BATCH_COMPACT_WITNESS_TYPEHASH, MANDATE_TYPEHASH} from 'src/allocators/l
 import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 
 contract HybridERC7683 is HybridAllocator, IOriginSettler {
+    // the storage slot for the claims mapping
+    uint256 private constant _CLAIMS_STORAGE_SLOT = 0;
+
+    // mask for an active claim
+    uint256 private constant _ACTIVE_CLAIM_MASK = 0x0000000000000000000000000000000000000000000000000000000000000001;
+
     // keccak256("OrderData(address arbiter,address sponsor,uint256 expires,uint256[2][] idsAndAmounts,
-    //          uint256 chainId,address tribunal,address recipient,address settlementToken,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt,uint256 targetBlock,uint256 maximumBlocksAfterTarget)")
-    bytes32 constant ORDERDATA_TYPEHASH = 0xf93147c220566c5d99eedaa4ddd899c0a796b3721e418131b49cc9eedde5054d;
+    //          uint256 chainId,address tribunal,address recipient,address settlementToken,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt,uint128 targetBlock,uint120 maximumBlocksAfterTarget)")
+    bytes32 public constant ORDERDATA_TYPEHASH = 0x293fe9f0f9b73ba619b34355bb68bfd5c0f97350dd85623f69698b8a8ecb6e59;
+
+    /// @notice keccak256("QualifiedClaim(bytes32 claimHash,uint256 targetBlock,uint256 maximumBlocksAfterTarget)")
+    bytes32 public constant QUALIFICATION_TYPEHASH = 0x59866b84bd1f6c909cf2a31efd20c59e6c902e50f2c196994e5aa85cdc7d7ce0;
 
     struct OrderData {
         // BATCH COMPACT
@@ -36,8 +45,8 @@ contract HybridERC7683 is HybridAllocator, IOriginSettler {
         uint256[] decayCurve; // Block durations, fill increases, & claim decreases.
         bytes32 salt; // Replay protection parameter
         // ADDITIONAL INPUT
-        uint256 targetBlock; // The block number at the target chain on which the PGA is executed / the reverse dutch auction starts.
-        uint256 maximumBlocksAfterTarget; // Blocks after target block that are still fillable.
+        uint128 targetBlock; // The block number at the target chain on which the PGA is executed / the reverse dutch auction starts.
+        uint120 maximumBlocksAfterTarget; // Blocks after target block that are still fillable.
     }
 
     error InvalidOrderDataType(bytes32 orderDataType, bytes32 expectedOrderDataType);
@@ -79,7 +88,7 @@ contract HybridERC7683 is HybridAllocator, IOriginSettler {
         );
 
         // register claim
-        (, uint256[] memory registeredAmounts, uint256 nonce_) = registerClaim(
+        (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce_) = registerClaim(
             orderData.sponsor,
             orderData.idsAndAmounts,
             orderData.arbiter,
@@ -87,6 +96,19 @@ contract HybridERC7683 is HybridAllocator, IOriginSettler {
             BATCH_COMPACT_WITNESS_TYPEHASH,
             witnessHash
         );
+
+        // store the allocator data with the claims mapping.
+        assembly ("memory-safe") {
+            let m := mload(0x40)
+            mstore(m, _CLAIMS_STORAGE_SLOT)
+            mstore(add(m, 0x20), claimHash)
+            let claimSlot := keccak256(m, 0x40)
+            let targetBlock := calldataload(and(orderData, 0x1a0))
+            let maximumBlocksAfterTarget := calldataload(and(orderData, 0x1c0))
+            let indicator := and(and(shl(128, targetBlock), shl(1, maximumBlocksAfterTarget)), _ACTIVE_CLAIM_MASK)
+            sstore(claimSlot, indicator)
+        }
+
         Lock[] memory locks = new Lock[](registeredAmounts.length);
         for (uint256 i = 0; i < registeredAmounts.length; i++) {
             locks[i] = _createLock(orderData.idsAndAmounts[i][0], registeredAmounts[i]);
@@ -104,6 +126,44 @@ contract HybridERC7683 is HybridAllocator, IOriginSettler {
         emit Open(
             bytes32(batchCompact.nonce), _convertToResolvedCrossChainOrder(orderData, order_.fillDeadline, batchCompact)
         );
+    }
+
+    function authorizeClaim(
+        bytes32 claimHash,
+        address, /*arbiter*/
+        address, /*sponsor*/
+        uint256, /*nonce*/
+        uint256, /*expires*/
+        uint256[2][] calldata, /*idsAndAmounts*/
+        bytes calldata allocatorData_
+    ) external override returns (bytes4) {
+        if (msg.sender != address(_COMPACT)) {
+            revert InvalidCaller(msg.sender, address(_COMPACT));
+        }
+        // The compact will check the validity of the nonce and expiration
+
+        (bool validClaim, uint128 targetBlock, uint120 maximumBlocksAfterTarget) =
+            _checkClaim(claimHash, allocatorData_);
+        // Check if the claim was allocated on chain
+        if (validClaim) {
+            delete claims[claimHash];
+
+            // Authorize the claim
+            return IAllocator.authorizeClaim.selector;
+        }
+
+        // Create the digest for the qualified claim hash
+        bytes32 qualifiedClaimHash =
+            keccak256(abi.encode(QUALIFICATION_TYPEHASH, claimHash, targetBlock, maximumBlocksAfterTarget));
+        bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), _COMPACT_DOMAIN_SEPARATOR, qualifiedClaimHash));
+        // Check the allocator data for a valid signature by an authorized signer
+        bytes calldata allocatorSignature = LibBytes.bytesInCalldata(allocatorData_, 0x40);
+        if (!_checkSignature(digest, allocatorSignature)) {
+            revert InvalidSignature();
+        }
+
+        // Authorize the claim
+        return IAllocator.authorizeClaim.selector;
     }
 
     function resolveFor(GaslessCrossChainOrder calldata, /*order*/ bytes calldata /*originFillerData*/ )
@@ -132,8 +192,34 @@ contract HybridERC7683 is HybridAllocator, IOriginSettler {
         return _convertToResolvedCrossChainOrder(orderData, order.fillDeadline, batchCompact);
     }
 
+    function _checkClaim(bytes32 claimHash, bytes calldata allocatorData)
+        private
+        view
+        returns (bool valid, uint128 targetBlock, uint120 maximumBlocksAfterTarget)
+    {
+        assembly ("memory-safe") {
+            let m := mload(0x40)
+            mstore(m, _CLAIMS_STORAGE_SLOT)
+            mstore(add(m, 0x20), claimHash)
+            let claimSlot := keccak256(m, 0x40)
+            let data := sload(claimSlot)
+
+            valid := and(data, _ACTIVE_CLAIM_MASK)
+            let storedTargetBlock := shr(128, data)
+            let storedMaximumBlocksAfterTarget := shr(129, shl(128, data))
+
+            targetBlock := calldataload(allocatorData.offset)
+            maximumBlocksAfterTarget := calldataload(add(allocatorData.offset, 0x20))
+            valid :=
+                and(
+                    valid,
+                    and(eq(storedTargetBlock, targetBlock), eq(storedMaximumBlocksAfterTarget, maximumBlocksAfterTarget))
+                )
+        }
+    }
+
     function _decodeOrderData(OnchainCrossChainOrder calldata order_)
-        internal
+        private
         pure
         returns (OrderData calldata orderData)
     {
@@ -147,7 +233,7 @@ contract HybridERC7683 is HybridAllocator, IOriginSettler {
         OrderData calldata orderData,
         uint256 fillDeadline,
         BatchCompact memory batchCompact
-    ) internal view returns (ResolvedCrossChainOrder memory) {
+    ) private view returns (ResolvedCrossChainOrder memory) {
         Output[] memory maxSpent = new Output[](1);
         maxSpent[0] = Output({
             token: bytes32(uint256(uint160(orderData.settlementToken))),
@@ -203,11 +289,11 @@ contract HybridERC7683 is HybridAllocator, IOriginSettler {
         });
     }
 
-    function _convertAddressToBytes32(address address_) internal pure returns (bytes32) {
+    function _convertAddressToBytes32(address address_) private pure returns (bytes32) {
         return bytes32(uint256(uint160(address_)));
     }
 
-    function _createLock(uint256 id, uint256 amount) internal pure returns (Lock memory) {
+    function _createLock(uint256 id, uint256 amount) private pure returns (Lock memory) {
         return Lock({lockTag: bytes12(bytes32(id)), token: _splitToken(id), amount: amount});
     }
 }

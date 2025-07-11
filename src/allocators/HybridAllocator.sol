@@ -11,10 +11,10 @@ import {IERC7683Allocator} from 'src/interfaces/IERC7683Allocator.sol';
 
 contract HybridAllocator is IAllocator {
     uint96 public immutable ALLOCATOR_ID;
-    ITheCompact private immutable _COMPACT;
-    bytes32 private immutable _COMPACT_DOMAIN_SEPARATOR;
+    ITheCompact internal immutable _COMPACT;
+    bytes32 internal immutable _COMPACT_DOMAIN_SEPARATOR;
 
-    mapping(bytes32 => bool) private claims;
+    mapping(bytes32 => bool) internal claims;
 
     uint256 public nonce;
     uint256 public signerCount;
@@ -107,10 +107,11 @@ contract HybridAllocator is IAllocator {
         uint256, /*expires*/
         uint256[2][] calldata, /*idsAndAmounts*/
         bytes calldata allocatorData_
-    ) external returns (bytes4) {
+    ) external virtual returns (bytes4) {
         if (msg.sender != address(_COMPACT)) {
             revert InvalidCaller(msg.sender, address(_COMPACT));
         }
+        // The compact will check the validity of the nonce and expiration
 
         // Check if the claim was allocated on chain
         if (claims[claimHash]) {
@@ -122,7 +123,7 @@ contract HybridAllocator is IAllocator {
 
         // Check the allocator data for a valid signature by an authorized signer
         bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), _COMPACT_DOMAIN_SEPARATOR, claimHash));
-        if (!_checkAllocatorData(digest, allocatorData_)) {
+        if (!_checkSignature(digest, allocatorData_)) {
             revert InvalidSignature();
         }
 
@@ -138,51 +139,14 @@ contract HybridAllocator is IAllocator {
         uint256, /*expires*/ // The time at which the claim expires.
         uint256[2][] calldata, /*idsAndAmounts*/ // The allocated token IDs and amounts.
         bytes calldata allocatorData // Arbitrary data provided by the arbiter.
-    ) external view returns (bool) {
+    ) external view virtual returns (bool) {
         if (claims[claimHash]) {
             return true;
         }
 
         // Check the allocator data for a valid signature by an authorized allocator address
         bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), _COMPACT_DOMAIN_SEPARATOR, claimHash));
-        return _checkAllocatorData(digest, allocatorData);
-    }
-
-    function _splitId(uint256 id) internal pure returns (uint96 allocatorId_, address token_) {
-        return (_splitAllocatorId(id), _splitToken(id));
-    }
-
-    function _splitAllocatorId(uint256 id) internal pure returns (uint96) {
-        uint96 allocatorId_;
-        assembly ("memory-safe") {
-            allocatorId_ := shr(164, shl(4, id))
-        }
-        return allocatorId_;
-    }
-
-    function _splitToken(uint256 id) internal pure returns (address) {
-        return address(uint160(id));
-    }
-
-    function _checkAllocatorData(bytes32 digest, bytes memory allocatorData_) private view returns (bool) {
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-
-        if (allocatorData_.length == 65) {
-            (r, s) = abi.decode(allocatorData_, (bytes32, bytes32));
-            v = uint8(allocatorData_[64]);
-        } else if (allocatorData_.length == 64) {
-            bytes32 vs;
-            (r, vs) = abi.decode(allocatorData_, (bytes32, bytes32));
-            v = uint8(uint256(vs >> 255) + 27);
-            s = vs << 1 >> 1;
-        } else {
-            return false;
-        }
-
-        // Check if the signer is an authorized allocator address
-        return signers[ecrecover(digest, v, r, s)];
+        return _checkSignature(digest, allocatorData);
     }
 
     function _actualIdsAndAmounts(uint256[2][] memory idsAndAmounts) internal returns (uint256[2][] memory) {
@@ -223,5 +187,42 @@ contract HybridAllocator is IAllocator {
         }
 
         return idsAndAmounts;
+    }
+
+    function _checkSignature(bytes32 digest, bytes calldata signature) internal view returns (bool) {
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+
+        if (signature.length == 65) {
+            (r, s) = abi.decode(signature, (bytes32, bytes32));
+            v = uint8(signature[64]);
+        } else if (signature.length == 64) {
+            bytes32 vs;
+            (r, vs) = abi.decode(signature, (bytes32, bytes32));
+            v = uint8(uint256(vs >> 255) + 27);
+            s = vs << 1 >> 1;
+        } else {
+            return false;
+        }
+
+        // Check if the signer is an authorized allocator address
+        return signers[ecrecover(digest, v, r, s)];
+    }
+
+    function _splitId(uint256 id) internal pure returns (uint96 allocatorId_, address token_) {
+        return (_splitAllocatorId(id), _splitToken(id));
+    }
+
+    function _splitAllocatorId(uint256 id) internal pure returns (uint96) {
+        uint96 allocatorId_;
+        assembly ("memory-safe") {
+            allocatorId_ := shr(164, shl(4, id))
+        }
+        return allocatorId_;
+    }
+
+    function _splitToken(uint256 id) internal pure returns (address) {
+        return address(uint160(id));
     }
 }
