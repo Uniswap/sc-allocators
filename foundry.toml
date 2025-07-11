@@ -21,6 +21,14 @@ remappings = [
   "@solady=lib/solady/src",
 ]
 
+additional_compiler_profiles = [
+  { name = "test", via_ir = false, optimizer = false }
+]
+
+compilation_restrictions = [
+  { paths = "test/**", via_ir = false, optimizer = false }
+]
+
 [profile.ci]
 inherit = "default"
 optimizer_runs = 200  # Override optimizer runs to reduce the compact contract sizes
