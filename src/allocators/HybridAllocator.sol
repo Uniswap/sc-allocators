@@ -6,10 +6,11 @@ import {BatchCompact, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
-import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
-import {IERC7683Allocator} from 'src/interfaces/IERC7683Allocator.sol';
 
-contract HybridAllocator is IAllocator {
+import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
+import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
+
+contract HybridAllocator is IHybridAllocator {
     uint96 public immutable ALLOCATOR_ID;
     ITheCompact internal immutable _COMPACT;
     bytes32 internal immutable _COMPACT_DOMAIN_SEPARATOR;
@@ -19,18 +20,6 @@ contract HybridAllocator is IAllocator {
     uint256 public nonce;
     uint256 public signerCount;
     mapping(address => bool) public signers;
-
-    error Unsupported();
-    error InvalidIds();
-    error InvalidAllocatorId(uint96 allocatorId, uint96 expectedAllocatorId);
-    error InvalidCaller(address sender, address expectedSender);
-    error InvalidAllocatorData(uint256 length);
-    error InvalidSignature();
-    error InvalidSigner();
-    error LastSigner();
-    error InvalidValue(uint256 value, uint256 expectedValue);
-
-    event ClaimRegistered(address indexed sponsor, uint256[] registeredAmounts, uint256 nonce, bytes32 claimHash);
 
     modifier onlySigner() {
         if (!signers[msg.sender]) {
@@ -51,11 +40,13 @@ contract HybridAllocator is IAllocator {
         nonce = type(uint128).max;
     }
 
+    /// @inheritdoc IHybridAllocator
     function addSigner(address signer_) external onlySigner {
         signers[signer_] = true;
         signerCount++;
     }
 
+    /// @inheritdoc IHybridAllocator
     function removeSigner(address signer_) external onlySigner {
         if (signerCount == 1) {
             revert LastSigner();
@@ -64,11 +55,13 @@ contract HybridAllocator is IAllocator {
         signerCount--;
     }
 
+    /// @inheritdoc IHybridAllocator
     function replaceSigner(address newSigner_) external onlySigner {
         signers[msg.sender] = false;
         signers[newSigner_] = true;
     }
 
+    /// @inheritdoc IAllocator
     function attest(address, /*operator*/ address, /*from*/ address, /*to*/ uint256, /*id*/ uint256 /*amount*/ )
         external
         pure
@@ -77,6 +70,7 @@ contract HybridAllocator is IAllocator {
         revert Unsupported();
     }
 
+    /// @inheritdoc IHybridAllocator
     function registerClaim(
         address recipient,
         uint256[2][] memory idsAndAmounts,
@@ -99,6 +93,7 @@ contract HybridAllocator is IAllocator {
         return (claimHash, registeredAmounts, nonce);
     }
 
+    /// @inheritdoc IAllocator
     function authorizeClaim(
         bytes32 claimHash,
         address, /*arbiter*/
@@ -131,6 +126,7 @@ contract HybridAllocator is IAllocator {
         return IAllocator.authorizeClaim.selector;
     }
 
+    /// @inheritdoc IAllocator
     function isClaimAuthorized(
         bytes32 claimHash, // The message hash representing the claim.
         address, /*arbiter*/ // The account tasked with verifying and submitting the claim.

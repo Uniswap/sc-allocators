@@ -15,6 +15,7 @@ import {Scope} from '@uniswap/the-compact/types/Scope.sol';
 import {Test} from 'forge-std/Test.sol';
 import {HybridAllocator} from 'src/allocators/HybridAllocator.sol';
 import {BATCH_COMPACT_WITNESS_TYPEHASH} from 'src/allocators/lib/TypeHashes.sol';
+import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 import {ERC20Mock} from 'src/test/ERC20Mock.sol';
 
 contract HybridAllocatorTest is Test, TestHelper {
@@ -69,7 +70,7 @@ contract HybridAllocatorTest is Test, TestHelper {
     }
 
     function test_registerClaim_revert_InvalidIds() public {
-        vm.expectRevert(HybridAllocator.InvalidIds.selector);
+        vm.expectRevert(IHybridAllocator.InvalidIds.selector);
         allocator.registerClaim(user, new uint256[2][](0), arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, '');
     }
 
@@ -80,7 +81,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         idsAndAmounts[0][1] = defaultAmount;
         vm.expectRevert(
             abi.encodeWithSelector(
-                HybridAllocator.InvalidAllocatorId.selector, _toAllocatorId(address(this)), allocator.ALLOCATOR_ID()
+                IHybridAllocator.InvalidAllocatorId.selector, _toAllocatorId(address(this)), allocator.ALLOCATOR_ID()
             )
         );
         allocator.registerClaim{value: defaultAmount}(
@@ -95,7 +96,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         idsAndAmounts[0][1] = defaultAmount;
         vm.expectRevert(
             abi.encodeWithSelector(
-                HybridAllocator.InvalidAllocatorId.selector, _toAllocatorId(address(this)), allocator.ALLOCATOR_ID()
+                IHybridAllocator.InvalidAllocatorId.selector, _toAllocatorId(address(this)), allocator.ALLOCATOR_ID()
             )
         );
         allocator.registerClaim(user, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, '');
@@ -106,7 +107,9 @@ contract HybridAllocatorTest is Test, TestHelper {
         idsAndAmounts[0][0] =
             _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0) /* use native */ );
         idsAndAmounts[0][1] = defaultAmount;
-        vm.expectRevert(abi.encodeWithSelector(HybridAllocator.InvalidValue.selector, defaultAmount + 1, defaultAmount));
+        vm.expectRevert(
+            abi.encodeWithSelector(IHybridAllocator.InvalidValue.selector, defaultAmount + 1, defaultAmount)
+        );
         allocator.registerClaim{value: defaultAmount + 1}(
             user, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, ''
         );
@@ -425,7 +428,7 @@ contract HybridAllocatorTest is Test, TestHelper {
 
         assertEq(usdc.balanceOf(user), defaultAmount);
 
-        vm.expectRevert(abi.encodeWithSelector(HybridAllocator.Unsupported.selector));
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.Unsupported.selector));
         allocator.attest(signer, user, target, id, defaultAmount);
     }
 
@@ -438,7 +441,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         usdc.approve(address(compact), defaultAmount);
         compact.depositERC20(address(usdc), bytes12(bytes32(id)), defaultAmount, user);
 
-        vm.expectRevert(abi.encodeWithSelector(HybridAllocator.Unsupported.selector), address(allocator));
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.Unsupported.selector), address(allocator));
         compact.transfer(target, id, defaultAmount);
         vm.stopPrank();
     }
@@ -463,7 +466,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         );
 
         vm.prank(attacker);
-        vm.expectRevert(abi.encodeWithSelector(HybridAllocator.InvalidCaller.selector, attacker, address(compact)));
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidCaller.selector, attacker, address(compact)));
         allocator.authorizeClaim(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), '');
     }
 
@@ -533,7 +536,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         });
 
         vm.prank(arbiter);
-        vm.expectRevert(abi.encodeWithSelector(HybridAllocator.InvalidSignature.selector));
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSignature.selector));
         compact.batchClaim(claim);
     }
 
@@ -737,7 +740,7 @@ contract HybridAllocatorTest is Test, TestHelper {
     function test_addSigner_revert_InvalidSigner(address attacker) public {
         vm.assume(attacker != signer);
         vm.prank(attacker);
-        vm.expectRevert(abi.encodeWithSelector(HybridAllocator.InvalidSigner.selector));
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
         allocator.addSigner(attacker);
         assertEq(allocator.signerCount(), 1);
         assertFalse(allocator.signers(attacker));
@@ -755,7 +758,7 @@ contract HybridAllocatorTest is Test, TestHelper {
     function test_removeSigner_revert_InvalidSigner(address attacker) public {
         vm.assume(attacker != signer);
         vm.prank(attacker);
-        vm.expectRevert(abi.encodeWithSelector(HybridAllocator.InvalidSigner.selector));
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
         allocator.removeSigner(signer);
         assertEq(allocator.signerCount(), 1);
         assertTrue(allocator.signers(signer));
@@ -763,7 +766,7 @@ contract HybridAllocatorTest is Test, TestHelper {
 
     function test_removeSigner_revert_LastSigner() public {
         vm.prank(signer);
-        vm.expectRevert(abi.encodeWithSelector(HybridAllocator.LastSigner.selector));
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.LastSigner.selector));
         allocator.removeSigner(signer);
         assertEq(allocator.signerCount(), 1);
         assertTrue(allocator.signers(signer));
@@ -796,7 +799,7 @@ contract HybridAllocatorTest is Test, TestHelper {
     function test_replaceSigner_revert_InvalidSigner(address attacker) public {
         vm.assume(attacker != signer);
         vm.prank(attacker);
-        vm.expectRevert(abi.encodeWithSelector(HybridAllocator.InvalidSigner.selector));
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
         allocator.replaceSigner(attacker);
         assertEq(allocator.signerCount(), 1);
         assertFalse(allocator.signers(attacker));
