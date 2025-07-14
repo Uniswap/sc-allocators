@@ -9,10 +9,11 @@ import {BatchCompact, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 import {HybridAllocator} from 'src/allocators/HybridAllocator.sol';
 import {BATCH_COMPACT_WITNESS_TYPEHASH, MANDATE_TYPEHASH} from 'src/allocators/lib/TypeHashes.sol';
+import {IHybridERC7683} from 'src/interfaces/IHybridERC7683.sol';
 
 import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 
-contract HybridERC7683 is HybridAllocator, IOriginSettler {
+contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
     // the storage slot for the claims mapping
     uint256 private constant _CLAIMS_STORAGE_SLOT = 0;
 
@@ -26,34 +27,9 @@ contract HybridERC7683 is HybridAllocator, IOriginSettler {
     /// @notice keccak256("QualifiedClaim(bytes32 claimHash,uint256 targetBlock,uint256 maximumBlocksAfterTarget)")
     bytes32 public constant QUALIFICATION_TYPEHASH = 0x59866b84bd1f6c909cf2a31efd20c59e6c902e50f2c196994e5aa85cdc7d7ce0;
 
-    struct OrderData {
-        // BATCH COMPACT
-        address arbiter; // The account tasked with verifying and submitting the claim.
-        address sponsor; // The account to source the tokens from.
-        // uint256 nonce; // A parameter to enforce replay protection, scoped to allocator.
-        uint256 expires; // The time at which the claim expires.
-        uint256[2][] idsAndAmounts; // The ids of the ERC6909 tokens to allocate.
-        // MANDATE
-        uint256 chainId; // (implicit arg, included in EIP712 payload)
-        address tribunal; // (implicit arg, included in EIP712 payload)
-        address recipient; // Recipient of settled tokens
-        // uint256 expires; // Mandate expiration timestamp
-        address settlementToken; // Settlement token (address(0) for native)
-        uint256 minimumAmount; // Minimum settlement amount
-        uint256 baselinePriorityFee; // Base fee threshold where scaling kicks in
-        uint256 scalingFactor; // Fee scaling multiplier (1e18 baseline)
-        uint256[] decayCurve; // Block durations, fill increases, & claim decreases.
-        bytes32 salt; // Replay protection parameter
-        // ADDITIONAL INPUT
-        uint128 targetBlock; // The block number at the target chain on which the PGA is executed / the reverse dutch auction starts.
-        uint120 maximumBlocksAfterTarget; // Blocks after target block that are still fillable.
-    }
-
-    error InvalidOrderDataType(bytes32 orderDataType, bytes32 expectedOrderDataType);
-    error InvalidOriginSettler(address originSettler, address expectedOriginSettler);
-
     constructor(address compact_, address signer_) HybridAllocator(compact_, signer_) {}
 
+    /// @inheritdoc IOriginSettler
     function openFor(
         GaslessCrossChainOrder calldata, /*order_*/
         bytes calldata, /*sponsorSignature_*/
@@ -62,6 +38,7 @@ contract HybridERC7683 is HybridAllocator, IOriginSettler {
         revert Unsupported();
     }
 
+    /// @inheritdoc IOriginSettler
     function open(OnchainCrossChainOrder calldata order_) external {
         // Check if orderDataType is the one expected by the allocator
         if (order_.orderDataType != ORDERDATA_TYPEHASH) {
@@ -128,6 +105,7 @@ contract HybridERC7683 is HybridAllocator, IOriginSettler {
         );
     }
 
+    /// @inheritdoc IAllocator
     function authorizeClaim(
         bytes32 claimHash,
         address, /*arbiter*/
@@ -136,7 +114,7 @@ contract HybridERC7683 is HybridAllocator, IOriginSettler {
         uint256, /*expires*/
         uint256[2][] calldata, /*idsAndAmounts*/
         bytes calldata allocatorData_
-    ) external override returns (bytes4) {
+    ) external override(HybridAllocator, IAllocator) returns (bytes4) {
         if (msg.sender != address(_COMPACT)) {
             revert InvalidCaller(msg.sender, address(_COMPACT));
         }
@@ -166,6 +144,7 @@ contract HybridERC7683 is HybridAllocator, IOriginSettler {
         return IAllocator.authorizeClaim.selector;
     }
 
+    /// @inheritdoc IOriginSettler
     function resolveFor(GaslessCrossChainOrder calldata, /*order*/ bytes calldata /*originFillerData*/ )
         external
         pure
@@ -174,6 +153,7 @@ contract HybridERC7683 is HybridAllocator, IOriginSettler {
         revert Unsupported();
     }
 
+    /// @inheritdoc IOriginSettler
     function resolve(OnchainCrossChainOrder calldata order) external view returns (ResolvedCrossChainOrder memory) {
         OrderData calldata orderData = _decodeOrderData(order);
         uint256 idsLength = orderData.idsAndAmounts.length;
