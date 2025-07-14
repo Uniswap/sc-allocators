@@ -732,7 +732,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder2, bytes memory sponsorSignature2) =
             _getGaslessCrossChainOrder();
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.NonceAlreadyInUse.selector, defaultNonce));
+        vm.expectRevert(abi.encodeWithSelector(ISimpleAllocator.NonceAlreadyInUse.selector, defaultNonce));
         erc7683Allocator.openFor(gaslessCrossChainOrder2, sponsorSignature2, '');
     }
 }
@@ -1175,7 +1175,7 @@ contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
         vm.assume(user != expectedSponsor);
 
         vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidNonce.selector, nonce_));
-        erc7683Allocator.checkNonce(user, nonce_);
+        erc7683Allocator.checkNonce(nonce_, user);
     }
 
     function test_checkNonce_unused(uint96 nonce_) public view {
@@ -1184,7 +1184,7 @@ contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
         assembly ("memory-safe") {
             nonce := or(shl(96, sponsor), shr(160, shl(160, nonce_)))
         }
-        assertEq(erc7683Allocator.checkNonce(sponsor, nonce), true);
+        assertEq(erc7683Allocator.checkNonce(nonce, user), true);
     }
 
     function test_checkNonce_used() public {
@@ -1205,7 +1205,7 @@ contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
         (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
         erc7683Allocator.open(onChainCrossChainOrder_);
 
-        vm.assertEq(erc7683Allocator.checkNonce(user, defaultNonce), false);
+        vm.assertEq(erc7683Allocator.checkNonce(defaultNonce, user), false);
         vm.stopPrank();
     }
 
@@ -1231,7 +1231,7 @@ contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
         (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
         erc7683Allocator.open(onChainCrossChainOrder_);
 
-        vm.assertEq(erc7683Allocator.checkNonce(user, nonce), !sameNonce);
+        vm.assertEq(erc7683Allocator.checkNonce(nonce, user), !sameNonce);
 
         vm.stopPrank();
     }

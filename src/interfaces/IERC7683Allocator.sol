@@ -79,7 +79,6 @@ interface IERC7683Allocator is IOriginSettler {
     error InvalidOriginSettler(address originSettler, address expectedOriginSettler);
     error InvalidOrderDataType(bytes32 orderDataType, bytes32 expectedOrderDataType);
     error InvalidNonce(uint256 nonce);
-    error NonceAlreadyInUse(uint256 nonce);
     error InvalidSignature(address signer, address expectedSigner);
     error InvalidRegistration(address sponsor, bytes32 claimHash);
     error BatchCompactsNotSupported();
@@ -106,7 +105,7 @@ interface IERC7683Allocator is IOriginSettler {
 
     /// @notice Checks if a nonce is free to be used
     /// @dev The nonce is the most significant 96 bits. The least significant 160 bits must be the sponsor address
-    function checkNonce(address sponsor_, uint256 nonce_) external view returns (bool nonceFree_);
+    function checkNonce(uint256 nonce_, address sponsor_) external view returns (bool nonceFree_);
 
     /// @notice Creates the filler data for the open event to be used on the IDestinationSettler
     /// @param claimant_ The address claiming the origin tokens after a successful fill (typically the address of the filler)
