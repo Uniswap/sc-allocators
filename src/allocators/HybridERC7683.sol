@@ -14,9 +14,6 @@ import {IHybridERC7683} from 'src/interfaces/IHybridERC7683.sol';
 import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 
 contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
-    // the storage slot for the claims mapping
-    uint256 private constant _CLAIMS_STORAGE_SLOT = 0;
-
     // mask for an active claim
     uint256 private constant _ACTIVE_CLAIM_MASK = 0x0000000000000000000000000000000000000000000000000000000000000001;
 
@@ -76,10 +73,9 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
 
         // store the allocator data with the claims mapping.
         assembly ("memory-safe") {
-            let m := mload(0x40)
-            mstore(m, _CLAIMS_STORAGE_SLOT)
-            mstore(add(m, 0x20), claimHash)
-            let claimSlot := keccak256(m, 0x40)
+            mstore(0x00, claimHash)
+            mstore(0x20, claims.slot)
+            let claimSlot := keccak256(0x00, 0x40)
             let targetBlock := calldataload(and(orderData, 0x1a0))
             let maximumBlocksAfterTarget := calldataload(and(orderData, 0x1c0))
             let indicator := and(and(shl(128, targetBlock), shl(1, maximumBlocksAfterTarget)), _ACTIVE_CLAIM_MASK)
@@ -178,10 +174,9 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
         returns (bool valid, uint128 targetBlock, uint120 maximumBlocksAfterTarget)
     {
         assembly ("memory-safe") {
-            let m := mload(0x40)
-            mstore(m, _CLAIMS_STORAGE_SLOT)
-            mstore(add(m, 0x20), claimHash)
-            let claimSlot := keccak256(m, 0x40)
+            mstore(0x00, claimHash)
+            mstore(0x20, claims.slot)
+            let claimSlot := keccak256(0x00, 0x40)
             let data := sload(claimSlot)
 
             valid := and(data, _ACTIVE_CLAIM_MASK)
