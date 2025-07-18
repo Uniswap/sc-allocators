@@ -193,17 +193,6 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
         }
     }
 
-    function _decodeOrderData(OnchainCrossChainOrder calldata order_)
-        private
-        pure
-        returns (OrderData calldata orderData)
-    {
-        bytes calldata rawOrderData = LibBytes.dynamicStructInCalldata(order_.orderData, 0x00);
-        assembly ("memory-safe") {
-            orderData := rawOrderData.offset
-        }
-    }
-
     function _convertToResolvedCrossChainOrder(
         OrderData calldata orderData,
         uint256 fillDeadline,
@@ -262,6 +251,17 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
             minReceived: minReceived,
             fillInstructions: fillInstructions
         });
+    }
+
+    function _decodeOrderData(OnchainCrossChainOrder calldata order_)
+        private
+        pure
+        returns (OrderData calldata orderData)
+    {
+        bytes calldata rawOrderData = LibBytes.dynamicStructInCalldata(order_.orderData, 0x00);
+        assembly ("memory-safe") {
+            orderData := rawOrderData.offset
+        }
     }
 
     function _convertAddressToBytes32(address address_) private pure returns (bytes32) {
