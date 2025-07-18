@@ -5,10 +5,9 @@ pragma solidity ^0.8.27;
 import {IERC7683Allocator} from '../interfaces/IERC7683Allocator.sol';
 import {SimpleAllocator} from './SimpleAllocator.sol';
 import {Claim, Mandate} from './types/TribunalStructs.sol';
+import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 
 import {IERC1271} from '@openzeppelin/contracts/interfaces/IERC1271.sol';
-import {ECDSA} from '@openzeppelin/contracts/utils/cryptography/ECDSA.sol';
-
 import {LibBytes} from '@solady/utils/LibBytes.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {Compact} from '@uniswap/the-compact/types/EIP712Types.sol';
@@ -157,6 +156,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         );
     }
 
+    /// @inheritdoc IAllocator
     function authorizeClaim(
         bytes32 claimHash, // The message hash representing the claim.
         address, /* arbiter */ // The account tasked with verifying and submitting the claim.
@@ -165,7 +165,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         uint256, /* expires */ // The time at which the claim expires.
         uint256[2][] calldata idsAndAmounts, // The allocated token IDs and amounts.
         bytes calldata allocatorData // Arbitrary data provided by the arbiter.
-    ) external override onlyCompact returns (bytes4) {
+    ) external override(SimpleAllocator, IAllocator) onlyCompact returns (bytes4) {
         uint256 length = idsAndAmounts.length;
         if (length > 1) {
             revert BatchCompactsNotSupported();
@@ -187,6 +187,26 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         // We expect the Compact to verify the expiration date is still valid and the nonce has not yet been consumed
 
         return this.authorizeClaim.selector;
+    }
+
+    /// @inheritdoc IAllocator
+    function isClaimAuthorized(
+        bytes32 claimHash,
+        address, /*arbiter*/ // The account tasked with verifying and submitting the claim.
+        address, /*sponsor*/ // The account to source the tokens from.
+        uint256, /*nonce*/ // A parameter to enforce replay protection, scoped to allocator.
+        uint256 expires, // The time at which the claim expires.
+        uint256[2][] calldata idsAndAmounts, // The allocated token IDs and amounts.
+        bytes calldata allocatorData // Arbitrary data provided by the arbiter.
+    ) external view override(SimpleAllocator, IAllocator) returns (bool) {
+        uint256 length = idsAndAmounts.length;
+        if (length > 1) {
+            revert BatchCompactsNotSupported();
+        }
+        (uint256 targetBlock, uint256 maximumBlocksAfterTarget) = abi.decode(allocatorData, (uint256, uint256));
+        claimHash = keccak256(abi.encode(QUALIFICATION_TYPEHASH, claimHash, targetBlock, maximumBlocksAfterTarget));
+
+        return _claim[claimHash] && expires > block.timestamp;
     }
 
     /// @inheritdoc IERC7683Allocator
@@ -253,7 +273,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         if (sponsorSignature_.length > 0) {
             bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), _COMPACT_DOMAIN_SEPARATOR, claimHash));
             // confirm the signature matches the digest
-            address signer_ = ECDSA.recover(digest, sponsorSignature_);
+            address signer_ = _recoverSigner(digest, sponsorSignature_);
             if (resolvedOrder_.user != signer_) {
                 revert InvalidSignature(resolvedOrder_.user, signer_);
             }
@@ -284,13 +304,18 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         assembly ("memory-safe") {
             // load amount from orderData_
             amount := calldataload(add(lockTagAbsoluteOffset, 0x40))
-            let m := mload(0x40)
         }
 
         _lockTokens(tokenHash, amount, resolvedOrder_.openDeadline, qualifiedClaimHash);
 
         // Emit an open event
         emit Open(bytes32(nonce_), resolvedOrder_);
+    }
+
+    function _lockTokens(bytes32 tokenHash, uint256 amount, uint256 expires, bytes32 claimHash) internal {
+        // Lock the tokens
+        _claim[claimHash] = true;
+        _allocation[tokenHash] = _allocationData(amount, expires);
     }
 
     function _verifyAllocation(address sponsor_, uint32 openDeadline_, bytes calldata orderData_, uint256 lockTagOffset)
@@ -316,12 +341,6 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         _checkBalance(sponsor_, _getTokenId(lockTag, inputToken), amount);
 
         return tokenHash_;
-    }
-
-    function _lockTokens(bytes32 tokenHash, uint256 amount, uint256 expires, bytes32 claimHash) internal {
-        // Lock the tokens
-        _claim[claimHash] = true;
-        _allocation[tokenHash] = _allocationData(amount, expires);
     }
 
     function _resolveOrder(
@@ -449,10 +468,24 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         }
     }
 
-    function _addressToBytes32(address address_) internal pure returns (bytes32 output_) {
-        assembly ("memory-safe") {
-            output_ := shr(96, shl(96, address_))
+    function _recoverSigner(bytes32 digest, bytes calldata signature) internal pure returns (address) {
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+
+        if (signature.length == 65) {
+            (r, s) = abi.decode(signature, (bytes32, bytes32));
+            v = uint8(signature[64]);
+        } else if (signature.length == 64) {
+            bytes32 vs;
+            (r, vs) = abi.decode(signature, (bytes32, bytes32));
+            v = uint8(uint256(vs >> 255) + 27);
+            s = vs << 1 >> 1;
+        } else {
+            return address(0);
         }
+
+        return ecrecover(digest, v, r, s);
     }
 
     function _mandateHash(bytes calldata orderData, uint256 mandateOffset, uint32 fillDeadline)
@@ -493,32 +526,9 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         // 0x140: salt
     }
 
-    function _convertGaslessOrderData(
-        address sponsor_,
-        uint256 nonce_,
-        uint32 openDeadline_,
-        OrderDataGasless calldata orderDataGasless_
-    ) internal pure returns (OrderData memory orderData_) {
-        orderData_ = OrderData({
-            arbiter: orderDataGasless_.arbiter,
-            sponsor: sponsor_,
-            nonce: nonce_,
-            expires: openDeadline_,
-            lockTag: orderDataGasless_.lockTag,
-            inputToken: orderDataGasless_.inputToken,
-            amount: orderDataGasless_.amount,
-            chainId: orderDataGasless_.chainId,
-            tribunal: orderDataGasless_.tribunal,
-            recipient: orderDataGasless_.recipient,
-            settlementToken: orderDataGasless_.settlementToken,
-            minimumAmount: orderDataGasless_.minimumAmount,
-            baselinePriorityFee: orderDataGasless_.baselinePriorityFee,
-            scalingFactor: orderDataGasless_.scalingFactor,
-            decayCurve: orderDataGasless_.decayCurve,
-            salt: orderDataGasless_.salt,
-            targetBlock: 0,
-            maximumBlocksAfterTarget: 0
-        });
-        return orderData_;
+    function _addressToBytes32(address address_) internal pure returns (bytes32 output_) {
+        assembly ("memory-safe") {
+            output_ := shr(96, shl(96, address_))
+        }
     }
 }

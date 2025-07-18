@@ -3,8 +3,9 @@
 pragma solidity ^0.8.27;
 
 import {IOriginSettler} from './ERC7683/IOriginSettler.sol';
+import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 
-interface IERC7683Allocator is IOriginSettler {
+interface IERC7683Allocator is IOriginSettler, IAllocator {
     struct OrderData {
         // COMPACT
         address arbiter; // The account tasked with verifying and submitting the claim.
