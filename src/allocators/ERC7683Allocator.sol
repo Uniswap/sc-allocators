@@ -2,6 +2,7 @@
 
 pragma solidity ^0.8.27;
 
+import {IOriginSettler} from '../interfaces/ERC7683/IOriginSettler.sol';
 import {IERC7683Allocator} from '../interfaces/IERC7683Allocator.sol';
 import {SimpleAllocator} from './SimpleAllocator.sol';
 import {Claim, Mandate} from './types/TribunalStructs.sol';
@@ -51,7 +52,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         _COMPACT_DOMAIN_SEPARATOR = ITheCompact(COMPACT_CONTRACT).DOMAIN_SEPARATOR();
     }
 
-    /// @inheritdoc IERC7683Allocator
+    /// @inheritdoc IOriginSettler
     function openFor(GaslessCrossChainOrder calldata order_, bytes calldata sponsorSignature_, bytes calldata)
         external
     {
@@ -85,7 +86,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         _open(orderDataGaslessBytes, ORDERDATA_GASLESS_LOCKTAG_OFFSET, sponsorSignature_, mandateHash, resolvedOrder);
     }
 
-    /// @inheritdoc IERC7683Allocator
+    /// @inheritdoc IOriginSettler
     function open(OnchainCrossChainOrder calldata order) external {
         // Check if orderDataType is the one expected by the allocator
         if (order.orderDataType != ORDERDATA_TYPEHASH) {
@@ -118,7 +119,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         _open(orderDataBytes, ORDERDATA_LOCKTAG_OFFSET, LibBytes.emptyCalldata(), mandateHash, resolvedOrder);
     }
 
-    /// @inheritdoc IERC7683Allocator
+    /// @inheritdoc IOriginSettler
     function resolveFor(GaslessCrossChainOrder calldata order_, bytes calldata)
         external
         view
@@ -137,7 +138,7 @@ contract ERC7683Allocator is SimpleAllocator, IERC7683Allocator {
         );
     }
 
-    /// @inheritdoc IERC7683Allocator
+    /// @inheritdoc IOriginSettler
     function resolve(OnchainCrossChainOrder calldata order_) external view returns (ResolvedCrossChainOrder memory) {
         bytes calldata orderDataBytes = LibBytes.dynamicStructInCalldata(order_.orderData, 0x00);
         OrderData calldata orderData;
