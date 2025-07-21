@@ -57,13 +57,21 @@ contract OnChainAllocator is IOnChainAllocator {
     ) public returns (bytes32 claimHash, uint256 claimNonce) {
         (claimHash, claimNonce) = _registerAllocation(sponsor, idsAndAmounts, arbiter, expires, typehash, witness);
 
-        // Verify the signature
-        bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), COMPACT_DOMAIN_SEPARATOR, claimHash));
-        address signer = _recoverSigner(digest, signature);
-        if (signer != sponsor) {
-            revert InvalidSignature(signer, sponsor);
+        // We check for the length, which means this could also be triggered by a zero length signature provided in the openFor function.
+        // This enables relaying of orders if the claim was registered on the compact.
+        if (signature.length > 0) {
+            // confirm the provided signature is valid
+            bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), COMPACT_DOMAIN_SEPARATOR, claimHash));
+            address signer_ = _recoverSigner(digest, signature);
+            if (sponsor != signer_) {
+                revert InvalidSignature(sponsor, signer_);
+            }
+        } else {
+            // confirm the claim hash is registered on the compact
+            if (!ITheCompact(COMPACT_CONTRACT).isRegistered(sponsor, claimHash, typehash)) {
+                revert InvalidRegistration(sponsor, claimHash);
+            }
         }
-
         emit AllocationRegistered(sponsor, claimHash, claimNonce, expires, idsAndAmounts);
 
         return (claimHash, claimNonce);

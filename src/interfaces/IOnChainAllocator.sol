@@ -43,8 +43,11 @@ interface IOnChainAllocator is IAllocator {
     /// @notice Thrown if the provided amount is not valid
     error InvalidAmount(uint256 amount);
 
-    /// @notice Thrown if the signature is invalid
+    /// @notice Thrown if the provided signature is invalid
     error InvalidSignature(address signer, address expectedSigner);
+
+    /// @notice Thrown if the claim hash is not registered on the compact
+    error InvalidRegistration(address sponsor, bytes32 claimHash);
 
     /// @notice Emitted when a lock is successfully created
     /// @param sponsor The address of the sponsor
