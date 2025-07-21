@@ -43,6 +43,9 @@ interface IOnChainAllocator is IAllocator {
     /// @notice Thrown if the provided amount is not valid
     error InvalidAmount(uint256 amount);
 
+    /// @notice Thrown if the signature is invalid
+    error InvalidSignature(address signer, address expectedSigner);
+
     /// @notice Emitted when a lock is successfully created
     /// @param sponsor The address of the sponsor
     /// @param claimHash The hash of the claim
@@ -69,5 +72,23 @@ interface IOnChainAllocator is IAllocator {
         uint32 expires,
         bytes32 typehash,
         bytes32 witness
-    ) external payable returns (bytes32 claimHash, uint256 claimNonce);
+    ) external returns (bytes32 claimHash, uint256 claimNonce);
+
+    /// @notice Registers an allocation for a set of tokens on behalf of a sponsor
+    /// @param sponsor The address of the sponsor
+    /// @param idsAndAmounts The ids and amounts of the allocations
+    /// @param arbiter The arbiter of the allocation
+    /// @param expires The expiration of the allocation
+    /// @param typehash The typehash of the allocation
+    /// @param witness The witness of the allocation
+    /// @param signature The signature of the allocation
+    function registerAllocationFor(
+        address sponsor,
+        uint256[2][] memory idsAndAmounts,
+        address arbiter,
+        uint32 expires,
+        bytes32 typehash,
+        bytes32 witness,
+        bytes calldata signature
+    ) external returns (bytes32 claimHash, uint256 claimNonce);
 }
