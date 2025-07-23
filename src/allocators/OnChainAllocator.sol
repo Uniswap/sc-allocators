@@ -32,15 +32,15 @@ contract OnChainAllocator is IOnChainAllocator {
 
     /// @inheritdoc IOnChainAllocator
     function registerAllocation(
-        uint256[2][] calldata idsAndAmounts,
+        Lock[] calldata commitments,
         address arbiter,
         uint32 expires,
         bytes32 typehash,
         bytes32 witness
     ) public returns (bytes32 claimHash, uint256 claimNonce) {
-        (claimHash, claimNonce) = _registerAllocation(msg.sender, idsAndAmounts, arbiter, expires, typehash, witness);
+        (claimHash, claimNonce) = _registerAllocation(msg.sender, commitments, arbiter, expires, typehash, witness);
 
-        emit AllocationRegistered(msg.sender, claimHash, claimNonce, expires, idsAndAmounts);
+        emit AllocationRegistered(msg.sender, claimHash, claimNonce, expires, commitments);
 
         return (claimHash, claimNonce);
     }
@@ -48,14 +48,14 @@ contract OnChainAllocator is IOnChainAllocator {
     /// @inheritdoc IOnChainAllocator
     function registerAllocationFor(
         address sponsor,
-        uint256[2][] calldata idsAndAmounts,
+        Lock[] calldata commitments,
         address arbiter,
         uint32 expires,
         bytes32 typehash,
         bytes32 witness,
         bytes calldata signature
     ) public returns (bytes32 claimHash, uint256 claimNonce) {
-        (claimHash, claimNonce) = _registerAllocation(sponsor, idsAndAmounts, arbiter, expires, typehash, witness);
+        (claimHash, claimNonce) = _registerAllocation(sponsor, commitments, arbiter, expires, typehash, witness);
 
         // We check for the length, which means this could also be triggered by a zero length signature provided in the openFor function.
         // This enables relaying of orders if the claim was registered on the compact.
@@ -72,7 +72,7 @@ contract OnChainAllocator is IOnChainAllocator {
                 revert InvalidRegistration(sponsor, claimHash);
             }
         }
-        emit AllocationRegistered(sponsor, claimHash, claimNonce, expires, idsAndAmounts);
+        emit AllocationRegistered(sponsor, claimHash, claimNonce, expires, commitments);
 
         return (claimHash, claimNonce);
     }
@@ -102,7 +102,7 @@ contract OnChainAllocator is IOnChainAllocator {
         uint256, /*expires*/ // The time at which the claim expires.
         uint256[2][] calldata idsAndAmounts, // The allocated token IDs and amounts.
         bytes calldata /*allocatorData*/ // Arbitrary data provided by the arbiter.
-    ) external virtual onlyCompact returns (bytes4) {
+    ) public virtual onlyCompact returns (bytes4) {
         for (uint256 i = 0; i < idsAndAmounts.length; i++) {
             bytes32 tokenHash = _getTokenHash(idsAndAmounts[i][0], sponsor);
 
@@ -127,7 +127,7 @@ contract OnChainAllocator is IOnChainAllocator {
         uint256 expires, // The time at which the claim expires.
         uint256[2][] calldata idsAndAmounts, // The allocated token IDs and amounts.
         bytes calldata /*allocatorData*/ // Arbitrary data provided by the arbiter.
-    ) external view virtual returns (bool) {
+    ) public view virtual returns (bool) {
         if (expires < block.timestamp) {
             return false;
         }
@@ -146,58 +146,25 @@ contract OnChainAllocator is IOnChainAllocator {
 
     function _registerAllocation(
         address sponsor,
-        uint256[2][] calldata idsAndAmounts,
+        Lock[] calldata commitments,
         address arbiter,
         uint32 expires,
         bytes32 typehash,
         bytes32 witness
     ) internal returns (bytes32 claimHash, uint256 nonce) {
-        bytes32 commitmentsHash = _getCommitmentsHash(idsAndAmounts);
+        bytes32 commitmentsHash = _getCommitmentsHash(commitments);
         nonce = ++nonces[sponsor];
         claimHash = keccak256(abi.encode(typehash, arbiter, sponsor, nonce, expires, commitmentsHash, witness));
+
         uint256 minResetPeriod;
-
-        for (uint256 i = 0; i < idsAndAmounts.length; i++) {
-            // TODO: Discuss which checks to leave in, and which to remove.
-            // Some of the checks are decreasing the responsibility of the sponsor, others of the filler.
-
-            // Check the allocator id fits this allocator
-            if (_splitAllocatorId(idsAndAmounts[i][0]) != ALLOCATOR_ID) {
-                revert InvalidAllocator(_splitAllocatorId(idsAndAmounts[i][0]), ALLOCATOR_ID);
-            }
-
-            // Check the amount fits in the supported range
-            if (idsAndAmounts[i][1] > type(uint224).max) {
-                revert InvalidAmount(idsAndAmounts[i][1]);
-            }
-
-            // Get the reset period for the token id
-            uint256 duration = _toSeconds(idsAndAmounts[i][0]);
-            if (duration < minResetPeriod) {
-                minResetPeriod = duration;
-            }
-
-            // Ensure no forcedWithdrawal is active for the token id
-            (, uint256 forcedWithdrawal) =
-                ITheCompact(COMPACT_CONTRACT).getForcedWithdrawalStatus(sponsor, idsAndAmounts[i][0]);
-            if (forcedWithdrawal != 0 && forcedWithdrawal < expires) {
-                revert ForceWithdrawalAvailable(expires, forcedWithdrawal);
-            }
-
-            // Check the balance of the recipient is sufficient
-            bytes32 tokenHash = _getTokenHash(idsAndAmounts[i][0], sponsor);
-            uint256 allocatedBalance = _allocatedBalance(tokenHash);
-            uint256 balance = ERC6909(COMPACT_CONTRACT).balanceOf(sponsor, idsAndAmounts[i][0]);
-            if (allocatedBalance + idsAndAmounts[i][1] > balance) {
-                revert InsufficientBalance(
-                    sponsor, idsAndAmounts[i][0], balance, allocatedBalance + idsAndAmounts[i][1]
-                );
-            }
+        for (uint256 i = 0; i < commitments.length; i++) {
+            minResetPeriod = _checkInput(commitments[i], sponsor, expires, minResetPeriod);
+            bytes32 tokenHash = _checkBalance(sponsor, commitments[i]);
 
             // Store the allocation
-            _allocations[tokenHash].push(
-                Allocation({expires: expires, amount: uint224(idsAndAmounts[i][1]), claimHash: claimHash})
-            );
+            uint224 amount = uint224(commitments[i].amount);
+            Allocation memory allocation = Allocation({expires: expires, amount: amount, claimHash: claimHash});
+            _allocations[tokenHash].push(allocation);
         }
         // Ensure expiration is not bigger then the smallest reset period
         if (expires > block.timestamp + minResetPeriod) {
@@ -205,6 +172,51 @@ contract OnChainAllocator is IOnChainAllocator {
         }
 
         return (claimHash, nonce);
+    }
+
+    function _checkInput(Lock calldata commitment, address sponsor, uint32 expires, uint256 minResetPeriod)
+        internal
+        view
+        returns (uint256)
+    {
+        // TODO: Discuss which checks to leave in, and which to remove.
+        // Some of the checks are decreasing the responsibility of the sponsor, others of the filler.
+
+        // Check the allocator id fits this allocator
+        if (_splitAllocatorId(commitment.lockTag) != ALLOCATOR_ID) {
+            revert InvalidAllocator(_splitAllocatorId(commitment.lockTag), ALLOCATOR_ID);
+        }
+
+        // Check the amount fits in the supported range
+        if (commitment.amount > type(uint224).max) {
+            revert InvalidAmount(commitment.amount);
+        }
+
+        // Get the reset period for the token id
+        uint256 duration = _toSeconds(commitment.lockTag);
+        if (duration < minResetPeriod) {
+            minResetPeriod = duration;
+        }
+
+        // Ensure no forcedWithdrawal is active for the token id
+        (, uint256 forcedWithdrawal) = ITheCompact(COMPACT_CONTRACT).getForcedWithdrawalStatus(
+            sponsor, _toId(commitment.lockTag, commitment.token)
+        );
+        if (forcedWithdrawal != 0 && forcedWithdrawal < expires) {
+            revert ForceWithdrawalAvailable(expires, forcedWithdrawal);
+        }
+
+        return minResetPeriod;
+    }
+
+    function _checkBalance(address sponsor, Lock calldata commitment) internal returns (bytes32 tokenHash) {
+        // Check the balance of the recipient is sufficient
+        tokenHash = _getTokenHash(commitment, sponsor);
+        uint256 balance = ERC6909(COMPACT_CONTRACT).balanceOf(sponsor, _toId(commitment.lockTag, commitment.token));
+        uint256 requiredBalance = _allocatedBalance(tokenHash) + commitment.amount;
+        if (requiredBalance > balance) {
+            revert InsufficientBalance(sponsor, _toId(commitment.lockTag, commitment.token), balance, requiredBalance);
+        }
     }
 
     function _allocatedBalance(bytes32 tokenHash) internal returns (uint256 allocatedBalance) {
@@ -323,36 +335,48 @@ contract OnChainAllocator is IOnChainAllocator {
         return ecrecover(digest, v, r, s);
     }
 
-    function _getCommitmentsHash(uint256[2][] memory idsAndAmounts) internal pure returns (bytes32) {
+    function _getCommitmentsHash(Lock[] memory commitments) internal pure returns (bytes32) {
         bytes32 commitmentsHash;
-        for (uint256 i = 0; i < idsAndAmounts.length; i++) {
+        for (uint256 i = 0; i < commitments.length; i++) {
             commitmentsHash = keccak256(
-                abi.encode(
-                    LOCK_TYPEHASH,
-                    idsAndAmounts[i][0] >> 160 << 160,
-                    idsAndAmounts[i][0] << 96 >> 96,
-                    idsAndAmounts[i][1]
-                )
+                abi.encode(LOCK_TYPEHASH, commitments[i].lockTag, commitments[i].token, commitments[i].amount)
             );
         }
         return commitmentsHash;
     }
 
-    function _getTokenHash(uint256 id_, address sponsor_) internal pure returns (bytes32) {
-        return keccak256(abi.encode(id_, sponsor_));
+    function _getTokenHash(Lock calldata commitment, address sponsor) internal pure returns (bytes32 tokenHash) {
+        assembly ("memory-safe") {
+            mstore(0x00, calldataload(commitment))
+            mstore(0x0c, shl(96, calldataload(add(commitment, 0x20))))
+            mstore(0x20, sponsor)
+            tokenHash := keccak256(0x00, 0x40)
+        }
+        return tokenHash;
     }
 
-    function _splitAllocatorId(uint256 id) internal pure returns (uint96) {
+    function _getTokenHash(uint256 id, address sponsor) internal pure returns (bytes32 tokenHash) {
+        return keccak256(abi.encode(id, sponsor));
+    }
+
+    function _splitAllocatorId(bytes12 lockTag) internal pure returns (uint96) {
         uint96 allocatorId_;
         assembly ("memory-safe") {
-            allocatorId_ := shr(164, shl(4, id))
+            allocatorId_ := shr(164, shl(4, lockTag))
         }
         return allocatorId_;
     }
 
-    function _toSeconds(uint256 id) internal pure returns (uint256 duration) {
+    function _toId(bytes12 lockTag, address token) internal pure returns (uint256 id) {
         assembly ("memory-safe") {
-            let resetPeriod := shr(253, shl(1, id))
+            id := or(lockTag, token)
+        }
+        return id;
+    }
+
+    function _toSeconds(bytes12 lockTag) internal pure returns (uint256 duration) {
+        assembly ("memory-safe") {
+            let resetPeriod := shr(253, shl(1, lockTag))
 
             // Bitpacked durations in 24-bit segments:
             // 278d00  094890  015180  000f3c  000258  00003c  00000f  000001
