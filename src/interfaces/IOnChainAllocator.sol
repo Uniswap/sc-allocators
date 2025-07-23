@@ -3,7 +3,7 @@
 pragma solidity ^0.8.27;
 
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
-import {Compact} from '@uniswap/the-compact/types/EIP712Types.sol';
+import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 interface IOnChainAllocator is IAllocator {
     struct Allocation {
@@ -54,23 +54,19 @@ interface IOnChainAllocator is IAllocator {
     /// @param claimHash The hash of the claim
     /// @param nonce The nonce of the claim
     /// @param expires The expiration of the claim
-    /// @param idsAndAmounts The ids and amounts of the allocations
+    /// @param commitments The commitments of the allocations
     event AllocationRegistered(
-        address indexed sponsor,
-        bytes32 indexed claimHash,
-        uint256 indexed nonce,
-        uint256 expires,
-        uint256[2][] idsAndAmounts
+        address indexed sponsor, bytes32 indexed claimHash, uint256 indexed nonce, uint256 expires, Lock[] commitments
     );
 
     /// @notice Registers an allocation for a set of tokens
-    /// @param idsAndAmounts The ids and amounts of the allocations
+    /// @param commitments The commitments of the allocations
     /// @param arbiter The arbiter of the allocation
     /// @param expires The expiration of the allocation
     /// @param typehash The typehash of the allocation
     /// @param witness The witness of the allocation
     function registerAllocation(
-        uint256[2][] memory idsAndAmounts,
+        Lock[] memory commitments,
         address arbiter,
         uint32 expires,
         bytes32 typehash,
@@ -79,7 +75,7 @@ interface IOnChainAllocator is IAllocator {
 
     /// @notice Registers an allocation for a set of tokens on behalf of a sponsor
     /// @param sponsor The address of the sponsor
-    /// @param idsAndAmounts The ids and amounts of the allocations
+    /// @param commitments The commitments of the allocations
     /// @param arbiter The arbiter of the allocation
     /// @param expires The expiration of the allocation
     /// @param typehash The typehash of the allocation
@@ -87,7 +83,7 @@ interface IOnChainAllocator is IAllocator {
     /// @param signature The signature of the allocation
     function registerAllocationFor(
         address sponsor,
-        uint256[2][] memory idsAndAmounts,
+        Lock[] memory commitments,
         address arbiter,
         uint32 expires,
         bytes32 typehash,
