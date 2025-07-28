@@ -1,7 +1,7 @@
 {
-    "registerClaim_erc20Token": "142004",
-    "registerClaim_erc20Token_emptyAmountInput": "143062",
-    "registerClaim_multipleTokens": "176269",
-    "registerClaim_nativeToken": "96743",
-    "registerClaim_nativeToken_emptyAmountInput": "96651"
+    "allocateAndRegister_erc20Token": "172609",
+    "allocateAndRegister_erc20Token_emptyAmountInput": "174338",
+    "allocateAndRegister_multipleTokens": "209855",
+    "allocateAndRegister_nativeToken": "122340",
+    "allocateAndRegister_nativeToken_emptyAmountInput": "122239"
 }

@@ -2,6 +2,7 @@
 
 pragma solidity ^0.8.27;
 
+import {SafeTransferLib} from '@solady/utils/SafeTransferLib.sol';
 import {BatchCompact, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
@@ -16,7 +17,8 @@ contract HybridAllocator is IHybridAllocator {
 
     mapping(bytes32 => bool) internal claims;
 
-    uint256 public nonce;
+    /// @dev The off chain allocator must use a uint256 nonce where the first 160 bits are the sponsors to ensure no nonce collisions
+    uint96 public nonce;
     uint256 public signerCount;
     mapping(address => bool) public signers;
 
@@ -34,9 +36,6 @@ contract HybridAllocator is IHybridAllocator {
 
         signers[signer_] = true;
         signerCount++;
-
-        // Block the first half of nonces for the offchain allocator
-        nonce = type(uint128).max;
     }
 
     /// @inheritdoc IHybridAllocator
@@ -70,7 +69,7 @@ contract HybridAllocator is IHybridAllocator {
     }
 
     /// @inheritdoc IHybridAllocator
-    function registerClaim(
+    function allocateAndRegister(
         address recipient,
         uint256[2][] memory idsAndAmounts,
         address arbiter,
@@ -166,19 +165,21 @@ contract HybridAllocator is IHybridAllocator {
         }
 
         for (; idIndex < idsLength; idIndex++) {
-            (uint96 allocatorId_, address token_) = _splitId(idsAndAmounts[idIndex][0]);
+            (uint96 allocatorId, address token) = _splitId(idsAndAmounts[idIndex][0]);
 
             // Check allocator id
-            if (allocatorId_ != ALLOCATOR_ID) {
-                revert InvalidAllocatorId(allocatorId_, ALLOCATOR_ID);
+            if (allocatorId != ALLOCATOR_ID) {
+                revert InvalidAllocatorId(allocatorId, ALLOCATOR_ID);
             }
 
             if (idsAndAmounts[idIndex][1] == 0) {
                 // Amount is derived from the allocators token balance
-                idsAndAmounts[idIndex][1] = IERC20(token_).balanceOf(address(this));
+                idsAndAmounts[idIndex][1] = IERC20(token).balanceOf(address(this));
             }
 
-            IERC20(token_).approve(address(_COMPACT), idsAndAmounts[idIndex][1]);
+            if (IERC20(token).allowance(address(this), address(_COMPACT)) < idsAndAmounts[idIndex][1]) {
+                SafeTransferLib.safeApproveWithRetry(token, address(_COMPACT), type(uint256).max);
+            }
         }
 
         return idsAndAmounts;

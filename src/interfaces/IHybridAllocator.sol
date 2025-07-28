@@ -37,17 +37,17 @@ interface IHybridAllocator is IAllocator {
     function replaceSigner(address newSigner_) external;
 
     /**
-     * @notice Register a claim in the allocator and depositing the relevant tokens to the compact.
+     * @notice Create an allocation and a registration on the compact by depositing the relevant tokens to the compact.
      * @dev If the provided amounts are zero, the contract will use its own token balance.
-     * @param recipient The address receiving the deposited tokens and the sponsor of the claim.
+     * @param recipient The address receiving the deposited tokens and the sponsor of the compact.
      * @param idsAndAmounts The IDs and amounts of the tokens to register. Amounts can be zero.
-     * @param arbiter The address of the arbiter for the claim.
-     * @param expires The expiration time of the claim.
-     * @param typehash The typehash of the claim.
-     * @param witness The witness of the claim.
+     * @param arbiter The address of the arbiter for the compact.
+     * @param expires The expiration time of the compact.
+     * @param typehash The typehash of the compact.
+     * @param witness The witness of the compact.
      * @return The claim hash, the registered amounts, and the nonce.
      */
-    function registerClaim(
+    function allocateAndRegister(
         address recipient,
         uint256[2][] memory idsAndAmounts,
         address arbiter,

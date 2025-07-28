@@ -62,7 +62,7 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
         );
 
         // register claim
-        (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce_) = registerClaim(
+        (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce_) = allocateAndRegister(
             orderData.sponsor,
             orderData.idsAndAmounts,
             orderData.arbiter,
