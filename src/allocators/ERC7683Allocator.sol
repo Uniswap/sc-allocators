@@ -22,16 +22,16 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         0x95d7f00c299b34a562258ba851472a8d9bd0d8a1b88fce3a37b7d27ca06e77c4;
 
     /// @notice The typehash of the OrderDataGasless struct
-    //          keccak256("OrderDataGasless(address arbiter,Order order,
+    //          keccak256("OrderDataGasless(address arbiter,Order order)
     //          Lock(bytes12 lockTag,address token,uint256 amount)
     //          Order(Lock[] commitments,uint256 chainId,address tribunal,address recipient,address settlementToken,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
     bytes32 public constant ORDERDATA_GASLESS_TYPEHASH =
-        0xfddec069b5987011094d234ae1829188ce34de94b23d06395ba4e6e4749a544e;
+        0xdebd9e7866045b7f0ce8613ffbb31daa3fa5c6e6ac228316ba9f57fda63b7489;
 
     /// @notice keccak256("BatchCompact(address arbiter,address sponsor,uint256 nonce,uint256 expires,Lock[] commitments,Mandate mandate)
     //          Lock(bytes12 lockTag,address token,uint256 amount)
     //          Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
-    bytes32 public constant COMPACT_WITNESS_TYPEHASH =
+    bytes32 public constant BATCH_COMPACT_WITNESS_TYPEHASH =
         0x5ede122c736b60a8b718f83dcfb5d6e4aa27c9714d0c7bc9ca86562b8f878463;
 
     /// @notice keccak256("Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
@@ -63,7 +63,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         }
 
         // Decode the orderData
-        (address arbiter,, Order calldata orderData,,) = _decodeOrderData(order_.orderData, 0x20);
+        (address arbiter,, Order calldata orderData,,) = _decodeOrderData(order_.orderData, 0x40);
 
         ResolvedCrossChainOrder memory resolvedOrder = _resolveOrder(
             arbiter,
@@ -105,7 +105,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
             Order calldata orderData,
             uint200 targetBlock,
             uint56 maximumBlocksAfterTarget
-        ) = _decodeOrderData(order.orderData, 0x40);
+        ) = _decodeOrderData(order.orderData, 0x60);
 
         bytes32 mandateHash = _mandateHash(orderData, order.fillDeadline);
 
@@ -153,7 +153,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         }
 
         // Decode the orderData
-        (address arbiter,, Order calldata orderData,,) = _decodeOrderData(order_.orderData, 0x20);
+        (address arbiter,, Order calldata orderData,,) = _decodeOrderData(order_.orderData, 0x40);
 
         return _resolveOrder(
             arbiter,
@@ -182,7 +182,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
             Order calldata orderData,
             uint200 targetBlock,
             uint56 maximumBlocksAfterTarget
-        ) = _decodeOrderData(order.orderData, 0x40);
+        ) = _decodeOrderData(order.orderData, 0x60);
 
         return _resolveOrder(
             arbiter,
@@ -264,8 +264,14 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         ResolvedCrossChainOrder memory resolvedOrder_
     ) internal {
         // Register the allocation on chain
-        (bytes32 claimHash, uint256 nonce) = registerAllocationFor(
-            sponsor, orderData.commitments, arbiter, expires, COMPACT_WITNESS_TYPEHASH, mandateHash_, sponsorSignature_
+        (bytes32 claimHash, uint256 nonce) = allocateFor(
+            sponsor,
+            orderData.commitments,
+            arbiter,
+            expires,
+            BATCH_COMPACT_WITNESS_TYPEHASH,
+            mandateHash_,
+            sponsorSignature_
         );
 
         qualifications[claimHash] = qualification_;
@@ -274,27 +280,53 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         emit Open(bytes32(nonce), resolvedOrder_);
     }
 
-    function _decodeOrderData(bytes calldata orderData_, uint256 offset)
+    function _decodeOrderData(bytes calldata orderData, uint256 offset)
         internal
         pure
         returns (
             address arbiter,
             uint32 expires,
-            Order calldata orderData,
+            Order calldata order,
             uint200 targetBlock,
             uint56 maximumBlocksAfterTarget
         )
     {
-        bytes calldata orderDataBytes = LibBytes.dynamicStructInCalldata(orderData_, offset);
+        // orderData includes the OrderData(OnChain/Gasless) struct, and the nested Order struct.
+        // 0x00: OrderDataOnChain.offset
+        // 0x20: OrderDataOnChain.arbiter
+        // 0x40: OrderDataOnChain.expires
+        // 0x60: OrderDataOnChain.order.offset
+
+        // 0x00: OrderDataGasless.offset
+        // 0x20: OrderDataGasless.arbiter
+        // 0x40: OrderDataGasless.order.offset
+
         assembly ("memory-safe") {
-            let isOnChain := eq(offset, 0x40)
-            arbiter := calldataload(orderData_.offset)
-            expires := mul(calldataload(add(orderData_.offset, 0x20)), isOnChain)
-            orderData := orderDataBytes.offset
-            targetBlock := mul(calldataload(0x120), isOnChain)
-            maximumBlocksAfterTarget := mul(calldataload(0x140), isOnChain)
+            let l := sub(orderData.length, 0x20)
+            let s := calldataload(add(orderData.offset, offset)) // Relative offset of `orderBytes` from `orderData.offset` and the `OrderData...` struct.
+            order := add(orderData.offset, add(s, 0x20)) // Add 0x20 since the OrderStruct is within the `OrderData...` struct
+            if or(shr(64, or(s, or(l, orderData.offset))), gt(offset, l)) { revert(l, 0x00) }
+
+            let isOnChain := eq(offset, 0x60)
+            arbiter := calldataload(add(orderData.offset, 0x20))
+            expires := mul(calldataload(add(orderData.offset, 0x40)), isOnChain)
+            targetBlock := mul(calldataload(0x124), isOnChain)
+            maximumBlocksAfterTarget := mul(calldataload(0x144), isOnChain)
         }
-        return (arbiter, expires, orderData, targetBlock, maximumBlocksAfterTarget);
+
+        return (arbiter, expires, order, targetBlock, maximumBlocksAfterTarget);
+    }
+
+    /// @dev Returns a slice representing a dynamic struct in the calldata. Performs bounds checks.
+    function _dynamicStructInCalldata(bytes calldata a, uint256 offset) internal pure returns (bytes calldata result) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            let l := sub(a.length, 0x20)
+            let s := calldataload(add(a.offset, offset)) // Relative offset of `result` from `a.offset`.
+            result.offset := add(a.offset, add(s, 0x20)) // Add 0x20 since the OrderDataStruct is inside another struct
+            result.length := sub(a.length, add(s, 0x20))
+            if or(shr(64, or(s, or(l, a.offset))), gt(offset, l)) { revert(l, 0x00) }
+        }
     }
 
     function _resolveOrder(

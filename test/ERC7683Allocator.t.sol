@@ -9,9 +9,9 @@ import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 
 import {IdLib} from '@uniswap/the-compact/lib/IdLib.sol';
 
-import {Claim} from '@uniswap/the-compact/types/Claims.sol';
-import {Component} from '@uniswap/the-compact/types/Components.sol';
-import {COMPACT_TYPEHASH, Compact} from '@uniswap/the-compact/types/EIP712Types.sol';
+import {BatchClaim} from '@uniswap/the-compact/types/BatchClaims.sol';
+import {BatchClaimComponent, Component} from '@uniswap/the-compact/types/Components.sol';
+import {BatchCompact, COMPACT_TYPEHASH, LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 import {ForcedWithdrawalStatus} from '@uniswap/the-compact/types/ForcedWithdrawalStatus.sol';
 import {ResetPeriod} from '@uniswap/the-compact/types/ResetPeriod.sol';
 import {Scope} from '@uniswap/the-compact/types/Scope.sol';
@@ -20,9 +20,10 @@ import {Test, console} from 'forge-std/Test.sol';
 import {TestHelper} from 'test/util/TestHelper.sol';
 
 import {ERC7683Allocator} from 'src/allocators/ERC7683Allocator.sol';
-import {Claim as TribunalClaim, Mandate} from 'src/allocators/types/TribunalStructs.sol';
+import {BatchClaim as TribunalClaim, Mandate} from 'src/allocators/types/TribunalStructs.sol';
 import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 import {IERC7683Allocator} from 'src/interfaces/IERC7683Allocator.sol';
+import {IOnChainAllocator} from 'src/interfaces/IOnchainAllocator.sol';
 
 import {ISimpleAllocator} from 'src/interfaces/ISimpleAllocator.sol';
 import {ERC20Mock} from 'src/test/ERC20Mock.sol';
@@ -53,11 +54,14 @@ abstract contract MocksSetup is Test, TestHelper {
     uint256 defaultScalingFactor = 0;
     uint256[] defaultDecayCurve = new uint256[](0);
     bytes32 defaultSalt = bytes32(0x0000000000000000000000000000000000000000000000000000000000000007);
-    uint256 defaultTargetBlock = 100;
-    uint256 defaultMaximumBlocksAfterTarget = 10;
+    uint200 defaultTargetBlock = 100;
+    uint56 defaultMaximumBlocksAfterTarget = 10;
+
+    uint256[2][] defaultIdsAndAmounts = new uint256[2][](1);
+    Lock[] defaultCommitments;
 
     bytes32 ORDERDATA_GASLESS_TYPEHASH;
-    bytes32 ORDERDATA_TYPEHASH;
+    bytes32 ORDERDATA_ONCHAIN_TYPEHASH;
 
     function setUp() public virtual {
         (user, userPK) = makeAddrAndKey('user');
@@ -65,15 +69,19 @@ abstract contract MocksSetup is Test, TestHelper {
         tribunal = makeAddr('tribunal');
         usdc = new ERC20Mock('USDC', 'USDC');
         compactContract = new TheCompact();
-        erc7683Allocator = new ERC7683Allocator(address(compactContract), 5, 100);
+        erc7683Allocator = new ERC7683Allocator(address(compactContract));
 
         usdcLockTag = _toLockTag(address(erc7683Allocator), defaultScope, defaultResetPeriod);
         usdcId = _toId(defaultScope, defaultResetPeriod, address(erc7683Allocator), address(usdc));
         (attacker, attackerPK) = makeAddrAndKey('attacker');
-        defaultNonce = uint256(bytes32(abi.encodePacked(user, uint96(1))));
+        defaultNonce = 1;
 
-        ORDERDATA_GASLESS_TYPEHASH = erc7683Allocator.ORDERDATA_GASLESS_TYPEHASH();
-        ORDERDATA_TYPEHASH = erc7683Allocator.ORDERDATA_TYPEHASH();
+        ORDERDATA_GASLESS_TYPEHASH = keccak256(
+            'OrderDataGasless(address arbiter,Order order)Lock(bytes12 lockTag,address token,uint256 amount)Order(Lock[] commitments,uint256 chainId,address tribunal,address recipient,address settlementToken,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)'
+        );
+        ORDERDATA_ONCHAIN_TYPEHASH = keccak256(
+            'OrderDataOnChain(address arbiter,uint256 expires,Order order,uint200 targetBlock,uint56 maximumBlocksAfterTarget)Lock(bytes12 lockTag,address token,uint256 amount)Order(Lock[] commitments,uint256 chainId,address tribunal,address recipient,address settlementToken,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)'
+        );
     }
 }
 
@@ -90,12 +98,14 @@ abstract contract CreateHash is MocksSetup {
 
     string compactWitnessTypeString =
         'Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,bytes12 lockTag,address token,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)';
+    string batchCompactWitnessTypeString =
+        'BatchCompact(address arbiter,address sponsor,uint256 nonce,uint256 expires,Lock[] commitments,Mandate mandate)Lock(bytes12 lockTag,address token,uint256 amount)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)';
     string mandateTypeString =
         'Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)';
     string witnessTypeString =
         'uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt';
 
-    function _hashCompact(Compact memory data, Mandate memory mandate, address verifyingContract)
+    function _hashCompact(BatchCompact memory data, Mandate memory mandate, address verifyingContract)
         internal
         view
         returns (bytes32 digest)
@@ -111,18 +121,36 @@ abstract contract CreateHash is MocksSetup {
         );
     }
 
-    function _hashCompact(Compact memory data, Mandate memory mandate) internal view returns (bytes32 compactHash) {
+    function _hashCompact(BatchCompact memory data, Mandate memory mandate)
+        internal
+        view
+        returns (bytes32 compactHash)
+    {
         bytes32 mandateHash = _hashMandate(mandate);
+        console.log('__________TEST_VALUES________');
+        console.log('compactWitnessTypeHash');
+        console.logBytes32(keccak256(bytes(batchCompactWitnessTypeString)));
+        console.log('-arbiter-');
+        console.logAddress(data.arbiter);
+        console.log('-sponsor-');
+        console.logAddress(data.sponsor);
+        console.log('-nonce-');
+        console.logUint(data.nonce);
+        console.log('-expires-');
+        console.logUint(data.expires);
+        console.log('-commitments-');
+        console.logBytes32(_hashCommitments(data.commitments));
+        console.log('-mandateHash-');
+        console.logBytes32(mandateHash);
+        console.log('________TEST_VALUES_END______');
         compactHash = keccak256(
             abi.encode(
-                keccak256(bytes(compactWitnessTypeString)),
+                keccak256(bytes(batchCompactWitnessTypeString)),
                 data.arbiter,
                 data.sponsor,
                 data.nonce,
                 data.expires,
-                data.lockTag,
-                data.token,
-                data.amount,
+                _hashCommitments(data.commitments),
                 mandateHash
             )
         );
@@ -146,8 +174,18 @@ abstract contract CreateHash is MocksSetup {
         );
     }
 
+    function _hashCommitments(Lock[] memory commitments) internal pure returns (bytes32) {
+        bytes32[] memory hashes = new bytes32[](commitments.length);
+        for (uint256 i = 0; i < commitments.length; i++) {
+            hashes[i] = keccak256(
+                abi.encode(LOCK_TYPEHASH, commitments[i].lockTag, commitments[i].token, commitments[i].amount)
+            );
+        }
+        return keccak256(abi.encodePacked(hashes));
+    }
+
     function _getTypeHash() internal view returns (bytes32) {
-        return keccak256(bytes(compactWitnessTypeString));
+        return keccak256(bytes(batchCompactWitnessTypeString));
     }
 
     function _domainSeparator(address verifyingContract) internal view returns (bytes32) {
@@ -167,7 +205,7 @@ abstract contract CreateHash is MocksSetup {
         return abi.encodePacked(r, s, v);
     }
 
-    function _hashAndSign(Compact memory data, Mandate memory mandate, address verifyingContract, uint256 signerPK)
+    function _hashAndSign(BatchCompact memory data, Mandate memory mandate, address verifyingContract, uint256 signerPK)
         internal
         view
         returns (bytes memory)
@@ -179,35 +217,34 @@ abstract contract CreateHash is MocksSetup {
 }
 
 abstract contract CompactData is CreateHash {
-    Compact private compact;
+    BatchCompact private compact;
     Mandate private mandate;
 
     function setUp() public virtual override {
         super.setUp();
 
-        compact = Compact({
-            arbiter: arbiter,
-            sponsor: user,
-            nonce: defaultNonce,
-            expires: _getClaimExpiration(),
-            lockTag: usdcLockTag,
-            token: address(usdc),
-            amount: defaultAmount
-        });
+        defaultIdsAndAmounts[0][0] = usdcId;
+        defaultIdsAndAmounts[0][1] = defaultAmount;
 
-        mandate = Mandate({
-            recipient: user,
-            expires: _getFillExpiration(),
-            token: defaultOutputToken,
-            minimumAmount: defaultMinimumAmount,
-            baselinePriorityFee: defaultBaselinePriorityFee,
-            scalingFactor: defaultScalingFactor,
-            decayCurve: defaultDecayCurve,
-            salt: defaultSalt
-        });
+        defaultCommitments.push(Lock({lockTag: usdcLockTag, token: address(usdc), amount: defaultAmount}));
+
+        compact.arbiter = arbiter;
+        compact.sponsor = user;
+        compact.nonce = defaultNonce;
+        compact.expires = _getClaimExpiration();
+        compact.commitments = defaultCommitments;
+
+        mandate.recipient = user;
+        mandate.expires = _getFillExpiration();
+        mandate.token = defaultOutputToken;
+        mandate.minimumAmount = defaultMinimumAmount;
+        mandate.baselinePriorityFee = defaultBaselinePriorityFee;
+        mandate.scalingFactor = defaultScalingFactor;
+        mandate.decayCurve = defaultDecayCurve;
+        mandate.salt = defaultSalt;
     }
 
-    function _getCompact() internal returns (Compact memory) {
+    function _getCompact() internal returns (BatchCompact memory) {
         compact.expires = _getClaimExpiration();
         return compact;
     }
@@ -232,23 +269,21 @@ abstract contract GaslessCrossChainOrderData is CompactData {
     function setUp() public virtual override {
         super.setUp();
 
-        Compact memory compact_ = _getCompact();
+        BatchCompact memory compact_ = _getCompact();
         Mandate memory mandate_ = _getMandate();
 
-        gaslessCrossChainOrder = IOriginSettler.GaslessCrossChainOrder({
-            originSettler: address(erc7683Allocator),
-            user: compact_.sponsor,
-            nonce: compact_.nonce,
-            originChainId: block.chainid,
-            openDeadline: uint32(_getClaimExpiration()),
-            fillDeadline: uint32(_getFillExpiration()),
-            orderDataType: erc7683Allocator.ORDERDATA_GASLESS_TYPEHASH(),
-            orderData: abi.encode(
-                IERC7683Allocator.OrderDataGasless({
-                    arbiter: compact_.arbiter,
-                    lockTag: compact_.lockTag,
-                    inputToken: compact_.token,
-                    amount: compact_.amount,
+        gaslessCrossChainOrder.originSettler = address(erc7683Allocator);
+        gaslessCrossChainOrder.user = compact_.sponsor;
+        gaslessCrossChainOrder.nonce = compact_.nonce;
+        gaslessCrossChainOrder.originChainId = block.chainid;
+        gaslessCrossChainOrder.openDeadline = uint32(_getClaimExpiration());
+        gaslessCrossChainOrder.fillDeadline = uint32(_getFillExpiration());
+        gaslessCrossChainOrder.orderDataType = erc7683Allocator.ORDERDATA_GASLESS_TYPEHASH();
+        gaslessCrossChainOrder.orderData = abi.encode(
+            IERC7683Allocator.OrderDataGasless({
+                arbiter: compact_.arbiter,
+                order: IERC7683Allocator.Order({
+                    commitments: compact_.commitments,
                     chainId: defaultOutputChainId,
                     tribunal: tribunal,
                     recipient: mandate_.recipient,
@@ -259,13 +294,13 @@ abstract contract GaslessCrossChainOrderData is CompactData {
                     decayCurve: mandate_.decayCurve,
                     salt: mandate_.salt
                 })
-            )
-        });
+            })
+        );
     }
 
     function _getGaslessCrossChainOrder(
         address allocator,
-        Compact memory compact_,
+        BatchCompact memory compact_,
         Mandate memory mandate_,
         uint256 chainId_,
         bytes32 orderDataGaslessTypeHash_,
@@ -283,18 +318,18 @@ abstract contract GaslessCrossChainOrderData is CompactData {
             orderData: abi.encode(
                 IERC7683Allocator.OrderDataGasless({
                     arbiter: compact_.arbiter,
-                    lockTag: compact_.lockTag,
-                    inputToken: compact_.token,
-                    amount: compact_.amount,
-                    chainId: defaultOutputChainId,
-                    tribunal: tribunal,
-                    recipient: mandate_.recipient,
-                    settlementToken: mandate_.token,
-                    minimumAmount: mandate_.minimumAmount,
-                    baselinePriorityFee: mandate_.baselinePriorityFee,
-                    scalingFactor: mandate_.scalingFactor,
-                    decayCurve: mandate_.decayCurve,
-                    salt: mandate_.salt
+                    order: IERC7683Allocator.Order({
+                        commitments: compact_.commitments,
+                        chainId: defaultOutputChainId,
+                        tribunal: tribunal,
+                        recipient: mandate_.recipient,
+                        settlementToken: mandate_.token,
+                        minimumAmount: mandate_.minimumAmount,
+                        baselinePriorityFee: mandate_.baselinePriorityFee,
+                        scalingFactor: mandate_.scalingFactor,
+                        decayCurve: mandate_.decayCurve,
+                        salt: mandate_.salt
+                    })
                 })
             )
         });
@@ -318,21 +353,17 @@ abstract contract OnChainCrossChainOrderData is CompactData {
     function setUp() public virtual override {
         super.setUp();
 
-        Compact memory compact_ = _getCompact();
+        BatchCompact memory compact_ = _getCompact();
         Mandate memory mandate_ = _getMandate();
 
-        onchainCrossChainOrder = IOriginSettler.OnchainCrossChainOrder({
-            fillDeadline: uint32(_getFillExpiration()),
-            orderDataType: erc7683Allocator.ORDERDATA_TYPEHASH(),
-            orderData: abi.encode(
-                IERC7683Allocator.OrderData({
-                    arbiter: compact_.arbiter,
-                    sponsor: compact_.sponsor,
-                    nonce: compact_.nonce,
-                    expires: compact_.expires,
-                    lockTag: compact_.lockTag,
-                    inputToken: compact_.token,
-                    amount: compact_.amount,
+        onchainCrossChainOrder.fillDeadline = uint32(_getFillExpiration());
+        onchainCrossChainOrder.orderDataType = erc7683Allocator.ORDERDATA_ONCHAIN_TYPEHASH();
+        onchainCrossChainOrder.orderData = abi.encode(
+            IERC7683Allocator.OrderDataOnChain({
+                arbiter: compact_.arbiter,
+                expires: compact_.expires,
+                order: IERC7683Allocator.Order({
+                    commitments: compact_.commitments,
                     chainId: defaultOutputChainId,
                     tribunal: tribunal,
                     recipient: mandate_.recipient,
@@ -341,19 +372,19 @@ abstract contract OnChainCrossChainOrderData is CompactData {
                     baselinePriorityFee: mandate_.baselinePriorityFee,
                     scalingFactor: mandate_.scalingFactor,
                     decayCurve: mandate_.decayCurve,
-                    salt: mandate_.salt,
-                    targetBlock: defaultTargetBlock,
-                    maximumBlocksAfterTarget: defaultMaximumBlocksAfterTarget
-                })
-            )
-        });
+                    salt: mandate_.salt
+                }),
+                targetBlock: defaultTargetBlock,
+                maximumBlocksAfterTarget: defaultMaximumBlocksAfterTarget
+            })
+        );
     }
 
     function _getOnChainCrossChainOrder() internal view returns (IOriginSettler.OnchainCrossChainOrder memory) {
         return onchainCrossChainOrder;
     }
 
-    function _getOnChainCrossChainOrder(Compact memory compact_, Mandate memory mandate_, bytes32 orderDataType_)
+    function _getOnChainCrossChainOrder(BatchCompact memory compact_, Mandate memory mandate_, bytes32 orderDataType_)
         internal
         view
         returns (IOriginSettler.OnchainCrossChainOrder memory)
@@ -362,23 +393,21 @@ abstract contract OnChainCrossChainOrderData is CompactData {
             fillDeadline: uint32(mandate_.expires),
             orderDataType: orderDataType_,
             orderData: abi.encode(
-                IERC7683Allocator.OrderData({
+                IERC7683Allocator.OrderDataOnChain({
                     arbiter: compact_.arbiter,
-                    sponsor: compact_.sponsor,
-                    nonce: compact_.nonce,
                     expires: compact_.expires,
-                    lockTag: compact_.lockTag,
-                    inputToken: compact_.token,
-                    amount: compact_.amount,
-                    chainId: defaultOutputChainId,
-                    tribunal: tribunal,
-                    recipient: mandate_.recipient,
-                    settlementToken: mandate_.token,
-                    minimumAmount: mandate_.minimumAmount,
-                    baselinePriorityFee: mandate_.baselinePriorityFee,
-                    scalingFactor: mandate_.scalingFactor,
-                    decayCurve: mandate_.decayCurve,
-                    salt: mandate_.salt,
+                    order: IERC7683Allocator.Order({
+                        commitments: compact_.commitments,
+                        chainId: defaultOutputChainId,
+                        tribunal: tribunal,
+                        recipient: mandate_.recipient,
+                        settlementToken: mandate_.token,
+                        minimumAmount: mandate_.minimumAmount,
+                        baselinePriorityFee: mandate_.baselinePriorityFee,
+                        scalingFactor: mandate_.scalingFactor,
+                        decayCurve: mandate_.decayCurve,
+                        salt: mandate_.salt
+                    }),
                     targetBlock: defaultTargetBlock,
                     maximumBlocksAfterTarget: defaultMaximumBlocksAfterTarget
                 })
@@ -414,18 +443,14 @@ contract ERC7683Allocator_open is OnChainCrossChainOrderData {
             abi.encodeWithSelector(
                 IERC7683Allocator.InvalidOrderDataType.selector,
                 falseOrderDataType,
-                erc7683Allocator.ORDERDATA_TYPEHASH()
+                erc7683Allocator.ORDERDATA_ONCHAIN_TYPEHASH()
             )
         );
         erc7683Allocator.open(onChainCrossChainOrder_);
     }
 
-    function test_revert_InvalidSponsor() public {
-        IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_ = _getOnChainCrossChainOrder();
-
-        vm.prank(attacker);
-        vm.expectRevert(abi.encodeWithSelector(ISimpleAllocator.InvalidCaller.selector, attacker, user));
-        erc7683Allocator.open(onChainCrossChainOrder_);
+    function test_orderDataType() public view {
+        assertEq(erc7683Allocator.ORDERDATA_GASLESS_TYPEHASH(), ORDERDATA_GASLESS_TYPEHASH);
     }
 
     function test_revert_InvalidRegistration() public {
@@ -441,12 +466,12 @@ contract ERC7683Allocator_open is OnChainCrossChainOrderData {
 
         (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
 
-        Compact memory compact_ = _getCompact();
+        BatchCompact memory compact_ = _getCompact();
         Mandate memory mandate_ = _getMandate();
         bytes32 claimHash = _hashCompact(compact_, mandate_);
 
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidRegistration.selector, user, claimHash));
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidRegistration.selector, user, claimHash));
         erc7683Allocator.open(onChainCrossChainOrder_);
     }
 
@@ -458,7 +483,7 @@ contract ERC7683Allocator_open is OnChainCrossChainOrderData {
         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
 
         // register a claim
-        Compact memory compact_ = _getCompact();
+        BatchCompact memory compact_ = _getCompact();
         Mandate memory mandate_ = _getMandate();
 
         bytes32 claimHash = _hashCompact(compact_, mandate_);
@@ -531,6 +556,10 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         erc7683Allocator.openFor(falseGaslessCrossChainOrder, signature, '');
     }
 
+    function test_orderDataType() public view {
+        assertEq(erc7683Allocator.ORDERDATA_ONCHAIN_TYPEHASH(), ORDERDATA_ONCHAIN_TYPEHASH);
+    }
+
     function test_revert_InvalidDecoding() public {
         // Decoding fails because of additional data
         vm.prank(user);
@@ -563,11 +592,12 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         erc7683Allocator.openFor(falseGaslessCrossChainOrder, signature, '');
     }
 
-    function test_revert_InvalidNonce() public {
-        // Nonce is invalid because the least significant 160 bits are not the sponsor address
-        Compact memory compact_ = _getCompact();
-        compact_.nonce = uint256(bytes32(abi.encodePacked(uint96(1), attacker)));
-        vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidNonce.selector, compact_.nonce));
+    function test_revert_InvalidNonce(uint256 nonce) public {
+        vm.assume(nonce != defaultNonce);
+
+        BatchCompact memory compact_ = _getCompact();
+        compact_.nonce = nonce;
+        vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidNonce.selector, compact_.nonce, defaultNonce));
         (IOriginSettler.GaslessCrossChainOrder memory falseGaslessCrossChainOrder, bytes memory signature) =
         _getGaslessCrossChainOrder(
             address(erc7683Allocator),
@@ -604,7 +634,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
             attackerPK
         );
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidSignature.selector, user, attacker));
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidSignature.selector, user, attacker));
         erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
     }
 
@@ -714,7 +744,8 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
     }
 
-    function test_revert_NonceAlreadyInUse() public {
+    function test_revert_NonceAlreadyInUse(uint256 nonce) public {
+        vm.assume(nonce != defaultNonce);
         // Deposit tokens
         vm.startPrank(user);
         usdc.mint(user, defaultAmount);
@@ -722,18 +753,13 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
         vm.stopPrank();
 
-        // use the nonce once
-        (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, bytes memory sponsorSignature) =
+        // try to use a future nonce
+        (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder, bytes memory sponsorSignature) =
             _getGaslessCrossChainOrder();
+        gaslessCrossChainOrder.nonce = nonce;
         vm.prank(user);
-        erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
-
-        // try to use the nonce again
-        (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder2, bytes memory sponsorSignature2) =
-            _getGaslessCrossChainOrder();
-        vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(ISimpleAllocator.NonceAlreadyInUse.selector, defaultNonce));
-        erc7683Allocator.openFor(gaslessCrossChainOrder2, sponsorSignature2, '');
+        vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidNonce.selector, nonce, defaultNonce));
+        erc7683Allocator.openFor(gaslessCrossChainOrder, sponsorSignature, '');
     }
 }
 
@@ -860,7 +886,7 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
 
         // register a claim
-        Compact memory compact_ = _getCompact();
+        BatchCompact memory compact_ = _getCompact();
         Mandate memory mandate_ = _getMandate();
 
         bytes32 claimHash = _hashCompact(compact_, mandate_);
@@ -879,23 +905,23 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
         Component memory component = Component({claimant: uint256(uint160(filler)), amount: defaultAmount});
         Component[] memory components = new Component[](1);
         components[0] = component;
-        Claim memory claim = Claim({
-            allocatorData: abi.encode(
-                erc7683Allocator.QUALIFICATION_TYPEHASH(), defaultTargetBlock, defaultMaximumBlocksAfterTarget
-            ),
+        BatchClaimComponent memory batchClaimComponent =
+            BatchClaimComponent({id: usdcId, allocatedAmount: defaultAmount, portions: components});
+        BatchClaimComponent[] memory batchClaimComponents = new BatchClaimComponent[](1);
+        batchClaimComponents[0] = batchClaimComponent;
+        BatchClaim memory claim = BatchClaim({
+            allocatorData: abi.encodePacked(defaultTargetBlock, defaultMaximumBlocksAfterTarget),
             sponsorSignature: '',
             sponsor: user,
             nonce: defaultNonce,
             expires: compact_.expires,
             witness: keccak256(abi.encode(keccak256(bytes(mandateTypeString)), mandate_)),
             witnessTypestring: witnessTypeString,
-            id: usdcId,
-            allocatedAmount: defaultAmount,
-            claimants: components
+            claims: batchClaimComponents
         });
         vm.prank(arbiter);
         vm.expectRevert(abi.encodeWithSelector(0x8baa579f)); // check for the InvalidSignature() error in the Compact contract
-        compactContract.claim(claim);
+        compactContract.batchClaim(claim);
 
         vm.assertEq(compactContract.balanceOf(user, usdcId), defaultAmount);
         vm.assertEq(compactContract.balanceOf(filler, usdcId), 0);
@@ -909,7 +935,7 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
 
         // register a claim
-        Compact memory compact_ = _getCompact();
+        BatchCompact memory compact_ = _getCompact();
         Mandate memory mandate_ = _getMandate();
 
         bytes32 claimHash = _hashCompact(compact_, mandate_);
@@ -943,20 +969,22 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
         );
         Component[] memory components = new Component[](1);
         components[0] = Component({claimant: uint256(uint160(filler)), amount: defaultAmount});
-        Claim memory claim = Claim({
-            allocatorData: abi.encode(defaultTargetBlock, defaultMaximumBlocksAfterTarget),
+        BatchClaimComponent memory batchClaimComponent =
+            BatchClaimComponent({id: usdcId, allocatedAmount: defaultAmount, portions: components});
+        BatchClaimComponent[] memory batchClaimComponents = new BatchClaimComponent[](1);
+        batchClaimComponents[0] = batchClaimComponent;
+        BatchClaim memory claim = BatchClaim({
+            allocatorData: abi.encodePacked(defaultTargetBlock, defaultMaximumBlocksAfterTarget),
             sponsorSignature: '',
             sponsor: user,
             nonce: defaultNonce,
             expires: compact_.expires,
             witness: witness,
             witnessTypestring: witnessTypeString,
-            id: usdcId,
-            allocatedAmount: defaultAmount,
-            claimants: components
+            claims: batchClaimComponents
         });
         vm.prank(arbiter);
-        compactContract.claim(claim);
+        compactContract.batchClaim(claim);
 
         vm.assertEq(compactContract.balanceOf(user, usdcId), 0);
         vm.assertEq(usdc.balanceOf(filler), defaultAmount);
@@ -970,7 +998,7 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
 
         // register a claim
-        Compact memory compact_ = _getCompact();
+        BatchCompact memory compact_ = _getCompact();
         Mandate memory mandate_ = _getMandate();
 
         bytes32 claimHash = _hashCompact(compact_, mandate_);
@@ -990,20 +1018,22 @@ contract ERC7683Allocator_isValidSignature is OnChainCrossChainOrderData, Gasles
         // claim should be successful
         Component[] memory components = new Component[](1);
         components[0] = Component({claimant: uint256(uint160(filler)), amount: defaultAmount});
-        Claim memory claim = Claim({
-            allocatorData: abi.encode(uint256(0), uint256(0)),
+        BatchClaimComponent memory batchClaimComponent =
+            BatchClaimComponent({id: usdcId, allocatedAmount: defaultAmount, portions: components});
+        BatchClaimComponent[] memory batchClaimComponents = new BatchClaimComponent[](1);
+        batchClaimComponents[0] = batchClaimComponent;
+        BatchClaim memory claim = BatchClaim({
+            allocatorData: abi.encodePacked(uint200(0), uint56(0)),
             sponsorSignature: '',
             sponsor: compact_.sponsor,
             nonce: compact_.nonce,
             expires: compact_.expires,
             witness: _hashMandate(mandate_),
             witnessTypestring: witnessTypeString,
-            id: uint256(bytes32(compact_.lockTag) | bytes32(uint256(uint160(compact_.token)))),
-            allocatedAmount: compact_.amount,
-            claimants: components
+            claims: batchClaimComponents
         });
         vm.prank(arbiter);
-        compactContract.claim(claim);
+        compactContract.batchClaim(claim);
 
         vm.assertEq(compactContract.balanceOf(user, usdcId), 0);
         vm.assertEq(usdc.balanceOf(filler), defaultAmount);
@@ -1128,6 +1158,7 @@ contract ERC7683Allocator_resolve is OnChainCrossChainOrderData {
             minReceived: minReceived,
             fillInstructions: fillInstructions
         });
+        vm.prank(user);
         IOriginSettler.ResolvedCrossChainOrder memory resolved = erc7683Allocator.resolve(onChainCrossChainOrder_);
         assertEq(resolved.user, resolvedCrossChainOrder.user);
         assertEq(resolved.originChainId, resolvedCrossChainOrder.originChainId);
@@ -1161,33 +1192,24 @@ contract ERC7683Allocator_getCompactWitnessTypeString is MocksSetup {
     function test_getCompactWitnessTypeString() public view {
         assertEq(
             erc7683Allocator.getCompactWitnessTypeString(),
-            'Compact(address arbiter,address sponsor,uint256 nonce,uint256 expires,bytes12 lockTag,address token,uint256 amount,Mandate mandate)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)'
+            'BatchCompact(address arbiter,address sponsor,uint256 nonce,uint256 expires,Lock[] commitments,Mandate mandate)Lock(bytes12 lockTag,address token,uint256 amount)Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)'
         );
     }
 }
 
 contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
-    function test_revert_invalidNonce(uint256 nonce_) public {
-        address expectedSponsor;
-        assembly ("memory-safe") {
-            expectedSponsor := shr(96, nonce_)
-        }
-        vm.assume(user != expectedSponsor);
+    function test_invalidNonce(uint256 nonce_, address otherUser) public view {
+        vm.assume(nonce_ != defaultNonce);
 
-        vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidNonce.selector, nonce_));
-        erc7683Allocator.checkNonce(nonce_, user);
+        assertFalse(erc7683Allocator.checkNonce(nonce_, otherUser));
     }
 
-    function test_checkNonce_unused(uint96 nonce_) public view {
-        address sponsor = user;
-        uint256 nonce;
-        assembly ("memory-safe") {
-            nonce := or(shl(96, sponsor), shr(160, shl(160, nonce_)))
-        }
-        assertEq(erc7683Allocator.checkNonce(nonce, user), true);
+    function test_nextFreeNonce(address otherUser) public view {
+        assertTrue(erc7683Allocator.checkNonce(defaultNonce, otherUser));
     }
 
-    function test_checkNonce_used() public {
+    function test_usedNonce(address otherUser) public {
+        vm.assume(otherUser != user);
         // Deposit tokens
         vm.startPrank(user);
         usdc.mint(user, defaultAmount);
@@ -1195,7 +1217,7 @@ contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
 
         // register a claim
-        Compact memory compact_ = _getCompact();
+        BatchCompact memory compact_ = _getCompact();
         Mandate memory mandate_ = _getMandate();
 
         bytes32 claimHash = _hashCompact(compact_, mandate_);
@@ -1205,34 +1227,8 @@ contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
         (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
         erc7683Allocator.open(onChainCrossChainOrder_);
 
-        vm.assertEq(erc7683Allocator.checkNonce(defaultNonce, user), false);
-        vm.stopPrank();
-    }
-
-    function test_checkNonce_fuzz(uint8 nonce_) public {
-        uint256 nonce = uint256(bytes32(abi.encodePacked(user, uint96(nonce_))));
-
-        bool sameNonce = nonce == defaultNonce;
-
-        // Deposit tokens
-        vm.startPrank(user);
-        usdc.mint(user, defaultAmount);
-        usdc.approve(address(compactContract), defaultAmount);
-        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
-
-        // register a claim
-        Compact memory compact_ = _getCompact();
-        Mandate memory mandate_ = _getMandate();
-
-        bytes32 claimHash = _hashCompact(compact_, mandate_);
-        bytes32 typeHash = _getTypeHash();
-        compactContract.register(claimHash, typeHash);
-
-        (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
-        erc7683Allocator.open(onChainCrossChainOrder_);
-
-        vm.assertEq(erc7683Allocator.checkNonce(nonce, user), !sameNonce);
-
+        vm.assertFalse(erc7683Allocator.checkNonce(defaultNonce, user));
+        vm.assertTrue(erc7683Allocator.checkNonce(defaultNonce, otherUser));
         vm.stopPrank();
     }
 }

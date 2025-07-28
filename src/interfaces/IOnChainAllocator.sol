@@ -25,7 +25,7 @@ interface IOnChainAllocator is IAllocator {
     error InsufficientBalance(address sponsor, uint256 id, uint256 balance, uint256 expectedBalance);
 
     /// @notice Thrown if the provided expiration is not valid
-    error InvalidExpiration(uint256 expires);
+    error InvalidExpiration(uint256 expires, uint256 minExpiration);
 
     /// @notice Thrown if the expiration is longer then the tokens forced withdrawal time
     error ForceWithdrawalAvailable(uint256 expires, uint256 forcedWithdrawalExpiration);
@@ -65,13 +65,9 @@ interface IOnChainAllocator is IAllocator {
     /// @param expires The expiration of the allocation
     /// @param typehash The typehash of the allocation
     /// @param witness The witness of the allocation
-    function registerAllocation(
-        Lock[] memory commitments,
-        address arbiter,
-        uint32 expires,
-        bytes32 typehash,
-        bytes32 witness
-    ) external returns (bytes32 claimHash, uint256 claimNonce);
+    function allocate(Lock[] memory commitments, address arbiter, uint32 expires, bytes32 typehash, bytes32 witness)
+        external
+        returns (bytes32 claimHash, uint256 claimNonce);
 
     /// @notice Registers an allocation for a set of tokens on behalf of a sponsor
     /// @param sponsor The address of the sponsor
@@ -81,7 +77,7 @@ interface IOnChainAllocator is IAllocator {
     /// @param typehash The typehash of the allocation
     /// @param witness The witness of the allocation
     /// @param signature The signature of the allocation
-    function registerAllocationFor(
+    function allocateFor(
         address sponsor,
         Lock[] memory commitments,
         address arbiter,

@@ -31,14 +31,11 @@ contract OnChainAllocator is IOnChainAllocator {
     }
 
     /// @inheritdoc IOnChainAllocator
-    function registerAllocation(
-        Lock[] calldata commitments,
-        address arbiter,
-        uint32 expires,
-        bytes32 typehash,
-        bytes32 witness
-    ) public returns (bytes32 claimHash, uint256 claimNonce) {
-        (claimHash, claimNonce) = _registerAllocation(msg.sender, commitments, arbiter, expires, typehash, witness);
+    function allocate(Lock[] calldata commitments, address arbiter, uint32 expires, bytes32 typehash, bytes32 witness)
+        public
+        returns (bytes32 claimHash, uint256 claimNonce)
+    {
+        (claimHash, claimNonce) = _allocate(msg.sender, commitments, arbiter, expires, typehash, witness);
 
         emit AllocationRegistered(msg.sender, claimHash, claimNonce, expires, commitments);
 
@@ -46,7 +43,7 @@ contract OnChainAllocator is IOnChainAllocator {
     }
 
     /// @inheritdoc IOnChainAllocator
-    function registerAllocationFor(
+    function allocateFor(
         address sponsor,
         Lock[] calldata commitments,
         address arbiter,
@@ -55,7 +52,7 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes32 witness,
         bytes calldata signature
     ) public returns (bytes32 claimHash, uint256 claimNonce) {
-        (claimHash, claimNonce) = _registerAllocation(sponsor, commitments, arbiter, expires, typehash, witness);
+        (claimHash, claimNonce) = _allocate(sponsor, commitments, arbiter, expires, typehash, witness);
 
         // We check for the length, which means this could also be triggered by a zero length signature provided in the openFor function.
         // This enables relaying of orders if the claim was registered on the compact.
@@ -144,7 +141,7 @@ contract OnChainAllocator is IOnChainAllocator {
         return false;
     }
 
-    function _registerAllocation(
+    function _allocate(
         address sponsor,
         Lock[] calldata commitments,
         address arbiter,
@@ -156,7 +153,7 @@ contract OnChainAllocator is IOnChainAllocator {
         nonce = ++nonces[sponsor];
         claimHash = keccak256(abi.encode(typehash, arbiter, sponsor, nonce, expires, commitmentsHash, witness));
 
-        uint256 minResetPeriod;
+        uint256 minResetPeriod = type(uint256).max;
         for (uint256 i = 0; i < commitments.length; i++) {
             minResetPeriod = _checkInput(commitments[i], sponsor, expires, minResetPeriod);
             bytes32 tokenHash = _checkBalance(sponsor, commitments[i]);
@@ -168,7 +165,7 @@ contract OnChainAllocator is IOnChainAllocator {
         }
         // Ensure expiration is not bigger then the smallest reset period
         if (expires > block.timestamp + minResetPeriod) {
-            revert InvalidExpiration(expires);
+            revert InvalidExpiration(expires, block.timestamp + minResetPeriod);
         }
 
         return (claimHash, nonce);
@@ -179,9 +176,6 @@ contract OnChainAllocator is IOnChainAllocator {
         view
         returns (uint256)
     {
-        // TODO: Discuss which checks to leave in, and which to remove.
-        // Some of the checks are decreasing the responsibility of the sponsor, others of the filler.
-
         // Check the allocator id fits this allocator
         if (_splitAllocatorId(commitment.lockTag) != ALLOCATOR_ID) {
             revert InvalidAllocator(_splitAllocatorId(commitment.lockTag), ALLOCATOR_ID);
@@ -222,55 +216,48 @@ contract OnChainAllocator is IOnChainAllocator {
     function _allocatedBalance(bytes32 tokenHash) internal returns (uint256 allocatedBalance) {
         // using assembly to only read the allocated balance + expiration slot and skipping the claimHash slot
         assembly ("memory-safe") {
-            // TODO: caching will optimize for a claim that includes the same token multiple times. Is it worth the 200 gas?
-            allocatedBalance := tload(tokenHash)
-            if iszero(allocatedBalance) {
-                // no previous cached balance, calculate the allocated balance
-                mstore(0x00, tokenHash)
-                mstore(0x20, _allocations.slot)
-                // retrieve the array length slot
-                let arrayLengthSlog := keccak256(0x00, 0x40)
-                let origLength := sload(arrayLengthSlog)
-                let length := origLength
-                // retrieve the arrays content slot
-                let contentSlot := keccak256(0x00, 0x20)
-                for { let i := 0 } lt(i, length) {} {
-                    let slot := add(contentSlot, mul(i, 0x40)) // 0x40 to skip the claimHash slot
-                    let content := sload(slot)
-                    let expiration := shr(224, shl(224, content))
-                    if lt(expiration, timestamp()) {
-                        // allocation expired, remove it
-                        let lastSlot := add(contentSlot, mul(sub(length, 1), 0x40))
-                        if iszero(eq(slot, lastSlot)) {
-                            // is not the last allocation of the array
-                            let contentLast1 := sload(lastSlot)
-                            let contentLast2 := sload(add(lastSlot, 0x20))
-                            sstore(slot, contentLast1)
-                            sstore(add(slot, 0x20), contentLast2)
-                        }
-                        // remove the last allocation
-                        length := sub(length, 1)
-                        sstore(lastSlot, 0)
-                        sstore(add(lastSlot, 0x20), 0)
-
-                        // repeat the loop at the same index
-                        continue
+            // no previous cached balance, calculate the allocated balance
+            mstore(0x00, tokenHash)
+            mstore(0x20, _allocations.slot)
+            // retrieve the array length slot
+            let arrayLengthSlot := keccak256(0x00, 0x40)
+            let origLength := sload(arrayLengthSlot)
+            let length := origLength
+            // retrieve the arrays content slot
+            let contentSlot := keccak256(0x00, 0x20)
+            for { let i := 0 } lt(i, length) {} {
+                let slot := add(contentSlot, mul(i, 2)) // 0x40 to skip the claimHash slot
+                let content := sload(slot)
+                let expiration := shr(224, shl(224, content))
+                if lt(expiration, timestamp()) {
+                    // allocation expired, remove it
+                    let lastSlot := add(contentSlot, mul(sub(length, 1), 2))
+                    if iszero(eq(slot, lastSlot)) {
+                        // is not the last allocation of the array
+                        let contentLast1 := sload(lastSlot)
+                        let contentLast2 := sload(add(lastSlot, 1))
+                        sstore(slot, contentLast1)
+                        sstore(add(slot, 1), contentLast2)
                     }
+                    // remove the last allocation
+                    length := sub(length, 1)
+                    sstore(lastSlot, 0)
+                    sstore(add(lastSlot, 1), 0)
 
-                    let amount := shr(32, content)
-                    allocatedBalance := add(allocatedBalance, amount)
-
-                    // jump to the next allocation
-                    i := add(i, 1)
+                    // repeat the loop at the same index
+                    continue
                 }
 
-                if lt(length, origLength) {
-                    // update the array length
-                    sstore(arrayLengthSlog, length)
-                }
+                let amount := shr(32, content)
+                allocatedBalance := add(allocatedBalance, amount)
 
-                // Cache the allocated balance in case the token is part of the same claim again.
-                tstore(tokenHash, allocatedBalance)
+                // jump to the next allocation
+                i := add(i, 1)
+            }
+
+            if lt(length, origLength) {
+                // update the array length
+                sstore(arrayLengthSlot, length)
             }
         }
         return allocatedBalance;
@@ -286,7 +273,7 @@ contract OnChainAllocator is IOnChainAllocator {
             mstore(0x00, lengthSlot)
             let contentSlot := keccak256(0x00, 0x20)
             for { let i := 0 } lt(i, length) { i := add(i, 1) } {
-                let slot2 := add(contentSlot, add(mul(i, 0x40), 0x20)) // add 0x20 to skip the expires/amount slot
+                let slot2 := add(contentSlot, add(mul(i, 2), 1)) // add 0x20 to skip the expires/amount slot
                 let content2 := sload(slot2)
                 if eq(content2, claimHash) {
                     // delete the allocation
@@ -336,13 +323,13 @@ contract OnChainAllocator is IOnChainAllocator {
     }
 
     function _getCommitmentsHash(Lock[] memory commitments) internal pure returns (bytes32) {
-        bytes32 commitmentsHash;
+        bytes32[] memory commitmentsHashes = new bytes32[](commitments.length);
         for (uint256 i = 0; i < commitments.length; i++) {
-            commitmentsHash = keccak256(
+            commitmentsHashes[i] = keccak256(
                 abi.encode(LOCK_TYPEHASH, commitments[i].lockTag, commitments[i].token, commitments[i].amount)
             );
         }
-        return commitmentsHash;
+        return keccak256(abi.encodePacked(commitmentsHashes));
     }
 
     function _getTokenHash(Lock calldata commitment, address sponsor) internal pure returns (bytes32 tokenHash) {
@@ -356,7 +343,8 @@ contract OnChainAllocator is IOnChainAllocator {
     }
 
     function _getTokenHash(uint256 id, address sponsor) internal pure returns (bytes32 tokenHash) {
-        return keccak256(abi.encode(id, sponsor));
+        tokenHash = keccak256(abi.encode(id, sponsor));
+        return tokenHash;
     }
 
     function _splitAllocatorId(bytes12 lockTag) internal pure returns (uint96) {
