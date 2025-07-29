@@ -40,6 +40,9 @@ contract HybridAllocator is IHybridAllocator {
 
     /// @inheritdoc IHybridAllocator
     function addSigner(address signer_) external onlySigner {
+        if (signer_ == address(0)) {
+            revert InvalidSigner();
+        }
         signers[signer_] = true;
         signerCount++;
     }
@@ -55,6 +58,9 @@ contract HybridAllocator is IHybridAllocator {
 
     /// @inheritdoc IHybridAllocator
     function replaceSigner(address newSigner_) external onlySigner {
+        if (newSigner_ == address(0)) {
+            revert InvalidSigner();
+        }
         signers[msg.sender] = false;
         signers[newSigner_] = true;
     }

@@ -775,6 +775,7 @@ contract HybridAllocatorTest is Test, TestHelper {
     }
 
     function test_addSigner_revert_InvalidSigner(address attacker) public {
+        vm.assume(attacker != address(0));
         vm.assume(attacker != signer);
         vm.prank(attacker);
         vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
@@ -783,8 +784,17 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertFalse(allocator.signers(attacker));
     }
 
+    function test_addSigner_revert_signerIsZero() public {
+        vm.prank(signer);
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
+        allocator.addSigner(address(0));
+        assertEq(allocator.signerCount(), 1);
+        assertFalse(allocator.signers(address(0)));
+    }
+
     function test_addSigner_success(address newSigner) public {
         vm.assume(newSigner != signer);
+        vm.assume(newSigner != address(0));
         vm.prank(signer);
         allocator.addSigner(newSigner);
         assertEq(allocator.signerCount(), 2);
@@ -811,6 +821,7 @@ contract HybridAllocatorTest is Test, TestHelper {
 
     function test_removeSigner_success(address newSigner) public {
         vm.assume(newSigner != signer);
+        vm.assume(newSigner != address(0));
         vm.prank(signer);
         allocator.addSigner(newSigner);
         assertEq(allocator.signerCount(), 2);
@@ -823,6 +834,7 @@ contract HybridAllocatorTest is Test, TestHelper {
 
     function test_removeSigner_success_deleteSelf(address newSigner) public {
         vm.assume(newSigner != signer);
+        vm.assume(newSigner != address(0));
         vm.prank(signer);
         allocator.addSigner(newSigner);
         assertEq(allocator.signerCount(), 2);
@@ -842,8 +854,17 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertFalse(allocator.signers(attacker));
     }
 
+    function test_replaceSigner_revert_signerIsZero() public {
+        vm.prank(signer);
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
+        allocator.replaceSigner(address(0));
+        assertEq(allocator.signerCount(), 1);
+        assertFalse(allocator.signers(address(0)));
+    }
+
     function test_replaceSigner_success(address newSigner) public {
         vm.assume(newSigner != signer);
+        vm.assume(newSigner != address(0));
         vm.prank(signer);
         allocator.replaceSigner(newSigner);
         assertEq(allocator.signerCount(), 1);
