@@ -63,32 +63,15 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         }
 
         // Decode the orderData
-        (address arbiter,, Order calldata orderData,,) = _decodeOrderData(order_.orderData, 0x40);
+        (, Order calldata orderData,,) = _decodeOrderData(order_.orderData, false);
 
         ResolvedCrossChainOrder memory resolvedOrder = _resolveOrder(
-            arbiter,
-            order_.user,
-            order_.nonce,
-            order_.openDeadline,
-            order_.fillDeadline,
-            orderData,
-            sponsorSignature_,
-            0,
-            0
+            order_.user, order_.nonce, order_.openDeadline, order_.fillDeadline, orderData, sponsorSignature_, 0, 0
         );
 
         bytes32 mandateHash = _mandateHash(orderData, order_.fillDeadline);
 
-        _open(
-            arbiter,
-            order_.user,
-            order_.openDeadline,
-            orderData,
-            sponsorSignature_,
-            mandateHash,
-            bytes32(0),
-            resolvedOrder
-        );
+        _open(order_.user, order_.openDeadline, orderData, sponsorSignature_, mandateHash, bytes32(0), resolvedOrder);
     }
 
     /// @inheritdoc IOriginSettler
@@ -99,18 +82,12 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         }
 
         // Decode the orderData
-        (
-            address arbiter,
-            uint32 expires,
-            Order calldata orderData,
-            uint200 targetBlock,
-            uint56 maximumBlocksAfterTarget
-        ) = _decodeOrderData(order.orderData, 0x60);
+        (uint32 expires, Order calldata orderData, uint200 targetBlock, uint56 maximumBlocksAfterTarget) =
+            _decodeOrderData(order.orderData, true);
 
         bytes32 mandateHash = _mandateHash(orderData, order.fillDeadline);
 
         ResolvedCrossChainOrder memory resolvedOrder = _resolveOrder(
-            arbiter,
             msg.sender,
             nonces[msg.sender] + 1,
             expires,
@@ -122,7 +99,6 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         );
 
         _open(
-            arbiter,
             msg.sender,
             expires,
             orderData,
@@ -153,10 +129,9 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         }
 
         // Decode the orderData
-        (address arbiter,, Order calldata orderData,,) = _decodeOrderData(order_.orderData, 0x40);
+        (, Order calldata orderData,,) = _decodeOrderData(order_.orderData, false);
 
         return _resolveOrder(
-            arbiter,
             order_.user,
             order_.nonce,
             order_.openDeadline,
@@ -176,16 +151,10 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         }
 
         // Decode the orderData
-        (
-            address arbiter,
-            uint32 expires,
-            Order calldata orderData,
-            uint200 targetBlock,
-            uint56 maximumBlocksAfterTarget
-        ) = _decodeOrderData(order.orderData, 0x60);
+        (uint32 expires, Order calldata orderData, uint200 targetBlock, uint56 maximumBlocksAfterTarget) =
+            _decodeOrderData(order.orderData, true);
 
         return _resolveOrder(
-            arbiter,
             msg.sender,
             nonces[msg.sender] + 1,
             expires,
@@ -254,7 +223,6 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
     }
 
     function _open(
-        address arbiter,
         address sponsor,
         uint32 expires,
         Order calldata orderData,
@@ -267,7 +235,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         (bytes32 claimHash, uint256 nonce) = allocateFor(
             sponsor,
             orderData.commitments,
-            arbiter,
+            orderData.arbiter,
             expires,
             BATCH_COMPACT_WITNESS_TYPEHASH,
             mandateHash_,
@@ -280,41 +248,33 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         emit Open(bytes32(nonce), resolvedOrder_);
     }
 
-    function _decodeOrderData(bytes calldata orderData, uint256 offset)
+    function _decodeOrderData(bytes calldata orderData, bool onChain)
         internal
         pure
-        returns (
-            address arbiter,
-            uint32 expires,
-            Order calldata order,
-            uint200 targetBlock,
-            uint56 maximumBlocksAfterTarget
-        )
+        returns (uint32 expires, Order calldata order, uint200 targetBlock, uint56 maximumBlocksAfterTarget)
     {
         // orderData includes the OrderData(OnChain/Gasless) struct, and the nested Order struct.
         // 0x00: OrderDataOnChain.offset
-        // 0x20: OrderDataOnChain.arbiter
+        // 0x20: OrderDataOnChain.order.offset
         // 0x40: OrderDataOnChain.expires
-        // 0x60: OrderDataOnChain.order.offset
+        // 0x60: OrderDataOnChain.targetBlock
+        // 0x80: OrderDataOnChain.maximumBlocksAfterTarget
 
         // 0x00: OrderDataGasless.offset
-        // 0x20: OrderDataGasless.arbiter
-        // 0x40: OrderDataGasless.order.offset
+        // 0x20: OrderDataGasless.order.offset
 
         assembly ("memory-safe") {
             let l := sub(orderData.length, 0x20)
-            let s := calldataload(add(orderData.offset, offset)) // Relative offset of `orderBytes` from `orderData.offset` and the `OrderData...` struct.
+            let s := calldataload(add(orderData.offset, 0x20)) // Relative offset of `orderBytes` from `orderData.offset` and the `OrderData...` struct.
             order := add(orderData.offset, add(s, 0x20)) // Add 0x20 since the OrderStruct is within the `OrderData...` struct
-            if or(shr(64, or(s, or(l, orderData.offset))), gt(offset, l)) { revert(l, 0x00) }
+            if shr(64, or(s, or(l, orderData.offset))) { revert(l, 0x00) }
 
-            let isOnChain := eq(offset, 0x60)
-            arbiter := calldataload(add(orderData.offset, 0x20))
-            expires := mul(calldataload(add(orderData.offset, 0x40)), isOnChain)
-            targetBlock := mul(calldataload(0x124), isOnChain)
-            maximumBlocksAfterTarget := mul(calldataload(0x144), isOnChain)
+            expires := mul(calldataload(add(orderData.offset, 0x40)), onChain)
+            targetBlock := mul(calldataload(add(orderData.offset, 0x60)), onChain)
+            maximumBlocksAfterTarget := mul(calldataload(add(orderData.offset, 0x80)), onChain)
         }
 
-        return (arbiter, expires, order, targetBlock, maximumBlocksAfterTarget);
+        return (expires, order, targetBlock, maximumBlocksAfterTarget);
     }
 
     /// @dev Returns a slice representing a dynamic struct in the calldata. Performs bounds checks.
@@ -330,7 +290,6 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
     }
 
     function _resolveOrder(
-        address arbiter,
         address sponsor,
         uint256 nonce,
         uint32 expires,
@@ -352,7 +311,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         });
 
         BatchCompact memory compact = BatchCompact({
-            arbiter: arbiter,
+            arbiter: orderData.arbiter,
             sponsor: sponsor,
             nonce: nonce,
             expires: expires,
