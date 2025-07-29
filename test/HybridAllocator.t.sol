@@ -270,7 +270,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertEq(nonce, 1);
     }
 
-    function test_allocateAndRegister_checkNonceIncrements() public {
+    function test_allocateAndRegister_checkNonceIncrements_nativeToken() public {
         uint256[2][] memory idsAndAmounts = new uint256[2][](1);
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0));
         idsAndAmounts[0][1] = 0;
@@ -287,11 +287,48 @@ contract HybridAllocatorTest is Test, TestHelper {
         (bytes32 claimHash, uint256[] memory registeredAmounts,) = allocator.allocateAndRegister{value: 5e17}(
             user, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, ''
         );
+        vm.snapshotGasLastCall('allocateAndRegister_second_nativeToken');
 
         assertTrue(compact.isRegistered(user, claimHash, BATCH_COMPACT_TYPEHASH));
         assertTrue(allocator.isClaimAuthorized(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
         assertEq(registeredAmounts[0], 5e17);
         assertEq(registeredAmounts.length, 1);
+
+        assertEq(allocator.nonce(), 2);
+    }
+
+    function test_allocateAndRegister_checkNonceIncrements_erc20Token() public {
+        uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+        idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
+        idsAndAmounts[0][1] = 0;
+
+        assertEq(allocator.nonce(), 0);
+
+        // Provide tokens
+        vm.prank(user);
+        usdc.transfer(address(allocator), defaultAmount / 2);
+        assertEq(usdc.balanceOf(address(allocator)), defaultAmount / 2);
+
+        // Register first claim
+        allocator.allocateAndRegister(user, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, '');
+        assertEq(allocator.nonce(), 1);
+
+        // Provide tokens
+        vm.prank(user);
+        usdc.transfer(address(allocator), defaultAmount / 2);
+        assertEq(usdc.balanceOf(address(allocator)), defaultAmount / 2);
+
+        // Register second claim
+        (bytes32 claimHash, uint256[] memory registeredAmounts,) =
+            allocator.allocateAndRegister(user, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, '');
+        vm.snapshotGasLastCall('allocateAndRegister_second_erc20Token');
+
+        assertTrue(compact.isRegistered(user, claimHash, BATCH_COMPACT_TYPEHASH));
+        assertTrue(allocator.isClaimAuthorized(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
+        assertEq(registeredAmounts[0], defaultAmount / 2);
+        assertEq(registeredAmounts.length, 1);
+        assertEq(usdc.balanceOf(address(compact)), defaultAmount);
+        assertEq(compact.balanceOf(address(user), idsAndAmounts[0][0]), defaultAmount);
 
         assertEq(allocator.nonce(), 2);
     }
