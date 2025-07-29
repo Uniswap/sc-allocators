@@ -15,7 +15,7 @@ import {BatchCompact, COMPACT_TYPEHASH, LOCK_TYPEHASH, Lock} from '@uniswap/the-
 import {ForcedWithdrawalStatus} from '@uniswap/the-compact/types/ForcedWithdrawalStatus.sol';
 import {ResetPeriod} from '@uniswap/the-compact/types/ResetPeriod.sol';
 import {Scope} from '@uniswap/the-compact/types/Scope.sol';
-import {Test, console} from 'forge-std/Test.sol';
+import {Test} from 'forge-std/Test.sol';
 
 import {TestHelper} from 'test/util/TestHelper.sol';
 
@@ -127,22 +127,6 @@ abstract contract CreateHash is MocksSetup {
         returns (bytes32 compactHash)
     {
         bytes32 mandateHash = _hashMandate(mandate);
-        console.log('__________TEST_VALUES________');
-        console.log('compactWitnessTypeHash');
-        console.logBytes32(keccak256(bytes(batchCompactWitnessTypeString)));
-        console.log('-arbiter-');
-        console.logAddress(data.arbiter);
-        console.log('-sponsor-');
-        console.logAddress(data.sponsor);
-        console.log('-nonce-');
-        console.logUint(data.nonce);
-        console.log('-expires-');
-        console.logUint(data.expires);
-        console.log('-commitments-');
-        console.logBytes32(_hashCommitments(data.commitments));
-        console.log('-mandateHash-');
-        console.logBytes32(mandateHash);
-        console.log('________TEST_VALUES_END______');
         compactHash = keccak256(
             abi.encode(
                 keccak256(bytes(batchCompactWitnessTypeString)),
@@ -281,8 +265,8 @@ abstract contract GaslessCrossChainOrderData is CompactData {
         gaslessCrossChainOrder.orderDataType = erc7683Allocator.ORDERDATA_GASLESS_TYPEHASH();
         gaslessCrossChainOrder.orderData = abi.encode(
             IERC7683Allocator.OrderDataGasless({
-                arbiter: compact_.arbiter,
                 order: IERC7683Allocator.Order({
+                    arbiter: compact_.arbiter,
                     commitments: compact_.commitments,
                     chainId: defaultOutputChainId,
                     tribunal: tribunal,
@@ -317,8 +301,8 @@ abstract contract GaslessCrossChainOrderData is CompactData {
             orderDataType: orderDataGaslessTypeHash_,
             orderData: abi.encode(
                 IERC7683Allocator.OrderDataGasless({
-                    arbiter: compact_.arbiter,
                     order: IERC7683Allocator.Order({
+                        arbiter: compact_.arbiter,
                         commitments: compact_.commitments,
                         chainId: defaultOutputChainId,
                         tribunal: tribunal,
@@ -360,9 +344,9 @@ abstract contract OnChainCrossChainOrderData is CompactData {
         onchainCrossChainOrder.orderDataType = erc7683Allocator.ORDERDATA_ONCHAIN_TYPEHASH();
         onchainCrossChainOrder.orderData = abi.encode(
             IERC7683Allocator.OrderDataOnChain({
-                arbiter: compact_.arbiter,
                 expires: compact_.expires,
                 order: IERC7683Allocator.Order({
+                    arbiter: compact_.arbiter,
                     commitments: compact_.commitments,
                     chainId: defaultOutputChainId,
                     tribunal: tribunal,
@@ -394,9 +378,9 @@ abstract contract OnChainCrossChainOrderData is CompactData {
             orderDataType: orderDataType_,
             orderData: abi.encode(
                 IERC7683Allocator.OrderDataOnChain({
-                    arbiter: compact_.arbiter,
                     expires: compact_.expires,
                     order: IERC7683Allocator.Order({
+                        arbiter: compact_.arbiter,
                         commitments: compact_.commitments,
                         chainId: defaultOutputChainId,
                         tribunal: tribunal,
@@ -534,6 +518,7 @@ contract ERC7683Allocator_open is OnChainCrossChainOrderData {
         vm.expectEmit(true, false, false, true, address(erc7683Allocator));
         emit IOriginSettler.Open(bytes32(defaultNonce), resolvedCrossChainOrder);
         erc7683Allocator.open(onChainCrossChainOrder_);
+        vm.snapshotGasLastCall('open_simpleOrder');
     }
 }
 
@@ -689,6 +674,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         vm.expectEmit(true, false, false, true, address(erc7683Allocator));
         emit IOriginSettler.Open(bytes32(defaultNonce), resolvedCrossChainOrder);
         erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
+        vm.snapshotGasLastCall('openFor_simpleOrder_userHimself');
     }
 
     function test_successful_relayed() public {
@@ -742,6 +728,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         vm.expectEmit(true, false, false, true, address(erc7683Allocator));
         emit IOriginSettler.Open(bytes32(defaultNonce), resolvedCrossChainOrder);
         erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
+        vm.snapshotGasLastCall('openFor_simpleOrder_relayed');
     }
 
     function test_revert_NonceAlreadyInUse(uint256 nonce) public {
