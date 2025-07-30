@@ -8,7 +8,6 @@ import {OnChainAllocator} from './OnChainAllocator.sol';
 import {BatchClaim, Mandate} from './types/TribunalStructs.sol';
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 
-import {IERC1271} from '@openzeppelin/contracts/interfaces/IERC1271.sol';
 import {LibBytes} from '@solady/utils/LibBytes.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {BatchCompact, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
@@ -37,13 +36,9 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
     /// @notice keccak256("Mandate(uint256 chainId,address tribunal,address recipient,uint256 expires,address token,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
     bytes32 private constant MANDATE_TYPEHASH = 0x74d9c10530859952346f3e046aa2981a24bb7524b8394eb45a9deddced9d6501;
 
-    bytes32 immutable _COMPACT_DOMAIN_SEPARATOR;
-
     mapping(bytes32 claimHash => bytes32 qualification) public qualifications;
 
-    constructor(address compactContract_) OnChainAllocator(compactContract_) {
-        _COMPACT_DOMAIN_SEPARATOR = ITheCompact(COMPACT_CONTRACT).DOMAIN_SEPARATOR();
-    }
+    constructor(address compactContract_) OnChainAllocator(compactContract_) {}
 
     /// @inheritdoc IOriginSettler
     function openFor(GaslessCrossChainOrder calldata order_, bytes calldata sponsorSignature_, bytes calldata)
@@ -212,14 +207,12 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
 
     /// @inheritdoc IERC7683Allocator
     function checkNonce(uint256 nonce_, address sponsor_) external view returns (bool nonceValid) {
-        nonceValid = nonces[sponsor_] + 1 == nonce_;
-        return nonceValid;
+        return nonces[sponsor_] + 1 == nonce_;
     }
 
     /// @inheritdoc IERC7683Allocator
     function createFillerData(address claimant_) external pure returns (bytes memory fillerData) {
-        fillerData = abi.encode(claimant_);
-        return fillerData;
+        return abi.encode(claimant_);
     }
 
     function _open(
@@ -272,20 +265,6 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
             expires := mul(calldataload(add(orderData.offset, 0x40)), onChain)
             targetBlock := mul(calldataload(add(orderData.offset, 0x60)), onChain)
             maximumBlocksAfterTarget := mul(calldataload(add(orderData.offset, 0x80)), onChain)
-        }
-
-        return (expires, order, targetBlock, maximumBlocksAfterTarget);
-    }
-
-    /// @dev Returns a slice representing a dynamic struct in the calldata. Performs bounds checks.
-    function _dynamicStructInCalldata(bytes calldata a, uint256 offset) internal pure returns (bytes calldata result) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            let l := sub(a.length, 0x20)
-            let s := calldataload(add(a.offset, offset)) // Relative offset of `result` from `a.offset`.
-            result.offset := add(a.offset, add(s, 0x20)) // Add 0x20 since the OrderDataStruct is inside another struct
-            result.length := sub(a.length, add(s, 0x20))
-            if or(shr(64, or(s, or(l, a.offset))), gt(offset, l)) { revert(l, 0x00) }
         }
     }
 
