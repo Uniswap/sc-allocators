@@ -41,11 +41,9 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
     constructor(address compactContract_) OnChainAllocator(compactContract_) {}
 
     /// @inheritdoc IOriginSettler
-    function openFor(
-        GaslessCrossChainOrder calldata order_,
-        bytes calldata sponsorSignature_,
-        bytes calldata fillerData
-    ) external {
+    function openFor(GaslessCrossChainOrder calldata order_, bytes calldata sponsorSignature_, bytes calldata)
+        external
+    {
         // Check if orderDataType is the one expected by the allocator
         if (order_.orderDataType != ORDERDATA_GASLESS_TYPEHASH) {
             revert InvalidOrderDataType(order_.orderDataType, ORDERDATA_GASLESS_TYPEHASH);
