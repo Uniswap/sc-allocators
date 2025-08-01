@@ -14,18 +14,18 @@ import {BatchCompact, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
     /// @notice The typehash of the OrderDataOnChain struct
-    //          keccak256("OrderDataOnChain(address arbiter,uint256 expires,Order order,uint200 targetBlock,uint56 maximumBlocksAfterTarget)
+    //          keccak256("OrderDataOnChain(Order order,uint256 expires)
     //          Lock(bytes12 lockTag,address token,uint256 amount)
-    //          Order(Lock[] commitments,uint256 chainId,address tribunal,address recipient,address settlementToken,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
+    //          Order(address arbiter,Lock[] commitments,uint256 chainId,address tribunal,address recipient,address settlementToken,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt,bytes32 qualification)")
     bytes32 public constant ORDERDATA_ONCHAIN_TYPEHASH =
-        0x95d7f00c299b34a562258ba851472a8d9bd0d8a1b88fce3a37b7d27ca06e77c4;
+        0x037a34e1ded3bcc84f59dfc185efc3553c509ebab317153a8dddefce2eaee6f0;
 
     /// @notice The typehash of the OrderDataGasless struct
-    //          keccak256("OrderDataGasless(address arbiter,Order order)
+    //          keccak256("OrderDataGasless(Order order,bool deposit)
     //          Lock(bytes12 lockTag,address token,uint256 amount)
-    //          Order(Lock[] commitments,uint256 chainId,address tribunal,address recipient,address settlementToken,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)")
+    //          Order(address arbiter,Lock[] commitments,uint256 chainId,address tribunal,address recipient,address settlementToken,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt,bytes32 qualification)")
     bytes32 public constant ORDERDATA_GASLESS_TYPEHASH =
-        0xdebd9e7866045b7f0ce8613ffbb31daa3fa5c6e6ac228316ba9f57fda63b7489;
+        0x79e4af6feaa84a46fd69ed25e4595e9f6e8690ba3a6c564bfa235542f9faf55c;
 
     /// @notice keccak256("BatchCompact(address arbiter,address sponsor,uint256 nonce,uint256 expires,Lock[] commitments,Mandate mandate)
     //          Lock(bytes12 lockTag,address token,uint256 amount)
@@ -41,32 +41,49 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
     constructor(address compactContract_) OnChainAllocator(compactContract_) {}
 
     /// @inheritdoc IOriginSettler
-    function openFor(GaslessCrossChainOrder calldata order_, bytes calldata sponsorSignature_, bytes calldata)
-        external
-    {
+    function openFor(
+        GaslessCrossChainOrder calldata order_,
+        bytes calldata sponsorSignature_,
+        bytes calldata fillerData
+    ) external {
         // Check if orderDataType is the one expected by the allocator
         if (order_.orderDataType != ORDERDATA_GASLESS_TYPEHASH) {
             revert InvalidOrderDataType(order_.orderDataType, ORDERDATA_GASLESS_TYPEHASH);
         }
-        /// TODO: Potentially useless check, since the allocator Id gets checked later.
         if (order_.originSettler != address(this)) {
             revert InvalidOriginSettler(order_.originSettler, address(this));
         }
-        // Early revert if the expected nonce is not the next nonce
-        if (order_.nonce != nonces[order_.user] + 1) {
-            revert InvalidNonce(order_.nonce, nonces[order_.user] + 1);
-        }
 
         // Decode the orderData
-        (, Order calldata orderData,,) = _decodeOrderData(order_.orderData, false);
+        (Order calldata orderData, uint32 deposit) = _decodeOrderData(order_.orderData);
+
+        uint160 caller = uint160(deposit * uint160(msg.sender)); // for a deposit, the nonce will be scoped to the caller + user
+        bytes32 nonceIdentifier = _toNonceId(address(caller), order_.user);
+
+        // Early revert if the expected nonce is not the next nonce
+        if (order_.nonce != nonces[nonceIdentifier] + 1) {
+            revert InvalidNonce(order_.nonce, nonces[nonceIdentifier] + 1);
+        }
+
+        bytes32 qualification = bytes32(uint256(orderData.qualification) * deposit); // delete qualification if not a deposit
 
         ResolvedCrossChainOrder memory resolvedOrder = _resolveOrder(
-            order_.user, order_.nonce, order_.openDeadline, order_.fillDeadline, orderData, sponsorSignature_, 0, 0
+            order_.user,
+            order_.nonce,
+            order_.openDeadline,
+            order_.fillDeadline,
+            orderData,
+            sponsorSignature_,
+            qualification
         );
 
         bytes32 mandateHash = _mandateHash(orderData, order_.fillDeadline);
 
-        _open(order_.user, order_.openDeadline, orderData, sponsorSignature_, mandateHash, bytes32(0), resolvedOrder);
+        if (deposit == 0) {
+            _open(order_.user, order_.openDeadline, orderData, sponsorSignature_, mandateHash, resolvedOrder);
+        } else {
+            _openAndRegister(order_.user, order_.openDeadline, orderData, mandateHash, resolvedOrder);
+        }
     }
 
     /// @inheritdoc IOriginSettler
@@ -77,31 +94,21 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         }
 
         // Decode the orderData
-        (uint32 expires, Order calldata orderData, uint200 targetBlock, uint56 maximumBlocksAfterTarget) =
-            _decodeOrderData(order.orderData, true);
+        (Order calldata orderData, uint32 expires) = _decodeOrderData(order.orderData);
 
         bytes32 mandateHash = _mandateHash(orderData, order.fillDeadline);
 
         ResolvedCrossChainOrder memory resolvedOrder = _resolveOrder(
             msg.sender,
-            nonces[msg.sender] + 1,
+            nonces[_toNonceId(address(0), msg.sender)] + 1,
             expires,
             order.fillDeadline,
             orderData,
             LibBytes.emptyCalldata(),
-            targetBlock,
-            maximumBlocksAfterTarget
+            orderData.qualification
         );
 
-        _open(
-            msg.sender,
-            expires,
-            orderData,
-            LibBytes.emptyCalldata(),
-            mandateHash,
-            bytes32(abi.encodePacked(targetBlock, maximumBlocksAfterTarget)),
-            resolvedOrder
-        );
+        _open(msg.sender, expires, orderData, LibBytes.emptyCalldata(), mandateHash, resolvedOrder);
     }
 
     /// @inheritdoc IOriginSettler
@@ -114,17 +121,22 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         if (order_.orderDataType != ORDERDATA_GASLESS_TYPEHASH) {
             revert InvalidOrderDataType(order_.orderDataType, ORDERDATA_GASLESS_TYPEHASH);
         }
-        /// TODO: Potentially useless check, since the allocator Id gets checked later.
         if (order_.originSettler != address(this)) {
             revert InvalidOriginSettler(order_.originSettler, address(this));
         }
-        // Early revert if the expected nonce is not the next nonce
-        if (order_.nonce != nonces[order_.user] + 1) {
-            revert InvalidNonce(order_.nonce, nonces[order_.user] + 1);
-        }
 
         // Decode the orderData
-        (, Order calldata orderData,,) = _decodeOrderData(order_.orderData, false);
+        (Order calldata orderData, uint32 deposit) = _decodeOrderData(order_.orderData);
+
+        uint160 caller = uint160(deposit * uint160(msg.sender)); // for a deposit, the nonce will be scoped to the caller + user
+        bytes32 nonceIdentifier = _toNonceId(address(caller), order_.user);
+
+        // Early revert if the expected nonce is not the next nonce
+        if (order_.nonce != nonces[nonceIdentifier] + 1) {
+            revert InvalidNonce(order_.nonce, nonces[nonceIdentifier] + 1);
+        }
+
+        bytes32 qualification = bytes32(uint256(orderData.qualification) * deposit);
 
         return _resolveOrder(
             order_.user,
@@ -133,8 +145,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
             order_.fillDeadline,
             orderData,
             LibBytes.emptyCalldata(),
-            0,
-            0
+            qualification
         );
     }
 
@@ -146,18 +157,16 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         }
 
         // Decode the orderData
-        (uint32 expires, Order calldata orderData, uint200 targetBlock, uint56 maximumBlocksAfterTarget) =
-            _decodeOrderData(order.orderData, true);
+        (Order calldata orderData, uint32 expires) = _decodeOrderData(order.orderData);
 
         return _resolveOrder(
             msg.sender,
-            nonces[msg.sender] + 1,
+            nonces[_toNonceId(address(0), msg.sender)] + 1,
             expires,
             order.fillDeadline,
             orderData,
             LibBytes.emptyCalldata(),
-            targetBlock,
-            maximumBlocksAfterTarget
+            orderData.qualification
         );
     }
 
@@ -206,8 +215,18 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
     }
 
     /// @inheritdoc IERC7683Allocator
-    function checkNonce(uint256 nonce_, address sponsor_) external view returns (bool nonceValid) {
-        return nonces[sponsor_] + 1 == nonce_;
+    function checkNonce(GaslessCrossChainOrder calldata order_, address caller)
+        external
+        view
+        returns (bool nonceValid)
+    {
+        (, uint32 deposit) = _decodeOrderData(order_.orderData);
+
+        caller = address(uint160(deposit * uint160(caller))); // for a deposit, the nonce will be scoped to the caller + user
+        bytes32 nonceIdentifier = _toNonceId(caller, order_.user);
+
+        // Early revert if the expected nonce is not the next nonce
+        return (order_.nonce == nonces[nonceIdentifier] + 1);
     }
 
     /// @inheritdoc IERC7683Allocator
@@ -219,10 +238,9 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         address sponsor,
         uint32 expires,
         Order calldata orderData,
-        bytes calldata sponsorSignature_,
-        bytes32 mandateHash_,
-        bytes32 qualification_,
-        ResolvedCrossChainOrder memory resolvedOrder_
+        bytes calldata sponsorSignature,
+        bytes32 mandateHash,
+        ResolvedCrossChainOrder memory resolvedOrder
     ) internal {
         // Register the allocation on chain
         (bytes32 claimHash, uint256 nonce) = allocateFor(
@@ -231,27 +249,54 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
             orderData.arbiter,
             expires,
             BATCH_COMPACT_WITNESS_TYPEHASH,
-            mandateHash_,
-            sponsorSignature_
+            mandateHash,
+            sponsorSignature
         );
 
-        qualifications[claimHash] = qualification_;
+        if (sponsor == msg.sender && orderData.qualification != bytes32(0)) {
+            qualifications[claimHash] = orderData.qualification;
+        }
+
+        // Emit an open event
+        emit Open(bytes32(nonce), resolvedOrder);
+    }
+
+    function _openAndRegister(
+        address sponsor,
+        uint32 expires,
+        Order calldata orderData,
+        bytes32 mandateHash_,
+        ResolvedCrossChainOrder memory resolvedOrder_
+    ) internal {
+        // Register the allocation on chain
+        (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce) = allocateAndRegister(
+            sponsor, orderData.commitments, orderData.arbiter, expires, BATCH_COMPACT_WITNESS_TYPEHASH, mandateHash_
+        );
+
+        for (uint256 i = 0; i < registeredAmounts.length; i++) {
+            if (registeredAmounts[i] != orderData.commitments[i].amount) {
+                // FOT tokens unsupported
+                revert UnsupportedToken(orderData.commitments[i].token);
+            }
+        }
+
+        if (orderData.qualification != bytes32(0)) {
+            qualifications[claimHash] = orderData.qualification;
+        }
 
         // Emit an open event
         emit Open(bytes32(nonce), resolvedOrder_);
     }
 
-    function _decodeOrderData(bytes calldata orderData, bool onChain)
+    function _decodeOrderData(bytes calldata orderData)
         internal
         pure
-        returns (uint32 expires, Order calldata order, uint200 targetBlock, uint56 maximumBlocksAfterTarget)
+        returns (Order calldata order, uint32 additionalInput)
     {
         // orderData includes the OrderData(OnChain/Gasless) struct, and the nested Order struct.
         // 0x00: OrderDataOnChain.offset
         // 0x20: OrderDataOnChain.order.offset
         // 0x40: OrderDataOnChain.expires
-        // 0x60: OrderDataOnChain.targetBlock
-        // 0x80: OrderDataOnChain.maximumBlocksAfterTarget
 
         // 0x00: OrderDataGasless.offset
         // 0x20: OrderDataGasless.order.offset
@@ -262,9 +307,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
             order := add(orderData.offset, add(s, 0x20)) // Add 0x20 since the OrderStruct is within the `OrderData...` struct
             if shr(64, or(s, or(l, orderData.offset))) { revert(l, 0x00) }
 
-            expires := mul(calldataload(add(orderData.offset, 0x40)), onChain)
-            targetBlock := mul(calldataload(add(orderData.offset, 0x60)), onChain)
-            maximumBlocksAfterTarget := mul(calldataload(add(orderData.offset, 0x80)), onChain)
+            additionalInput := calldataload(add(orderData.offset, 0x40))
         }
     }
 
@@ -275,8 +318,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         uint32 fillDeadline,
         Order calldata orderData,
         bytes calldata sponsorSignature,
-        uint200 targetBlock,
-        uint56 maximumBlocksAfterTarget
+        bytes32 qualification
     ) internal view returns (ResolvedCrossChainOrder memory) {
         ResolvedCrossChainOrder memory resolvedOrder = ResolvedCrossChainOrder({
             user: sponsor,
@@ -319,7 +361,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         fillInstructions[0] = FillInstruction({
             destinationChainId: orderData.chainId,
             destinationSettler: _addressToBytes32(orderData.tribunal),
-            originData: abi.encode(claim, mandate, targetBlock, maximumBlocksAfterTarget)
+            originData: abi.encode(claim, mandate, uint200(bytes25(qualification)), uint56(uint256(qualification)))
         });
         resolvedOrder.fillInstructions = fillInstructions;
 
