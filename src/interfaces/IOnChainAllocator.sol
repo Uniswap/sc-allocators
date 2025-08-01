@@ -86,4 +86,21 @@ interface IOnChainAllocator is IAllocator {
         bytes32 witness,
         bytes calldata signature
     ) external returns (bytes32 claimHash, uint256 claimNonce);
+
+    /// @notice Registers an allocation for a set of tokens on behalf of a recipient
+    /// @dev The msg.sender needs to provide the tokens of the registered allocation
+    /// @param recipient The recipient of the allocation
+    /// @param commitments The commitments of the allocations
+    /// @param arbiter The arbiter of the allocation
+    /// @param expires The expiration of the allocation
+    /// @param typehash The typehash of the allocation
+    /// @param witness The witness of the allocation
+    function allocateAndRegister(
+        address recipient,
+        Lock[] calldata commitments,
+        address arbiter,
+        uint32 expires,
+        bytes32 typehash,
+        bytes32 witness
+    ) external returns (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce);
 }

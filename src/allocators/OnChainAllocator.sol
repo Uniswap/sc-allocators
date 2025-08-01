@@ -3,7 +3,9 @@
 pragma solidity ^0.8.27;
 
 import {IOnChainAllocator} from '../interfaces/IOnChainAllocator.sol';
+import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import {ERC6909} from '@solady/tokens/ERC6909.sol';
+import {SafeTransferLib} from '@solady/utils/SafeTransferLib.sol';
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
@@ -15,7 +17,7 @@ contract OnChainAllocator is IOnChainAllocator {
 
     mapping(bytes32 tokenHash => Allocation[] allocations) internal _allocations;
 
-    mapping(address user => uint256 nonce) public nonces;
+    mapping(bytes32 user => uint256 nonce) public nonces;
 
     modifier onlyCompact() {
         if (msg.sender != COMPACT_CONTRACT) {
@@ -72,6 +74,56 @@ contract OnChainAllocator is IOnChainAllocator {
         emit AllocationRegistered(sponsor, claimHash, claimNonce, expires, commitments);
 
         return (claimHash, claimNonce);
+    }
+
+    /// @inheritdoc IOnChainAllocator
+    function allocateAndRegister(
+        address recipient,
+        Lock[] calldata commitments,
+        address arbiter,
+        uint32 expires,
+        bytes32 typehash,
+        bytes32 witness
+    ) public returns (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce) {
+        nonce = ++nonces[_toNonceId(msg.sender, recipient)]; // prevents griefing of frontrunning nonces
+        uint256[2][] memory idsAndAmounts = new uint256[2][](commitments.length);
+        uint256 minResetPeriod = type(uint256).max;
+        for (uint256 i = 0; i < commitments.length; i++) {
+            minResetPeriod = _checkInput(commitments[i], recipient, expires, minResetPeriod);
+
+            // Store the allocation
+            idsAndAmounts[i][0] = _toId(commitments[i].lockTag, commitments[i].token);
+            uint224 amount = uint224(commitments[i].amount);
+            if (amount == 0) {
+                amount = uint224(IERC20(commitments[i].token).balanceOf(address(this)));
+            }
+            idsAndAmounts[i][1] = amount;
+
+            if (IERC20(commitments[i].token).allowance(address(this), COMPACT_CONTRACT) < amount) {
+                SafeTransferLib.safeApproveWithRetry(commitments[i].token, COMPACT_CONTRACT, type(uint256).max);
+            }
+        }
+        // Ensure expiration is not bigger then the smallest reset period
+        if (expires > block.timestamp + minResetPeriod) {
+            revert InvalidExpiration(expires, block.timestamp + minResetPeriod);
+        }
+
+        (claimHash, registeredAmounts) = ITheCompact(COMPACT_CONTRACT).batchDepositAndRegisterFor(
+            recipient, idsAndAmounts, arbiter, nonce, expires, typehash, witness
+        );
+
+        // Store the allocation
+        for (uint256 i = 0; i < registeredAmounts.length; i++) {
+            bytes32 tokenHash = _getTokenHash(commitments[i], recipient);
+
+            Allocation memory allocation =
+                Allocation({expires: expires, amount: uint224(registeredAmounts[i]), claimHash: claimHash});
+            _allocations[tokenHash].push(allocation);
+        }
+
+        emit AllocationRegistered(recipient, claimHash, nonce, expires, commitments);
+
+        return (claimHash, registeredAmounts, nonce);
     }
 
     /// @inheritdoc IAllocator
@@ -150,7 +202,7 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes32 witness
     ) internal returns (bytes32 claimHash, uint256 nonce) {
         bytes32 commitmentsHash = _getCommitmentsHash(commitments);
-        nonce = ++nonces[sponsor];
+        nonce = ++nonces[_toNonceId(address(0), sponsor)]; // address(0) as caller allows anyone to relay
         claimHash = keccak256(abi.encode(typehash, arbiter, sponsor, nonce, expires, commitmentsHash, witness));
 
         uint256 minResetPeriod = type(uint256).max;
@@ -360,6 +412,10 @@ contract OnChainAllocator is IOnChainAllocator {
             id := or(lockTag, token)
         }
         return id;
+    }
+
+    function _toNonceId(address caller, address sponsor) internal pure returns (bytes32 nonce) {
+        return keccak256(abi.encode(caller, sponsor));
     }
 
     function _toSeconds(bytes12 lockTag) internal pure returns (uint256 duration) {

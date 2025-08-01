@@ -63,6 +63,8 @@ abstract contract MocksSetup is Test, TestHelper {
     bytes32 ORDERDATA_GASLESS_TYPEHASH;
     bytes32 ORDERDATA_ONCHAIN_TYPEHASH;
 
+    uint256 NONCES_STORAGE_SLOT = 1;
+
     function setUp() public virtual {
         (user, userPK) = makeAddrAndKey('user');
         arbiter = makeAddr('arbiter');
@@ -77,10 +79,10 @@ abstract contract MocksSetup is Test, TestHelper {
         defaultNonce = 1;
 
         ORDERDATA_GASLESS_TYPEHASH = keccak256(
-            'OrderDataGasless(address arbiter,Order order)Lock(bytes12 lockTag,address token,uint256 amount)Order(Lock[] commitments,uint256 chainId,address tribunal,address recipient,address settlementToken,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)'
+            'OrderDataGasless(Order order,bool deposit)Lock(bytes12 lockTag,address token,uint256 amount)Order(address arbiter,Lock[] commitments,uint256 chainId,address tribunal,address recipient,address settlementToken,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt,bytes32 qualification)'
         );
         ORDERDATA_ONCHAIN_TYPEHASH = keccak256(
-            'OrderDataOnChain(address arbiter,uint256 expires,Order order,uint200 targetBlock,uint56 maximumBlocksAfterTarget)Lock(bytes12 lockTag,address token,uint256 amount)Order(Lock[] commitments,uint256 chainId,address tribunal,address recipient,address settlementToken,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt)'
+            'OrderDataOnChain(Order order,uint256 expires)Lock(bytes12 lockTag,address token,uint256 amount)Order(address arbiter,Lock[] commitments,uint256 chainId,address tribunal,address recipient,address settlementToken,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt,bytes32 qualification)'
         );
     }
 }
@@ -276,8 +278,10 @@ abstract contract GaslessCrossChainOrderData is CompactData {
                     baselinePriorityFee: mandate_.baselinePriorityFee,
                     scalingFactor: mandate_.scalingFactor,
                     decayCurve: mandate_.decayCurve,
-                    salt: mandate_.salt
-                })
+                    salt: mandate_.salt,
+                    qualification: bytes32(0)
+                }),
+                deposit: false
             })
         );
     }
@@ -312,8 +316,10 @@ abstract contract GaslessCrossChainOrderData is CompactData {
                         baselinePriorityFee: mandate_.baselinePriorityFee,
                         scalingFactor: mandate_.scalingFactor,
                         decayCurve: mandate_.decayCurve,
-                        salt: mandate_.salt
-                    })
+                        salt: mandate_.salt,
+                        qualification: bytes32(0)
+                    }),
+                    deposit: false
                 })
             )
         });
@@ -328,6 +334,18 @@ abstract contract GaslessCrossChainOrderData is CompactData {
     {
         (bytes memory signature_) = _hashAndSign(_getCompact(), _getMandate(), address(compactContract), userPK);
         return (gaslessCrossChainOrder, signature_);
+    }
+
+    function _manipulateDeposit(IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, bool deposit)
+        internal
+        pure
+        returns (IOriginSettler.GaslessCrossChainOrder memory)
+    {
+        bytes memory orderData = gaslessCrossChainOrder_.orderData;
+        assembly ("memory-safe") {
+            mstore(add(orderData, 0x60), deposit)
+        }
+        return gaslessCrossChainOrder_;
     }
 }
 
@@ -344,7 +362,6 @@ abstract contract OnChainCrossChainOrderData is CompactData {
         onchainCrossChainOrder.orderDataType = erc7683Allocator.ORDERDATA_ONCHAIN_TYPEHASH();
         onchainCrossChainOrder.orderData = abi.encode(
             IERC7683Allocator.OrderDataOnChain({
-                expires: compact_.expires,
                 order: IERC7683Allocator.Order({
                     arbiter: compact_.arbiter,
                     commitments: compact_.commitments,
@@ -356,10 +373,10 @@ abstract contract OnChainCrossChainOrderData is CompactData {
                     baselinePriorityFee: mandate_.baselinePriorityFee,
                     scalingFactor: mandate_.scalingFactor,
                     decayCurve: mandate_.decayCurve,
-                    salt: mandate_.salt
+                    salt: mandate_.salt,
+                    qualification: bytes32(abi.encodePacked(defaultTargetBlock, defaultMaximumBlocksAfterTarget))
                 }),
-                targetBlock: defaultTargetBlock,
-                maximumBlocksAfterTarget: defaultMaximumBlocksAfterTarget
+                expires: compact_.expires
             })
         );
     }
@@ -378,7 +395,6 @@ abstract contract OnChainCrossChainOrderData is CompactData {
             orderDataType: orderDataType_,
             orderData: abi.encode(
                 IERC7683Allocator.OrderDataOnChain({
-                    expires: compact_.expires,
                     order: IERC7683Allocator.Order({
                         arbiter: compact_.arbiter,
                         commitments: compact_.commitments,
@@ -390,10 +406,10 @@ abstract contract OnChainCrossChainOrderData is CompactData {
                         baselinePriorityFee: mandate_.baselinePriorityFee,
                         scalingFactor: mandate_.scalingFactor,
                         decayCurve: mandate_.decayCurve,
-                        salt: mandate_.salt
+                        salt: mandate_.salt,
+                        qualification: bytes32(abi.encodePacked(defaultTargetBlock, defaultMaximumBlocksAfterTarget))
                     }),
-                    targetBlock: defaultTargetBlock,
-                    maximumBlocksAfterTarget: defaultMaximumBlocksAfterTarget
+                    expires: compact_.expires
                 })
             )
         });
@@ -1537,15 +1553,66 @@ contract ERC7683Allocator_getCompactWitnessTypeString is MocksSetup {
     }
 }
 
-contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
-    function test_invalidNonce(uint256 nonce_, address otherUser) public view {
-        vm.assume(nonce_ != defaultNonce);
-
-        assertFalse(erc7683Allocator.checkNonce(nonce_, otherUser));
+contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData, GaslessCrossChainOrderData {
+    function setUp() public override(OnChainCrossChainOrderData, GaslessCrossChainOrderData) {
+        super.setUp();
     }
 
-    function test_nextFreeNonce(address otherUser) public view {
-        assertTrue(erc7683Allocator.checkNonce(defaultNonce, otherUser));
+    function test_invalidNonce_noDeposit(uint256 nonce, address targetUser, address caller) public {
+        vm.assume(nonce != defaultNonce);
+
+        (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, /*bytes memory sponsorSignature*/ ) =
+            _getGaslessCrossChainOrder();
+        gaslessCrossChainOrder_.user = targetUser;
+        gaslessCrossChainOrder_.nonce = nonce;
+        gaslessCrossChainOrder_ = _manipulateDeposit(gaslessCrossChainOrder_, false);
+
+        assertFalse(erc7683Allocator.checkNonce(gaslessCrossChainOrder_, caller));
+    }
+
+    function test_invalidNonce_withDeposit(uint256 nonce, address targetUser, address caller) public {
+        vm.assume(nonce != defaultNonce);
+
+        (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, /*bytes memory sponsorSignature*/ ) =
+            _getGaslessCrossChainOrder();
+        gaslessCrossChainOrder_.user = targetUser;
+        gaslessCrossChainOrder_.nonce = nonce;
+        gaslessCrossChainOrder_ = _manipulateDeposit(gaslessCrossChainOrder_, true);
+
+        assertFalse(erc7683Allocator.checkNonce(gaslessCrossChainOrder_, caller));
+    }
+
+    function test_freeNonce_noDeposit(uint256 nonce, address targetUser, address caller) public {
+        vm.assume(nonce > 0);
+        vm.assume(nonce < type(uint256).max);
+        (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, /*bytes memory sponsorSignature*/ ) =
+            _getGaslessCrossChainOrder();
+        gaslessCrossChainOrder_.user = targetUser;
+        gaslessCrossChainOrder_.nonce = nonce + 1;
+        gaslessCrossChainOrder_ = _manipulateDeposit(gaslessCrossChainOrder_, false);
+
+        bytes32 nonceSlot = keccak256(abi.encode(keccak256(abi.encode(address(0), targetUser)), NONCES_STORAGE_SLOT));
+        assertEq(vm.load(address(erc7683Allocator), nonceSlot), 0);
+        vm.store(address(erc7683Allocator), nonceSlot, bytes32(nonce));
+
+        assertTrue(erc7683Allocator.checkNonce(gaslessCrossChainOrder_, caller));
+    }
+
+    function test_freeNonce_withDeposit(uint256 nonce, address targetUser, address caller) public {
+        vm.assume(nonce > 0);
+        vm.assume(nonce < type(uint256).max);
+
+        (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, /*bytes memory sponsorSignature*/ ) =
+            _getGaslessCrossChainOrder();
+        gaslessCrossChainOrder_.user = targetUser;
+        gaslessCrossChainOrder_.nonce = nonce + 1;
+        gaslessCrossChainOrder_ = _manipulateDeposit(gaslessCrossChainOrder_, true);
+
+        bytes32 nonceSlot = keccak256(abi.encode(keccak256(abi.encode(caller, targetUser)), NONCES_STORAGE_SLOT));
+        assertEq(vm.load(address(erc7683Allocator), nonceSlot), 0);
+        vm.store(address(erc7683Allocator), nonceSlot, bytes32(nonce));
+
+        assertTrue(erc7683Allocator.checkNonce(gaslessCrossChainOrder_, caller));
     }
 
     function test_usedNonce(address otherUser) public {
@@ -1567,8 +1634,19 @@ contract ERC7683Allocator_checkNonce is OnChainCrossChainOrderData {
         (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
         erc7683Allocator.open(onChainCrossChainOrder_);
 
-        vm.assertFalse(erc7683Allocator.checkNonce(defaultNonce, user));
-        vm.assertTrue(erc7683Allocator.checkNonce(defaultNonce, otherUser));
+        (IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_, /*bytes memory sponsorSignature*/ ) =
+            _getGaslessCrossChainOrder();
+
+        bytes32 nonceSlot = keccak256(abi.encode(keccak256(abi.encode(address(0), user)), NONCES_STORAGE_SLOT));
+        assertEq(uint256(vm.load(address(erc7683Allocator), nonceSlot)), 1, 'nonce slot not correct');
+
+        gaslessCrossChainOrder_.user = user;
+        gaslessCrossChainOrder_.nonce = defaultNonce + 1;
+        vm.assertTrue(erc7683Allocator.checkNonce(gaslessCrossChainOrder_, address(this)), 'user nonce free');
+
+        gaslessCrossChainOrder_.nonce = defaultNonce;
+        gaslessCrossChainOrder_.user = otherUser;
+        vm.assertTrue(erc7683Allocator.checkNonce(gaslessCrossChainOrder_, address(this)), 'other user nonce not free');
         vm.stopPrank();
     }
 }
