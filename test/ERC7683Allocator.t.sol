@@ -25,9 +25,7 @@ import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 import {IERC7683Allocator} from 'src/interfaces/IERC7683Allocator.sol';
 import {IOnChainAllocator} from 'src/interfaces/IOnchainAllocator.sol';
 
-import {ISimpleAllocator} from 'src/interfaces/ISimpleAllocator.sol';
 import {ERC20Mock} from 'src/test/ERC20Mock.sol';
-import {TheCompactMock} from 'src/test/TheCompactMock.sol';
 
 abstract contract MocksSetup is Test, TestHelper {
     address user;
