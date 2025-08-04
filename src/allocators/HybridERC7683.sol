@@ -17,32 +17,37 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
     // mask for an active claim
     uint256 private constant _ACTIVE_CLAIM_MASK = 0x0000000000000000000000000000000000000000000000000000000000000001;
 
-    // keccak256("OrderData(address arbiter,address sponsor,uint256 expires,uint256[2][] idsAndAmounts,
-    //          uint256 chainId,address tribunal,address recipient,address settlementToken,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt,uint128 targetBlock,uint120 maximumBlocksAfterTarget)")
-    bytes32 public constant ORDERDATA_TYPEHASH = 0x293fe9f0f9b73ba619b34355bb68bfd5c0f97350dd85623f69698b8a8ecb6e59;
+    /// @notice The typehash of the OrderDataOnChain struct
+    //          keccak256("OrderDataOnChain(Order order,uint256 expires)
+    //          Order(address arbiter,uint256[2][] idsAndAmounts,uint256 chainId,address tribunal,address recipient,address settlementToken,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt,bytes32 qualification)")
+    bytes32 public constant ORDERDATA_ONCHAIN_TYPEHASH =
+        0xd13cc04099540f243b0042f68c0edbce9aefe428c22e0354a24061c5d98c7276;
+
+    /// @notice The typehash of the OrderDataGasless struct
+    //          keccak256("OrderDataGasless(Order order)
+    //          Order(address arbiter,uint256[2][] idsAndAmounts,uint256 chainId,address tribunal,address recipient,address settlementToken,uint256 minimumAmount,uint256 baselinePriorityFee,uint256 scalingFactor,uint256[] decayCurve,bytes32 salt,bytes32 qualification)")
+    bytes32 public constant ORDERDATA_GASLESS_TYPEHASH =
+        0xfba49b9453e7d260d702826a659947a671a3e6a970688a795c82065685236b52;
 
     /// @notice keccak256("QualifiedClaim(bytes32 claimHash,uint256 targetBlock,uint256 maximumBlocksAfterTarget)")
     bytes32 public constant QUALIFICATION_TYPEHASH = 0x59866b84bd1f6c909cf2a31efd20c59e6c902e50f2c196994e5aa85cdc7d7ce0;
+
+    uint256 private constant _INVALID_QUALIFICATION_ERROR_SIGNATURE = 0x7ac3c7d4;
 
     constructor(address compact_, address signer_) HybridAllocator(compact_, signer_) {}
 
     /// @inheritdoc IOriginSettler
     function openFor(
-        GaslessCrossChainOrder calldata, /*order_*/
+        GaslessCrossChainOrder calldata order,
         bytes calldata, /*sponsorSignature_*/
         bytes calldata /*originFillerData*/
-    ) external pure {
-        revert Unsupported();
-    }
-
-    /// @inheritdoc IOriginSettler
-    function open(OnchainCrossChainOrder calldata order_) external {
+    ) external {
         // Check if orderDataType is the one expected by the allocator
-        if (order_.orderDataType != ORDERDATA_TYPEHASH) {
-            revert InvalidOrderDataType(order_.orderDataType, ORDERDATA_TYPEHASH);
+        if (order.orderDataType != ORDERDATA_GASLESS_TYPEHASH) {
+            revert InvalidOrderDataType(order.orderDataType, ORDERDATA_GASLESS_TYPEHASH);
         }
 
-        OrderData calldata orderData = _decodeOrderData(order_);
+        (Order calldata orderData,) = _decodeOrderData(order.orderData, false);
 
         // create witness hash
         bytes32 witnessHash = keccak256(
@@ -51,7 +56,7 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
                 orderData.chainId,
                 orderData.tribunal,
                 orderData.recipient,
-                order_.fillDeadline,
+                order.fillDeadline,
                 orderData.settlementToken,
                 orderData.minimumAmount,
                 orderData.baselinePriorityFee,
@@ -63,24 +68,15 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
 
         // register claim
         (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce_) = allocateAndRegister(
-            orderData.sponsor,
+            order.user,
             orderData.idsAndAmounts,
             orderData.arbiter,
-            orderData.expires,
+            order.openDeadline,
             BATCH_COMPACT_WITNESS_TYPEHASH,
             witnessHash
         );
 
-        // store the allocator data with the claims mapping.
-        assembly ("memory-safe") {
-            mstore(0x00, claimHash)
-            mstore(0x20, claims.slot)
-            let claimSlot := keccak256(0x00, 0x40)
-            let targetBlock := calldataload(and(orderData, 0x1a0))
-            let maximumBlocksAfterTarget := calldataload(and(orderData, 0x1c0))
-            let indicator := and(and(shl(128, targetBlock), shl(1, maximumBlocksAfterTarget)), _ACTIVE_CLAIM_MASK)
-            sstore(claimSlot, indicator)
-        }
+        _storeQualification(claimHash, orderData.qualification);
 
         Lock[] memory locks = new Lock[](registeredAmounts.length);
         for (uint256 i = 0; i < registeredAmounts.length; i++) {
@@ -89,15 +85,67 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
 
         BatchCompact memory batchCompact = BatchCompact({
             arbiter: orderData.arbiter,
-            sponsor: orderData.sponsor,
+            sponsor: order.user,
             nonce: nonce_,
-            expires: orderData.expires,
+            expires: order.openDeadline,
             commitments: locks
         });
 
         // emit open event
         emit Open(
-            bytes32(batchCompact.nonce), _convertToResolvedCrossChainOrder(orderData, order_.fillDeadline, batchCompact)
+            bytes32(batchCompact.nonce), _convertToResolvedCrossChainOrder(orderData, order.fillDeadline, batchCompact)
+        );
+    }
+
+    /// @inheritdoc IOriginSettler
+    function open(OnchainCrossChainOrder calldata order) external {
+        // Check if orderDataType is the one expected by the allocator
+        if (order.orderDataType != ORDERDATA_ONCHAIN_TYPEHASH) {
+            revert InvalidOrderDataType(order.orderDataType, ORDERDATA_ONCHAIN_TYPEHASH);
+        }
+
+        (Order calldata orderData, uint256 expires) = _decodeOrderData(order.orderData, true);
+
+        // create witness hash
+        bytes32 witnessHash = keccak256(
+            abi.encode(
+                MANDATE_TYPEHASH,
+                orderData.chainId,
+                orderData.tribunal,
+                orderData.recipient,
+                order.fillDeadline,
+                orderData.settlementToken,
+                orderData.minimumAmount,
+                orderData.baselinePriorityFee,
+                orderData.scalingFactor,
+                keccak256(abi.encodePacked(orderData.decayCurve)),
+                orderData.salt
+            )
+        );
+
+        // register claim
+        (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce_) = allocateAndRegister(
+            msg.sender, orderData.idsAndAmounts, orderData.arbiter, expires, BATCH_COMPACT_WITNESS_TYPEHASH, witnessHash
+        );
+
+        _storeQualification(claimHash, orderData.qualification);
+
+        Lock[] memory locks = new Lock[](registeredAmounts.length);
+        for (uint256 i = 0; i < registeredAmounts.length; i++) {
+            locks[i] = _createLock(orderData.idsAndAmounts[i][0], registeredAmounts[i]);
+        }
+
+        BatchCompact memory batchCompact = BatchCompact({
+            arbiter: orderData.arbiter,
+            sponsor: msg.sender,
+            nonce: nonce_,
+            expires: expires,
+            commitments: locks
+        });
+
+        // emit open event
+        emit Open(
+            bytes32(batchCompact.nonce), _convertToResolvedCrossChainOrder(orderData, order.fillDeadline, batchCompact)
         );
     }
 
@@ -126,6 +174,8 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
             return IAllocator.authorizeClaim.selector;
         }
 
+        if (allocatorData_.length != 0xe0 && allocatorData_.length != 0xc0) revert InvalidSignature();
+
         // Create the digest for the qualified claim hash
         bytes32 qualifiedClaimHash =
             keccak256(abi.encode(QUALIFICATION_TYPEHASH, claimHash, targetBlock, maximumBlocksAfterTarget));
@@ -141,17 +191,42 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
     }
 
     /// @inheritdoc IOriginSettler
-    function resolveFor(GaslessCrossChainOrder calldata, /*order*/ bytes calldata /*originFillerData*/ )
+    function resolveFor(GaslessCrossChainOrder calldata order, bytes calldata /*originFillerData*/ )
         external
-        pure
+        view
         returns (ResolvedCrossChainOrder memory)
     {
-        revert Unsupported();
+        // Check if orderDataType is the one expected by the allocator
+        if (order.orderDataType != ORDERDATA_GASLESS_TYPEHASH) {
+            revert InvalidOrderDataType(order.orderDataType, ORDERDATA_GASLESS_TYPEHASH);
+        }
+
+        (Order calldata orderData,) = _decodeOrderData(order.orderData, false);
+
+        Lock[] memory locks = new Lock[](orderData.idsAndAmounts.length);
+        for (uint256 i = 0; i < orderData.idsAndAmounts.length; i++) {
+            locks[i] = _createLock(orderData.idsAndAmounts[i][0], orderData.idsAndAmounts[i][1]);
+        }
+
+        BatchCompact memory batchCompact = BatchCompact({
+            arbiter: orderData.arbiter,
+            sponsor: order.user,
+            nonce: nonce + 1,
+            expires: order.openDeadline,
+            commitments: locks
+        });
+
+        return _convertToResolvedCrossChainOrder(orderData, order.fillDeadline, batchCompact);
     }
 
     /// @inheritdoc IOriginSettler
     function resolve(OnchainCrossChainOrder calldata order) external view returns (ResolvedCrossChainOrder memory) {
-        OrderData calldata orderData = _decodeOrderData(order);
+        // Check if orderDataType is the one expected by the allocator
+        if (order.orderDataType != ORDERDATA_ONCHAIN_TYPEHASH) {
+            revert InvalidOrderDataType(order.orderDataType, ORDERDATA_ONCHAIN_TYPEHASH);
+        }
+
+        (Order calldata orderData, uint256 expires) = _decodeOrderData(order.orderData, true);
         uint256 idsLength = orderData.idsAndAmounts.length;
         Lock[] memory locks = new Lock[](idsLength);
         for (uint256 i = 0; i < idsLength; i++) {
@@ -160,12 +235,29 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
         }
         BatchCompact memory batchCompact = BatchCompact({
             arbiter: orderData.arbiter,
-            sponsor: orderData.sponsor,
+            sponsor: msg.sender,
             nonce: nonce + 1, // nonce is incremented by 1 when the claim is registered
-            expires: orderData.expires,
+            expires: expires,
             commitments: locks
         });
         return _convertToResolvedCrossChainOrder(orderData, order.fillDeadline, batchCompact);
+    }
+
+    function _storeQualification(bytes32 claimHash, bytes32 qualification) private {
+        // store the allocator data with the claims mapping.
+        assembly ("memory-safe") {
+            if and(qualification, _ACTIVE_CLAIM_MASK) {
+                mstore(0, _INVALID_QUALIFICATION_ERROR_SIGNATURE)
+                mstore(0x20, qualification)
+                revert(0x1c, 0x24)
+            }
+
+            mstore(0x00, claimHash)
+            mstore(0x20, claims.slot)
+            let claimSlot := keccak256(0x00, 0x40)
+            let indicator := or(qualification, _ACTIVE_CLAIM_MASK)
+            sstore(claimSlot, indicator)
+        }
     }
 
     function _checkClaim(bytes32 claimHash, bytes calldata allocatorData)
@@ -180,8 +272,8 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
             let data := sload(claimSlot)
 
             valid := and(data, _ACTIVE_CLAIM_MASK)
-            let storedTargetBlock := shr(128, data)
-            let storedMaximumBlocksAfterTarget := shr(129, shl(128, data))
+            let storedTargetBlock := shr(57, data)
+            let storedMaximumBlocksAfterTarget := shr(200, shl(199, data))
 
             targetBlock := calldataload(allocatorData.offset)
             maximumBlocksAfterTarget := calldataload(add(allocatorData.offset, 0x20))
@@ -194,7 +286,7 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
     }
 
     function _convertToResolvedCrossChainOrder(
-        OrderData calldata orderData,
+        Order calldata orderData,
         uint256 fillDeadline,
         BatchCompact memory batchCompact
     ) private view returns (ResolvedCrossChainOrder memory) {
@@ -238,13 +330,18 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
         fillInstructions[0] = FillInstruction({
             destinationChainId: orderData.chainId,
             destinationSettler: _convertAddressToBytes32(orderData.tribunal),
-            originData: abi.encode(claim, mandate, orderData.targetBlock, orderData.maximumBlocksAfterTarget)
+            originData: abi.encode(
+                claim,
+                mandate,
+                uint200(bytes25(orderData.qualification >> 1)),
+                uint56(uint256(orderData.qualification >> 1))
+            )
         });
 
         return ResolvedCrossChainOrder({
-            user: orderData.sponsor,
+            user: batchCompact.sponsor,
             originChainId: block.chainid,
-            openDeadline: uint32(fillDeadline),
+            openDeadline: uint32(batchCompact.expires),
             fillDeadline: uint32(fillDeadline),
             orderId: bytes32(batchCompact.nonce),
             maxSpent: maxSpent,
@@ -253,14 +350,26 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
         });
     }
 
-    function _decodeOrderData(OnchainCrossChainOrder calldata order_)
+    function _decodeOrderData(bytes calldata orderData, bool isOnChain)
         private
         pure
-        returns (OrderData calldata orderData)
+        returns (Order calldata order, uint256 expires)
     {
-        bytes calldata rawOrderData = LibBytes.dynamicStructInCalldata(order_.orderData, 0x00);
+        // orderData includes the OrderData(OnChain/Gasless) struct, and the nested Order struct.
+        // 0x00: OrderDataOnChain.offset
+        // 0x20: OrderDataOnChain.order.offset
+        // 0x40: OrderDataOnChain.expires
+
+        // 0x00: OrderDataGasless.offset
+        // 0x20: OrderDataGasless.order.offset
+
         assembly ("memory-safe") {
-            orderData := rawOrderData.offset
+            let l := sub(orderData.length, 0x20)
+            let s := calldataload(add(orderData.offset, 0x20)) // Relative offset of `orderBytes` from `orderData.offset` and the `OrderData...` struct.
+            order := add(orderData.offset, add(s, 0x20)) // Add 0x20 since the OrderStruct is within the `OrderData...` struct
+            if shr(64, or(s, or(l, orderData.offset))) { revert(l, 0x00) }
+
+            expires := mul(calldataload(add(orderData.offset, 0x40)), isOnChain)
         }
     }
 
