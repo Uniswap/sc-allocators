@@ -42,7 +42,7 @@ abstract contract MocksSetup is Test, TestHelper {
 
     ResetPeriod defaultResetPeriod = ResetPeriod.OneMinute;
     Scope defaultScope = Scope.Multichain;
-    uint256 defaultResetPeriodTimestamp = 60;
+    uint256 defaultResetPeriodTimestamp = 60 - 1;
     uint256 defaultAmount = 1000;
     uint256 defaultNonce;
     uint256 defaultOutputChainId = 130;
@@ -675,7 +675,7 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
             attackerPK
         );
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidSignature.selector, user, attacker));
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidSignature.selector, attacker, user));
         erc7683Allocator.openFor(gaslessCrossChainOrder_, sponsorSignature, '');
     }
 
@@ -1653,5 +1653,51 @@ contract ERC7683Allocator_createFillerData is OnChainCrossChainOrderData {
     function test_createFillerData(address claimant) public view {
         bytes memory fillerData = erc7683Allocator.createFillerData(claimant);
         assertEq(abi.decode(fillerData, (address)), claimant);
+    }
+}
+
+// ------------------------------------------------------------
+// Tests for _openAndRegister path via openFor with deposit true
+// ------------------------------------------------------------
+contract ERC7683Allocator_openForDeposit is GaslessCrossChainOrderData {
+    // function test_openFor_withDeposit_success_emptyInputs() public {
+    //     usdc.mint(address(erc7683Allocator), defaultAmount);
+
+    //     BatchCompact memory compact_ = _getCompact();
+    //     compact_.commitments[0].amount = 0;
+    //     Mandate memory mandate_ = _getMandate();
+
+    //     (IOriginSettler.GaslessCrossChainOrder memory order_, bytes memory sig) = _getGaslessCrossChainOrder(
+    //         address(erc7683Allocator),
+    //         compact_,
+    //         mandate_,
+    //         block.chainid,
+    //         ORDERDATA_GASLESS_TYPEHASH,
+    //         address(compactContract),
+    //         userPK
+    //     );
+    //     order_ = _manipulateDeposit(order_, true);
+
+    //     vm.prank(user);
+    //     erc7683Allocator.openFor(order_, sig, '');
+    // }
+
+    function test_openFor_withDeposit_success() public {
+        uint256 amount = defaultAmount;
+        usdc.mint(address(erc7683Allocator), amount);
+
+        (IOriginSettler.GaslessCrossChainOrder memory order_, bytes memory sig) = _getGaslessCrossChainOrder();
+        order_ = _manipulateDeposit(order_, true);
+
+        uint256 id = usdcId;
+        vm.prank(user);
+        erc7683Allocator.openFor(order_, sig, '');
+
+        assertEq(ERC6909(address(compactContract)).balanceOf(user, id), amount);
+
+        BatchCompact memory compact_ = _getCompact();
+        Mandate memory mandate_ = _getMandate();
+        bytes32 claimHash = _hashCompact(compact_, mandate_);
+        assertTrue(compactContract.isRegistered(user, claimHash, erc7683Allocator.BATCH_COMPACT_WITNESS_TYPEHASH()));
     }
 }

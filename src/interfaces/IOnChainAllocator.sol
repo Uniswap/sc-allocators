@@ -22,10 +22,10 @@ interface IOnChainAllocator is IAllocator {
     error NonceAlreadyInUse(uint256 nonce);
 
     /// @notice Thrown if the sponsor does not have enough balance to lock the amount
-    error InsufficientBalance(address sponsor, uint256 id, uint256 balance, uint256 expectedBalance);
+    error InsufficientBalance(address sponsor, uint256 id, uint256 availableBalance, uint256 expectedBalance);
 
     /// @notice Thrown if the provided expiration is not valid
-    error InvalidExpiration(uint256 expires, uint256 minExpiration);
+    error InvalidExpiration(uint256 expires, uint256 expectedExpiration);
 
     /// @notice Thrown if the expiration is longer then the tokens forced withdrawal time
     error ForceWithdrawalAvailable(uint256 expires, uint256 forcedWithdrawalExpiration);

@@ -10,6 +10,8 @@ import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
+import {console} from 'forge-std/console.sol';
+
 contract OnChainAllocator is IOnChainAllocator {
     address public immutable COMPACT_CONTRACT;
     bytes32 public immutable COMPACT_DOMAIN_SEPARATOR;
@@ -40,8 +42,6 @@ contract OnChainAllocator is IOnChainAllocator {
         (claimHash, claimNonce) = _allocate(msg.sender, commitments, arbiter, expires, typehash, witness);
 
         emit AllocationRegistered(msg.sender, claimHash, claimNonce, expires, commitments);
-
-        return (claimHash, claimNonce);
     }
 
     /// @inheritdoc IOnChainAllocator
@@ -62,8 +62,8 @@ contract OnChainAllocator is IOnChainAllocator {
             // confirm the provided signature is valid
             bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), COMPACT_DOMAIN_SEPARATOR, claimHash));
             address signer_ = _recoverSigner(digest, signature);
-            if (sponsor != signer_) {
-                revert InvalidSignature(sponsor, signer_);
+            if (sponsor != signer_ || signer_ == address(0)) {
+                revert InvalidSignature(signer_, sponsor);
             }
         } else {
             // confirm the claim hash is registered on the compact
@@ -72,8 +72,6 @@ contract OnChainAllocator is IOnChainAllocator {
             }
         }
         emit AllocationRegistered(sponsor, claimHash, claimNonce, expires, commitments);
-
-        return (claimHash, claimNonce);
     }
 
     /// @inheritdoc IOnChainAllocator
@@ -104,7 +102,7 @@ contract OnChainAllocator is IOnChainAllocator {
             }
         }
         // Ensure expiration is not bigger then the smallest reset period
-        if (expires > block.timestamp + minResetPeriod) {
+        if (expires >= block.timestamp + minResetPeriod) {
             revert InvalidExpiration(expires, block.timestamp + minResetPeriod);
         }
 
@@ -133,10 +131,11 @@ contract OnChainAllocator is IOnChainAllocator {
 
         // Check unlocked balance
         bytes32 tokenHash = _getTokenHash(id_, from_);
-        uint256 fullAmount = amount_ + _allocatedBalance(tokenHash);
+        uint256 allocatedBalance = _allocatedBalance(tokenHash);
+        uint256 fullAmount = amount_ + allocatedBalance;
 
         if (balance < fullAmount) {
-            revert InsufficientBalance(from_, id_, balance, fullAmount);
+            revert InsufficientBalance(from_, id_, balance - allocatedBalance, amount_);
         }
 
         return this.attest.selector;
@@ -201,9 +200,12 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes32 typehash,
         bytes32 witness
     ) internal returns (bytes32 claimHash, uint256 nonce) {
-        bytes32 commitmentsHash = _getCommitmentsHash(commitments);
+        if (expires < block.timestamp) {
+            revert InvalidExpiration(expires, block.timestamp);
+        }
+
         nonce = ++nonces[_toNonceId(address(0), sponsor)]; // address(0) as caller allows anyone to relay
-        claimHash = keccak256(abi.encode(typehash, arbiter, sponsor, nonce, expires, commitmentsHash, witness));
+        claimHash = _getClaimHash(commitments, arbiter, sponsor, nonce, expires, witness, typehash);
 
         uint256 minResetPeriod = type(uint256).max;
         for (uint256 i = 0; i < commitments.length; i++) {
@@ -216,8 +218,8 @@ contract OnChainAllocator is IOnChainAllocator {
             _allocations[tokenHash].push(allocation);
         }
         // Ensure expiration is not bigger then the smallest reset period
-        if (expires > block.timestamp + minResetPeriod) {
-            revert InvalidExpiration(expires, block.timestamp + minResetPeriod);
+        if (expires >= block.timestamp + minResetPeriod) {
+            revert InvalidExpiration(expires, block.timestamp + minResetPeriod - 1);
         }
 
         return (claimHash, nonce);
@@ -248,7 +250,7 @@ contract OnChainAllocator is IOnChainAllocator {
         (, uint256 forcedWithdrawal) = ITheCompact(COMPACT_CONTRACT).getForcedWithdrawalStatus(
             sponsor, _toId(commitment.lockTag, commitment.token)
         );
-        if (forcedWithdrawal != 0 && forcedWithdrawal < expires) {
+        if (forcedWithdrawal != 0 && forcedWithdrawal <= expires) {
             revert ForceWithdrawalAvailable(expires, forcedWithdrawal);
         }
 
@@ -259,9 +261,12 @@ contract OnChainAllocator is IOnChainAllocator {
         // Check the balance of the recipient is sufficient
         tokenHash = _getTokenHash(commitment, sponsor);
         uint256 balance = ERC6909(COMPACT_CONTRACT).balanceOf(sponsor, _toId(commitment.lockTag, commitment.token));
-        uint256 requiredBalance = _allocatedBalance(tokenHash) + commitment.amount;
+        uint256 allocatedBalance = _allocatedBalance(tokenHash);
+        uint256 requiredBalance = allocatedBalance + commitment.amount;
         if (requiredBalance > balance) {
-            revert InsufficientBalance(sponsor, _toId(commitment.lockTag, commitment.token), balance, requiredBalance);
+            revert InsufficientBalance(
+                sponsor, _toId(commitment.lockTag, commitment.token), balance - allocatedBalance, commitment.amount
+            );
         }
     }
 
@@ -276,6 +281,7 @@ contract OnChainAllocator is IOnChainAllocator {
             let origLength := sload(arrayLengthSlot)
             let length := origLength
             // retrieve the arrays content slot
+            mstore(0x00, arrayLengthSlot)
             let contentSlot := keccak256(0x00, 0x20)
             for { let i := 0 } lt(i, length) {} {
                 let slot := add(contentSlot, mul(i, 2)) // 0x40 to skip the claimHash slot
@@ -312,7 +318,6 @@ contract OnChainAllocator is IOnChainAllocator {
                 sstore(arrayLengthSlot, length)
             }
         }
-        return allocatedBalance;
     }
 
     function _verifyClaim(bytes32 tokenHash, bytes32 claimHash) internal returns (bool verified) {
@@ -391,12 +396,10 @@ contract OnChainAllocator is IOnChainAllocator {
             mstore(0x20, sponsor)
             tokenHash := keccak256(0x00, 0x40)
         }
-        return tokenHash;
     }
 
     function _getTokenHash(uint256 id, address sponsor) internal pure returns (bytes32 tokenHash) {
         tokenHash = keccak256(abi.encode(id, sponsor));
-        return tokenHash;
     }
 
     function _splitAllocatorId(bytes12 lockTag) internal pure returns (uint96) {
@@ -411,7 +414,6 @@ contract OnChainAllocator is IOnChainAllocator {
         assembly ("memory-safe") {
             id := or(lockTag, token)
         }
-        return id;
     }
 
     function _toNonceId(address caller, address sponsor) internal pure returns (bytes32 nonce) {
@@ -429,6 +431,30 @@ contract OnChainAllocator is IOnChainAllocator {
 
             // Shift right by period * 24 bits & mask the least significant 24 bits.
             duration := and(shr(mul(resetPeriod, 24), bitpacked), 0xffffff)
+        }
+    }
+
+    function _getClaimHash(
+        Lock[] calldata commitments,
+        address arbiter,
+        address sponsor,
+        uint256 nonce,
+        uint32 expires,
+        bytes32 witness,
+        bytes32 typehash
+    ) internal pure returns (bytes32 claimHash) {
+        bytes32 commitmentsHash = _getCommitmentsHash(commitments);
+
+        assembly ("memory-safe") {
+            let m := mload(0x40)
+            mstore(m, typehash)
+            mstore(add(m, 0x20), arbiter)
+            mstore(add(m, 0x40), sponsor)
+            mstore(add(m, 0x60), nonce)
+            mstore(add(m, 0x80), expires)
+            mstore(add(m, 0xa0), commitmentsHash)
+            mstore(add(m, 0xc0), witness)
+            claimHash := keccak256(m, sub(0xe0, mul(iszero(witness), 0x20)))
         }
     }
 }

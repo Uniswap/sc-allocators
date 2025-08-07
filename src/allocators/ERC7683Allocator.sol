@@ -264,26 +264,23 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         uint32 expires,
         Order calldata orderData,
         bytes32 mandateHash_,
-        ResolvedCrossChainOrder memory resolvedOrder_
+        ResolvedCrossChainOrder memory resolvedOrder
     ) internal {
         // Register the allocation on chain
         (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce) = allocateAndRegister(
             sponsor, orderData.commitments, orderData.arbiter, expires, BATCH_COMPACT_WITNESS_TYPEHASH, mandateHash_
         );
 
-        for (uint256 i = 0; i < registeredAmounts.length; i++) {
-            if (registeredAmounts[i] != orderData.commitments[i].amount) {
-                // FOT tokens unsupported
-                revert UnsupportedToken(orderData.commitments[i].token);
-            }
-        }
-
         if (orderData.qualification != bytes32(0)) {
             qualifications[claimHash] = orderData.qualification;
         }
 
+        for (uint256 i = 0; i < orderData.commitments.length; i++) {
+            resolvedOrder.minReceived[i].amount = registeredAmounts[i];
+        }
+
         // Emit an open event
-        emit Open(bytes32(nonce), resolvedOrder_);
+        emit Open(bytes32(nonce), resolvedOrder);
     }
 
     function _decodeOrderData(bytes calldata orderData)
