@@ -10,8 +10,6 @@ import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
-import {console} from 'forge-std/console.sol';
-
 /// @title OnChainAllocator
 /// @notice Allocates tokens deposited into the compact.
 /// @dev The contract ensures tokens can not be double spent by a user in a fully decentralized manner.

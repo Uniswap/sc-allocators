@@ -9,7 +9,6 @@ import {BatchClaim, Mandate} from './types/TribunalStructs.sol';
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 
 import {LibBytes} from '@solady/utils/LibBytes.sol';
-import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {BatchCompact, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 /// @title ERC7683Allocator
@@ -58,7 +57,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
 
         // Decode the orderData
         (Order calldata orderData, uint32 deposit) = _decodeOrderData(order_.orderData);
-        deposit = _sanitize(deposit);
+        deposit = _sanitizeBool(deposit);
 
         uint160 caller = uint160(deposit * uint160(msg.sender)); // for a deposit, the nonce will be scoped to the caller + user
         bytes32 nonceIdentifier = _toNonceId(address(caller), order_.user);
@@ -98,7 +97,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
 
         // Decode the orderData
         (Order calldata orderData, uint32 expires) = _decodeOrderData(order.orderData);
-        expires = _sanitize(expires);
+        expires = _sanitizeUint32(expires);
 
         bytes32 mandateHash = _mandateHash(orderData, order.fillDeadline);
 
@@ -131,7 +130,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
 
         // Decode the orderData
         (Order calldata orderData, uint32 deposit) = _decodeOrderData(order_.orderData);
-        deposit = _sanitize(deposit);
+        deposit = _sanitizeBool(deposit);
 
         uint160 caller = uint160(deposit * uint160(msg.sender)); // for a deposit, the nonce will be scoped to the caller + user
         bytes32 nonceIdentifier = _toNonceId(address(caller), order_.user);
@@ -163,7 +162,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
 
         // Decode the orderData
         (Order calldata orderData, uint32 expires) = _decodeOrderData(order.orderData);
-        expires = _sanitize(expires);
+        expires = _sanitizeUint32(expires);
 
         return _resolveOrder(
             msg.sender,
@@ -227,7 +226,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         returns (bool nonceValid)
     {
         (, uint32 deposit) = _decodeOrderData(order_.orderData);
-        deposit = _sanitize(deposit);
+        deposit = _sanitizeBool(deposit);
 
         caller = address(uint160(deposit * uint160(caller))); // for a deposit, the nonce will be scoped to the caller + user
         bytes32 nonceIdentifier = _toNonceId(caller, order_.user);
@@ -424,14 +423,14 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         }
     }
 
-    function _sanitize(uint32 value) internal pure returns (uint32) {
+    function _sanitizeUint32(uint32 value) internal pure returns (uint32) {
         assembly ("memory-safe") {
             value := shr(224, shl(224, value))
         }
         return value;
     }
 
-    function _sanitize(bool value) internal pure returns (bool) {
+    function _sanitizeBool(uint32 value) internal pure returns (uint32) {
         assembly ("memory-safe") {
             value := iszero(iszero(value))
         }

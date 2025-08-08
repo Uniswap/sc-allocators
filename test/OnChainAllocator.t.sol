@@ -9,7 +9,6 @@ pragma solidity ^0.8.27;
 */
 
 import {Test} from 'forge-std/Test.sol';
-import {console} from 'forge-std/console.sol';
 
 import {ERC20Mock} from 'src/test/ERC20Mock.sol';
 
@@ -157,6 +156,24 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidAmount.selector, commitments[0].amount));
+        allocator.allocate(commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0));
+    }
+
+    function test_allocate_revert_InsufficientBalance() public {
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(0), defaultAmount);
+
+        // No deposit made for native token – balance is zero, should revert.
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IOnChainAllocator.InsufficientBalance.selector,
+                user,
+                _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0)),
+                0,
+                defaultAmount
+            )
+        );
         allocator.allocate(commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0));
     }
 
@@ -521,6 +538,79 @@ contract OnChainAllocatorTest is Test, TestHelper {
         assertTrue(allocator.isClaimAuthorized(claimHash, arbiter, user, nonce, defaultExpiration, idsAndAmounts, ''));
 
         assertEq(allocator.nonces(nonceKey), nonceBefore + 1);
+    }
+
+    function test_allocateFor_revert_InvalidRegistration(address relayer) public {
+        // Build commitments with native token deposit backing
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(0), defaultAmount);
+        vm.prank(user);
+        compact.depositNative{value: defaultAmount}(commitments[0].lockTag, user);
+
+        // Nonce that allocateFor will use
+        bytes32 nonceKey = keccak256(abi.encode(address(0), user));
+        uint256 nonceBefore = allocator.nonces(nonceKey);
+        uint256 expectedNonce = nonceBefore + 1;
+
+        // Compute claimHash that allocateFor will create internally
+        bytes32 claimHash = _createClaimHash(user, arbiter, expectedNonce, defaultExpiration, commitments, bytes32(0));
+
+        // Expect InvalidRegistration revert because claimHash is NOT registered on The Compact
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidRegistration.selector, user, claimHash));
+        allocator.allocateFor(
+            user,
+            commitments,
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            '' // empty signature triggers registration check
+        );
+    }
+
+    function test_allocateFor_success_noSignature(address relayer) public {
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(0), defaultAmount);
+
+        // Determine nonce as allocator will use
+        bytes32 nonceKey = keccak256(abi.encode(address(0), user));
+        uint256 nonceBefore = allocator.nonces(nonceKey);
+        uint256 expectedNonce = nonceBefore + 1;
+
+        // Pre-compute claimHash that `allocateFor` will produce
+        bytes32 claimHash = _createClaimHash(user, arbiter, expectedNonce, defaultExpiration, commitments, bytes32(0));
+
+        // Prepare ids & amounts for native token deposit + registration
+        uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+        idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0));
+        idsAndAmounts[0][1] = defaultAmount;
+
+        // Prepare claimHashes+typehashes array for registration
+        bytes32[2][] memory claimHashesAndTypehashes = new bytes32[2][](1);
+        claimHashesAndTypehashes[0][0] = claimHash;
+        claimHashesAndTypehashes[0][1] = BATCH_COMPACT_TYPEHASH;
+
+        // User deposits native token & registers the compact directly on TheCompact
+        vm.prank(user);
+        compact.batchDepositAndRegisterMultiple{value: defaultAmount}(idsAndAmounts, claimHashesAndTypehashes);
+
+        // Relayer submits allocateFor WITHOUT any signature (length == 0)
+        vm.prank(relayer);
+        (bytes32 returnedHash, uint256 nonce) = allocator.allocateFor(
+            user,
+            commitments,
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            '' // empty signature triggers the "registered" code path
+        );
+
+        // Assertions
+        assertEq(returnedHash, claimHash);
+        assertEq(nonce, expectedNonce);
+        assertTrue(allocator.isClaimAuthorized(claimHash, arbiter, user, nonce, defaultExpiration, idsAndAmounts, ''));
     }
 
     /* --------------------------------------------------------------------- */

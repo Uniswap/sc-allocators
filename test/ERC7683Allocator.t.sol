@@ -291,7 +291,8 @@ abstract contract GaslessCrossChainOrderData is CompactData {
         uint256 chainId_,
         bytes32 orderDataGaslessTypeHash_,
         address verifyingContract,
-        uint256 signerPK
+        uint256 signerPK,
+        bytes32 qualification
     ) internal view returns (IOriginSettler.GaslessCrossChainOrder memory, bytes memory signature) {
         IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_ = IOriginSettler.GaslessCrossChainOrder({
             originSettler: allocator,
@@ -315,7 +316,7 @@ abstract contract GaslessCrossChainOrderData is CompactData {
                         scalingFactor: mandate_.scalingFactor,
                         decayCurve: mandate_.decayCurve,
                         salt: mandate_.salt,
-                        qualification: bytes32(0)
+                        qualification: qualification
                     }),
                     deposit: false
                 })
@@ -627,7 +628,8 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
             block.chainid,
             ORDERDATA_GASLESS_TYPEHASH,
             address(erc7683Allocator),
-            userPK
+            userPK,
+            bytes32(0)
         );
         vm.prank(user);
         erc7683Allocator.openFor(falseGaslessCrossChainOrder, signature, '');
@@ -647,7 +649,8 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
             block.chainid,
             ORDERDATA_GASLESS_TYPEHASH,
             address(erc7683Allocator),
-            userPK
+            userPK,
+            bytes32(0)
         );
         vm.prank(user);
         erc7683Allocator.openFor(falseGaslessCrossChainOrder, signature, '');
@@ -672,7 +675,8 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
             block.chainid,
             ORDERDATA_GASLESS_TYPEHASH,
             address(compactContract),
-            attackerPK
+            attackerPK,
+            bytes32(0)
         );
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidSignature.selector, attacker, user));
@@ -805,116 +809,6 @@ contract ERC7683Allocator_openFor is GaslessCrossChainOrderData {
         erc7683Allocator.openFor(gaslessCrossChainOrder, sponsorSignature, '');
     }
 }
-
-// contract ERC7683Allocator_open is OnChainCrossChainOrderData {
-//     function test_revert_InvalidOrderDataType() public {
-//         // Order data type is invalid
-//         bytes32 falseOrderDataType = keccak256('false');
-//         IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_ = _getOnChainCrossChainOrder();
-//         onChainCrossChainOrder_.orderDataType = falseOrderDataType;
-
-//         vm.prank(user);
-//         vm.expectRevert(
-//             abi.encodeWithSelector(
-//                 IERC7683Allocator.InvalidOrderDataType.selector,
-//                 falseOrderDataType,
-//                 erc7683Allocator.ORDERDATA_TYPEHASH()
-//             )
-//         );
-//         erc7683Allocator.open(onChainCrossChainOrder_);
-//     }
-
-//     function test_revert_InvalidSponsor() public {
-//         IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_ = _getOnChainCrossChainOrder();
-
-//         vm.prank(attacker);
-//         vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidSignature.selector, user, attacker));
-//         erc7683Allocator.open(onChainCrossChainOrder_);
-//     }
-
-//     function test_revert_InvalidRegistration_Unavailable() public {
-//         // we deposit tokens
-//         vm.startPrank(user);
-//         usdc.mint(user, defaultAmount);
-//         usdc.approve(address(compactContract), defaultAmount);
-//         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
-
-//         // we do NOT register a claim
-
-//         vm.stopPrank();
-
-//         (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
-
-//         Compact memory compact_ = _getCompact();
-//         Mandate memory mandate_ = _getMandate();
-//         bytes32 claimHash = _hashCompact(compact_, mandate_);
-
-//         vm.prank(user);
-//         vm.expectRevert(abi.encodeWithSelector(IERC7683Allocator.InvalidRegistration.selector, user, claimHash));
-//         erc7683Allocator.open(onChainCrossChainOrder_);
-//     }
-
-//     function test_successful() public {
-//         // Deposit tokens
-//         vm.startPrank(user);
-//         usdc.mint(user, defaultAmount);
-//         usdc.approve(address(compactContract), defaultAmount);
-//         compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
-
-//         // register a claim
-//         Compact memory compact_ = _getCompact();
-//         Mandate memory mandate_ = _getMandate();
-
-//         bytes32 claimHash = _hashCompact(compact_, mandate_);
-//         bytes32 typeHash = _getTypeHash();
-//         compactContract.register(claimHash, typeHash);
-
-//         vm.stopPrank();
-
-//         (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
-//         IOriginSettler.Output[] memory maxSpent = new IOriginSettler.Output[](1);
-//         IOriginSettler.Output[] memory minReceived = new IOriginSettler.Output[](1);
-//         IOriginSettler.FillInstruction[] memory fillInstructions = new IOriginSettler.FillInstruction[](1);
-//         maxSpent[0] = IOriginSettler.Output({
-//             token: bytes32(uint256(uint160(defaultOutputToken))),
-//             amount: type(uint256).max,
-//             recipient: bytes32(uint256(uint160(user))),
-//             chainId: defaultOutputChainId
-//         });
-//         minReceived[0] = IOriginSettler.Output({
-//             token: bytes32(uint256(uint160(address(usdc)))),
-//             amount: defaultAmount,
-//             recipient: '',
-//             chainId: block.chainid
-//         });
-//         TribunalClaim memory claim = TribunalClaim({
-//             chainId: block.chainid,
-//             compact: _getCompact(),
-//             sponsorSignature: '',
-//             allocatorSignature: ''
-//         });
-//         fillInstructions[0] = IOriginSettler.FillInstruction({
-//             destinationChainId: defaultOutputChainId,
-//             destinationSettler: bytes32(uint256(uint160(tribunal))),
-//             originData: abi.encode(claim, _getMandate(), defaultTargetBlock, defaultMaximumBlocksAfterTarget)
-//         });
-
-//         IOriginSettler.ResolvedCrossChainOrder memory resolvedCrossChainOrder = IOriginSettler.ResolvedCrossChainOrder({
-//             user: user,
-//             originChainId: block.chainid,
-//             openDeadline: uint32(_getClaimExpiration()),
-//             fillDeadline: uint32(_getFillExpiration()),
-//             orderId: bytes32(defaultNonce),
-//             maxSpent: maxSpent,
-//             minReceived: minReceived,
-//             fillInstructions: fillInstructions
-//         });
-//         vm.prank(user);
-//         vm.expectEmit(true, false, false, true, address(erc7683Allocator));
-//         emit IOriginSettler.Open(bytes32(defaultNonce), resolvedCrossChainOrder);
-//         erc7683Allocator.open(onChainCrossChainOrder_);
-//     }
-// }
 
 contract ERC7683Allocator_authorizeClaim is OnChainCrossChainOrderData, GaslessCrossChainOrderData {
     function setUp() public override(OnChainCrossChainOrderData, GaslessCrossChainOrderData) {
@@ -1660,27 +1554,28 @@ contract ERC7683Allocator_createFillerData is OnChainCrossChainOrderData {
 // Tests for _openAndRegister path via openFor with deposit true
 // ------------------------------------------------------------
 contract ERC7683Allocator_openForDeposit is GaslessCrossChainOrderData {
-    // function test_openFor_withDeposit_success_emptyInputs() public {
-    //     usdc.mint(address(erc7683Allocator), defaultAmount);
+    function test_openFor_withDeposit_success_emptyInputs() public {
+        usdc.mint(address(erc7683Allocator), defaultAmount);
 
-    //     BatchCompact memory compact_ = _getCompact();
-    //     compact_.commitments[0].amount = 0;
-    //     Mandate memory mandate_ = _getMandate();
+        BatchCompact memory compact_ = _getCompact();
+        compact_.commitments[0].amount = 0;
+        Mandate memory mandate_ = _getMandate();
 
-    //     (IOriginSettler.GaslessCrossChainOrder memory order_, bytes memory sig) = _getGaslessCrossChainOrder(
-    //         address(erc7683Allocator),
-    //         compact_,
-    //         mandate_,
-    //         block.chainid,
-    //         ORDERDATA_GASLESS_TYPEHASH,
-    //         address(compactContract),
-    //         userPK
-    //     );
-    //     order_ = _manipulateDeposit(order_, true);
+        (IOriginSettler.GaslessCrossChainOrder memory order_, bytes memory sig) = _getGaslessCrossChainOrder(
+            address(erc7683Allocator),
+            compact_,
+            mandate_,
+            block.chainid,
+            ORDERDATA_GASLESS_TYPEHASH,
+            address(compactContract),
+            userPK,
+            bytes32(0)
+        );
+        order_ = _manipulateDeposit(order_, true);
 
-    //     vm.prank(user);
-    //     erc7683Allocator.openFor(order_, sig, '');
-    // }
+        vm.prank(user);
+        erc7683Allocator.openFor(order_, sig, '');
+    }
 
     function test_openFor_withDeposit_success() public {
         uint256 amount = defaultAmount;
@@ -1699,5 +1594,50 @@ contract ERC7683Allocator_openForDeposit is GaslessCrossChainOrderData {
         Mandate memory mandate_ = _getMandate();
         bytes32 claimHash = _hashCompact(compact_, mandate_);
         assertTrue(compactContract.isRegistered(user, claimHash, erc7683Allocator.BATCH_COMPACT_WITNESS_TYPEHASH()));
+    }
+
+    function test_openFor_withDeposit_success_withQualification() public {
+        uint256 amount = defaultAmount;
+        usdc.mint(address(erc7683Allocator), amount);
+
+        BatchCompact memory compact_ = _getCompact();
+        Mandate memory mandate_ = _getMandate();
+
+        (IOriginSettler.GaslessCrossChainOrder memory order_, bytes memory sig) = _getGaslessCrossChainOrder(
+            address(erc7683Allocator),
+            compact_,
+            mandate_,
+            block.chainid,
+            ORDERDATA_GASLESS_TYPEHASH,
+            address(compactContract),
+            userPK,
+            bytes32(abi.encodePacked(defaultTargetBlock, defaultMaximumBlocksAfterTarget))
+        );
+        order_ = _manipulateDeposit(order_, true);
+
+        uint256 id = usdcId;
+        vm.prank(user);
+        erc7683Allocator.openFor(order_, sig, '');
+
+        assertEq(ERC6909(address(compactContract)).balanceOf(user, id), amount);
+
+        bytes32 claimHash = _hashCompact(compact_, mandate_);
+        assertTrue(compactContract.isRegistered(user, claimHash, erc7683Allocator.BATCH_COMPACT_WITNESS_TYPEHASH()));
+
+        assertEq(
+            erc7683Allocator.qualifications(claimHash),
+            bytes32(abi.encodePacked(defaultTargetBlock, defaultMaximumBlocksAfterTarget))
+        );
+        assertTrue(
+            erc7683Allocator.isClaimAuthorized(
+                claimHash,
+                compact_.arbiter,
+                compact_.sponsor,
+                0,
+                compact_.expires,
+                defaultIdsAndAmounts,
+                abi.encodePacked(defaultTargetBlock, defaultMaximumBlocksAfterTarget)
+            )
+        );
     }
 }
