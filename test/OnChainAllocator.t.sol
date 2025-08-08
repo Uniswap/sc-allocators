@@ -569,7 +569,8 @@ contract OnChainAllocatorTest is Test, TestHelper {
         );
     }
 
-    function test_allocateFor_success_noSignature(address relayer) public {
+    function test_allocateFor_success_noSignature() public {
+        address relayer = makeAddr('relayer');
         Lock[] memory commitments = new Lock[](1);
         commitments[0] = _makeLock(address(0), defaultAmount);
 
@@ -606,6 +607,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
             bytes32(0),
             '' // empty signature triggers the "registered" code path
         );
+        vm.snapshotGasLastCall('allocateFor_success_withRegistration');
 
         // Assertions
         assertEq(returnedHash, claimHash);

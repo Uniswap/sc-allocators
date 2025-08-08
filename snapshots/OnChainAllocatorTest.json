@@ -1,6 +1,7 @@
 {
-    "allocate_and_delete_expired_allocation": "66012",
-    "allocate_erc20": "129283",
-    "allocate_native": "129043",
-    "allocate_second_erc20": "97295"
+    "allocateFor_success_withRegistration": "133879",
+    "allocate_and_delete_expired_allocation": "66039",
+    "allocate_erc20": "129310",
+    "allocate_native": "129070",
+    "allocate_second_erc20": "97322"
 }

@@ -3,7 +3,7 @@
 pragma solidity ^0.8.27;
 
 import {SafeTransferLib} from '@solady/utils/SafeTransferLib.sol';
-import {BatchCompact, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
+import {BatchCompact, LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
@@ -18,7 +18,7 @@ contract HybridAllocator is IHybridAllocator {
     mapping(bytes32 => bool) internal claims;
 
     /// @dev The off chain allocator must use a uint256 nonce where the first 160 bits are the sponsors address to ensure no nonce collisions
-    uint96 public nonce;
+    uint96 public nonces;
     uint256 public signerCount;
     mapping(address => bool) public signers;
 
@@ -89,18 +89,49 @@ contract HybridAllocator is IHybridAllocator {
         idsAndAmounts = _actualIdsAndAmounts(idsAndAmounts);
 
         (bytes32 claimHash, uint256[] memory registeredAmounts) = _COMPACT.batchDepositAndRegisterFor{value: msg.value}(
-            recipient, idsAndAmounts, arbiter, ++nonce, expires, typehash, witness
+            recipient, idsAndAmounts, arbiter, ++nonces, expires, typehash, witness
         );
 
         // Allocate the claim
         claims[claimHash] = true;
 
-        emit ClaimRegistered(recipient, registeredAmounts, nonce, claimHash);
+        emit ClaimRegistered(recipient, registeredAmounts, nonces, claimHash);
 
-        return (claimHash, registeredAmounts, nonce);
+        return (claimHash, registeredAmounts, nonces);
     }
 
+    function allocateFor(
+        address sponsor,
+        Lock[] calldata commitments,
+        address arbiter,
+        uint32 expires,
+        bytes32 typehash,
+        bytes32 witness,
+        bytes calldata /*signature*/
+    ) public returns (bytes32 claimHash, uint256 claimNonce) {
+        for (uint256 i = 0; i < commitments.length; i++) {
+            uint96 allocatorId = _splitAllocatorId(commitments[i].lockTag);
+
+            // Check allocator id
+            if (allocatorId != ALLOCATOR_ID) {
+                revert InvalidAllocatorId(allocatorId, ALLOCATOR_ID);
+            }
+        }
+
+        claimHash = _getClaimHash(commitments, arbiter, sponsor, ++nonces, expires, witness, typehash);
+
+        // confirm the claim hash is registered on the compact
+        if (!_COMPACT.isRegistered(sponsor, claimHash, typehash)) {
+            revert InvalidRegistration(sponsor, claimHash);
+        }
+
+        // Allocate the claim
+        claims[claimHash] = true;
+
+        return (claimHash, nonces);
+    }
     /// @inheritdoc IAllocator
+
     function authorizeClaim(
         bytes32 claimHash,
         address, /*arbiter*/
@@ -150,6 +181,10 @@ contract HybridAllocator is IHybridAllocator {
         // Check the allocator data for a valid signature by an authorized allocator address
         bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), _COMPACT_DOMAIN_SEPARATOR, claimHash));
         return _checkSignature(digest, allocatorData);
+    }
+
+    function requestNonce(address /*sponsor*/ ) public view returns (uint256 nonce) {
+        return nonces + 1;
     }
 
     function _actualIdsAndAmounts(uint256[2][] memory idsAndAmounts) internal returns (uint256[2][] memory) {
@@ -228,7 +263,49 @@ contract HybridAllocator is IHybridAllocator {
         return allocatorId_;
     }
 
+    function _splitAllocatorId(bytes12 lockTag) internal pure returns (uint96) {
+        uint96 allocatorId;
+        assembly ("memory-safe") {
+            allocatorId := shr(164, shl(4, lockTag))
+        }
+        return allocatorId;
+    }
+
     function _splitToken(uint256 id) internal pure returns (address) {
         return address(uint160(id));
+    }
+
+    function _getClaimHash(
+        Lock[] calldata commitments,
+        address arbiter,
+        address sponsor,
+        uint256 nonce,
+        uint32 expires,
+        bytes32 witness,
+        bytes32 typehash
+    ) internal pure returns (bytes32 claimHash) {
+        bytes32 commitmentsHash = _getCommitmentsHash(commitments);
+
+        assembly ("memory-safe") {
+            let m := mload(0x40)
+            mstore(m, typehash)
+            mstore(add(m, 0x20), arbiter)
+            mstore(add(m, 0x40), sponsor)
+            mstore(add(m, 0x60), nonce)
+            mstore(add(m, 0x80), expires)
+            mstore(add(m, 0xa0), commitmentsHash)
+            mstore(add(m, 0xc0), witness)
+            claimHash := keccak256(m, sub(0xe0, mul(iszero(witness), 0x20)))
+        }
+    }
+
+    function _getCommitmentsHash(Lock[] memory commitments) internal pure returns (bytes32) {
+        bytes32[] memory commitmentsHashes = new bytes32[](commitments.length);
+        for (uint256 i = 0; i < commitments.length; i++) {
+            commitmentsHashes[i] = keccak256(
+                abi.encode(LOCK_TYPEHASH, commitments[i].lockTag, commitments[i].token, commitments[i].amount)
+            );
+        }
+        return keccak256(abi.encodePacked(commitmentsHashes));
     }
 }

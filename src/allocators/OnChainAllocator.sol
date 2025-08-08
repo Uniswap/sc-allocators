@@ -194,6 +194,10 @@ contract OnChainAllocator is IOnChainAllocator {
         return false;
     }
 
+    function requestNonce(address sponsor) public view returns (uint256 nonce) {
+        return nonces[_toNonceId(address(0), sponsor)] + 1;
+    }
+
     function _allocate(
         address sponsor,
         Lock[] calldata commitments,

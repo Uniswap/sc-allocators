@@ -13,6 +13,7 @@ interface IHybridAllocator is IAllocator {
     error InvalidSigner();
     error LastSigner();
     error InvalidValue(uint256 value, uint256 expectedValue);
+    error InvalidRegistration(address sponsor, bytes32 claimHash);
 
     event ClaimRegistered(address indexed sponsor, uint256[] registeredAmounts, uint256 nonce, bytes32 claimHash);
 

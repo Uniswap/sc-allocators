@@ -211,7 +211,7 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
         BatchCompact memory batchCompact = BatchCompact({
             arbiter: orderData.arbiter,
             sponsor: order.user,
-            nonce: nonce + 1,
+            nonce: nonces + 1,
             expires: order.openDeadline,
             commitments: locks
         });
@@ -236,7 +236,7 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
         BatchCompact memory batchCompact = BatchCompact({
             arbiter: orderData.arbiter,
             sponsor: msg.sender,
-            nonce: nonce + 1, // nonce is incremented by 1 when the claim is registered
+            nonce: nonces + 1, // nonce is incremented by 1 when the claim is registered
             expires: expires,
             commitments: locks
         });
