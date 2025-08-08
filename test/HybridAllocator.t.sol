@@ -50,6 +50,11 @@ contract HybridAllocatorTest is Test, TestHelper {
         batchCompact.expires = defaultExpiration;
     }
 
+    function test_constructor_revert_signerIsAddressZero() public {
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
+        new HybridAllocator(address(compact), address(0));
+    }
+
     function test_checkAllocatorId() public view {
         assertEq(allocator.ALLOCATOR_ID(), _toAllocatorId(address(allocator)));
     }
@@ -394,6 +399,26 @@ contract HybridAllocatorTest is Test, TestHelper {
         bytes32 falseHash = _toBatchCompactHashWithWitness(BATCH_COMPACT_TYPEHASH_WITH_WITNESS, batch, bytes32(0));
         assertNotEq(falseHash, claimHash);
         assertFalse(allocator.isClaimAuthorized(falseHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
+    }
+
+    function test_isClaimAuthorized_signerZeroAddress() public {
+        // Create an arbitrary claim hash that has not been registered.
+        bytes32 claimHash = keccak256('invalid');
+        assertEq(ecrecover(claimHash, 0, bytes32(0), bytes32(0)), address(0));
+
+        // Craft a 65-byte signature that will make ecrecover return the zero address:
+        // r = 0, s = 0, v = 0 (v not 27/28).
+        bytes memory invalidSignature = abi.encodePacked(bytes32(0), bytes32(0), uint8(0));
+
+        // Forcing address(0) as signer
+        uint256 signersSlot = 0x03;
+        vm.store(address(allocator), keccak256(abi.encode(address(0), signersSlot)), bytes32(uint256(1)));
+
+        assertTrue(allocator.signers(address(0)));
+
+        assertFalse(
+            allocator.isClaimAuthorized(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), invalidSignature)
+        );
     }
 
     function test_isClaimAuthorized_withSigner_bytes64() public view {

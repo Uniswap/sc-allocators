@@ -17,7 +17,7 @@ contract HybridAllocator is IHybridAllocator {
 
     mapping(bytes32 => bool) internal claims;
 
-    /// @dev The off chain allocator must use a uint256 nonce where the first 160 bits are the sponsors to ensure no nonce collisions
+    /// @dev The off chain allocator must use a uint256 nonce where the first 160 bits are the sponsors address to ensure no nonce collisions
     uint96 public nonce;
     uint256 public signerCount;
     mapping(address => bool) public signers;
@@ -30,6 +30,9 @@ contract HybridAllocator is IHybridAllocator {
     }
 
     constructor(address compact_, address signer_) {
+        if (signer_ == address(0)) {
+            revert InvalidSigner();
+        }
         _COMPACT = ITheCompact(compact_);
         ALLOCATOR_ID = _COMPACT.__registerAllocator(address(this), '');
         _COMPACT_DOMAIN_SEPARATOR = _COMPACT.DOMAIN_SEPARATOR();
@@ -209,7 +212,8 @@ contract HybridAllocator is IHybridAllocator {
         }
 
         // Check if the signer is an authorized allocator address
-        return signers[ecrecover(digest, v, r, s)];
+        address signer = ecrecover(digest, v, r, s);
+        return signers[signer] && signer != address(0);
     }
 
     function _splitId(uint256 id) internal pure returns (uint96 allocatorId_, address token_) {

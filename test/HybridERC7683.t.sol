@@ -29,8 +29,6 @@ import {IHybridERC7683} from 'src/interfaces/IHybridERC7683.sol';
 
 import {ERC20Mock} from 'src/test/ERC20Mock.sol';
 
-import {console} from 'forge-std/console.sol';
-
 abstract contract MocksSetup is Test, TestHelper {
     address user;
     uint256 userPK;
@@ -462,6 +460,48 @@ contract HybridERC7683_open is OnChainCrossChainOrderData {
         hybridERC7683Allocator.open(onChainCrossChainOrder_);
     }
 
+    function test_revert_ManipulatedOrderData() public {
+        // Deposit tokens
+        vm.startPrank(user);
+        usdc.mint(user, defaultAmount);
+        usdc.approve(address(compactContract), defaultAmount);
+        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
+
+        // register a claim
+        BatchCompact memory compact_ = _getCompact();
+        Mandate memory mandate_ = _getMandate();
+
+        bytes32 claimHash = _hashCompact(compact_, mandate_);
+        bytes32 typeHash = _getTypeHash();
+        compactContract.register(claimHash, typeHash);
+
+        vm.stopPrank();
+
+        (IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_) = _getOnChainCrossChainOrder();
+
+        // Manipulate the order data
+        uint256 outOfBounds = type(uint256).max; // uint256(type(uint64).max) + 1;
+
+        bytes memory callData = abi.encodeWithSelector(IOriginSettler.open.selector, onChainCrossChainOrder_);
+        // 0x00 selector
+        // 0x24 OnchainCrossChainOrder.offset
+        // 0x44 OnchainCrossChainOrder.fillDeadline
+        // 0x64 OnchainCrossChainOrder.orderDataType
+        // 0x84 OnchainCrossChainOrder.orderData.offset
+        // 0xa4 OnchainCrossChainOrder.orderData.length
+        // 0xc4 OnchainCrossChainOrder.OrderDataOnChain.offset
+        // 0xe4 OnchainCrossChainOrder.OrderDataOnChain.Order.offset
+
+        assembly ("memory-safe") {
+            mstore(add(callData, 0xe4), outOfBounds)
+        }
+
+        vm.prank(user);
+        (bool success, bytes memory returnData) = address(hybridERC7683Allocator).call(callData);
+        assertEq(success, false);
+        assertEq(returnData.length, 0);
+    }
+
     function test_orderDataType() public view {
         assertEq(hybridERC7683Allocator.ORDERDATA_GASLESS_TYPEHASH(), ORDERDATA_GASLESS_TYPEHASH);
     }
@@ -763,8 +803,6 @@ contract HybridERC7683_authorizeClaim is OnChainCrossChainOrderData, GaslessCros
         );
         bytes32 digest =
             keccak256(abi.encodePacked(bytes2(0x1901), compactContract.DOMAIN_SEPARATOR(), qualifiedClaimHash));
-        console.log('digest');
-        console.logBytes32(digest);
 
         // Sign with wrong signer
         bytes memory allocatorSignature = _signMessage(digest, signerPK);
@@ -819,8 +857,6 @@ contract HybridERC7683_authorizeClaim is OnChainCrossChainOrderData, GaslessCros
         );
         bytes32 digest =
             keccak256(abi.encodePacked(bytes2(0x1901), compactContract.DOMAIN_SEPARATOR(), qualifiedClaimHash));
-        console.log('digest');
-        console.logBytes32(digest);
 
         // Sign with wrong signer
         bytes memory allocatorSignature = _signMessage(digest, attackerPK);
@@ -876,8 +912,6 @@ contract HybridERC7683_authorizeClaim is OnChainCrossChainOrderData, GaslessCros
         );
         bytes32 digest =
             keccak256(abi.encodePacked(bytes2(0x1901), compactContract.DOMAIN_SEPARATOR(), qualifiedClaimHash));
-        console.log('digest');
-        console.logBytes32(digest);
 
         // Sign with wrong signer
         bytes memory allocatorSignature = _signMessage(digest, signerPK);
