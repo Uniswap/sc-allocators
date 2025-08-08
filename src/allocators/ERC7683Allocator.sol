@@ -12,6 +12,10 @@ import {LibBytes} from '@solady/utils/LibBytes.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {BatchCompact, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
+/// @title ERC7683Allocator
+/// @notice Allocates tokens deposited into the compact and broadcasts orders following the ERC7683 standard.
+/// @dev The contract ensures tokens can not be double spent by a user in a fully decentralized manner.
+/// @dev Users can open orders for themselves or for others by providing a signature or the tokens directly.
 contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
     /// @notice The typehash of the OrderDataOnChain struct
     //          keccak256("OrderDataOnChain(Order order,uint256 expires)
@@ -54,6 +58,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
 
         // Decode the orderData
         (Order calldata orderData, uint32 deposit) = _decodeOrderData(order_.orderData);
+        deposit = _sanitize(deposit);
 
         uint160 caller = uint160(deposit * uint160(msg.sender)); // for a deposit, the nonce will be scoped to the caller + user
         bytes32 nonceIdentifier = _toNonceId(address(caller), order_.user);
@@ -93,6 +98,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
 
         // Decode the orderData
         (Order calldata orderData, uint32 expires) = _decodeOrderData(order.orderData);
+        expires = _sanitize(expires);
 
         bytes32 mandateHash = _mandateHash(orderData, order.fillDeadline);
 
@@ -125,6 +131,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
 
         // Decode the orderData
         (Order calldata orderData, uint32 deposit) = _decodeOrderData(order_.orderData);
+        deposit = _sanitize(deposit);
 
         uint160 caller = uint160(deposit * uint160(msg.sender)); // for a deposit, the nonce will be scoped to the caller + user
         bytes32 nonceIdentifier = _toNonceId(address(caller), order_.user);
@@ -156,6 +163,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
 
         // Decode the orderData
         (Order calldata orderData, uint32 expires) = _decodeOrderData(order.orderData);
+        expires = _sanitize(expires);
 
         return _resolveOrder(
             msg.sender,
@@ -219,6 +227,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         returns (bool nonceValid)
     {
         (, uint32 deposit) = _decodeOrderData(order_.orderData);
+        deposit = _sanitize(deposit);
 
         caller = address(uint160(deposit * uint160(caller))); // for a deposit, the nonce will be scoped to the caller + user
         bytes32 nonceIdentifier = _toNonceId(caller, order_.user);
@@ -413,5 +422,19 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         assembly ("memory-safe") {
             output_ := shr(96, shl(96, address_))
         }
+    }
+
+    function _sanitize(uint32 value) internal pure returns (uint32) {
+        assembly ("memory-safe") {
+            value := shr(224, shl(224, value))
+        }
+        return value;
+    }
+
+    function _sanitize(bool value) internal pure returns (bool) {
+        assembly ("memory-safe") {
+            value := iszero(iszero(value))
+        }
+        return value;
     }
 }
