@@ -1,9 +1,9 @@
 {
-    "allocateAndRegister_erc20Token": "185714",
-    "allocateAndRegister_erc20Token_emptyAmountInput": "186623",
-    "allocateAndRegister_multipleTokens": "220230",
-    "allocateAndRegister_nativeToken": "137229",
-    "allocateAndRegister_nativeToken_emptyAmountInput": "137065",
-    "allocateAndRegister_second_erc20Token": "112919",
-    "allocateAndRegister_second_nativeToken": "102865"
+    "allocateAndRegister_erc20Token": "187766",
+    "allocateAndRegister_erc20Token_emptyAmountInput": "188676",
+    "allocateAndRegister_multipleTokens": "223672",
+    "allocateAndRegister_nativeToken": "139305",
+    "allocateAndRegister_nativeToken_emptyAmountInput": "139141",
+    "allocateAndRegister_second_erc20Token": "114972",
+    "allocateAndRegister_second_nativeToken": "104941"
 }

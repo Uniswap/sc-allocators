@@ -304,7 +304,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         vm.prank(user);
         vm.expectEmit(true, true, true, true);
-        emit IOnChainAllocator.AllocationRegistered(user, claimHash, 1, defaultExpiration, commitments);
+        emit IOnChainAllocator.Allocated(user, commitments, 1, defaultExpiration, claimHash);
         (bytes32 returnedClaimHash, uint256 nonce) =
             allocator.allocate(commitments, arbiter, defaultExpiration, typehash, witness);
 
@@ -336,7 +336,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
             // expect a successful second allocation
             claimHash = _createClaimHash(user, arbiter, 2, defaultExpiration, commitments, witness);
             vm.expectEmit(true, true, true, true);
-            emit IOnChainAllocator.AllocationRegistered(user, claimHash, 2, defaultExpiration, commitments);
+            emit IOnChainAllocator.Allocated(user, commitments, 2, defaultExpiration, claimHash);
         }
         (claimHash, nonce) = allocator.allocate(commitments, arbiter, defaultExpiration, typehash, witness);
 
