@@ -3,6 +3,8 @@
 pragma solidity ^0.8.27;
 
 import {IOnChainAllocator} from '../interfaces/IOnChainAllocator.sol';
+
+import {AllocatorLib as AL} from './lib/AllocatorLib.sol';
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import {ERC6909} from '@solady/tokens/ERC6909.sol';
 import {SafeTransferLib} from '@solady/utils/SafeTransferLib.sol';
@@ -18,8 +20,6 @@ contract OnChainAllocator is IOnChainAllocator {
     address public immutable COMPACT_CONTRACT;
     bytes32 public immutable COMPACT_DOMAIN_SEPARATOR;
     uint96 public immutable ALLOCATOR_ID;
-    // bytes4(keccak256('prepareAllocation(address,uint256[2][],address,uint256,bytes32,bytes32,bytes)'));
-    bytes4 public constant PREPARE_ALLOCATION_SELECTOR = 0x7ef6597a;
 
     mapping(bytes32 tokenHash => Allocation[] allocations) internal _allocations;
 
@@ -65,7 +65,7 @@ contract OnChainAllocator is IOnChainAllocator {
         if (signature.length > 0) {
             // confirm the provided signature is valid
             bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), COMPACT_DOMAIN_SEPARATOR, claimHash));
-            address signer_ = _recoverSigner(digest, signature);
+            address signer_ = AL.recoverSigner(digest, signature);
             if (sponsor != signer_ || signer_ == address(0)) {
                 revert InvalidSignature(signer_, sponsor);
             }
@@ -88,19 +88,22 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes32 witness
     ) public returns (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce) {
         nonce = ++nonces[_toNonceId(msg.sender, recipient)]; // prevents griefing of frontrunning nonces
+
         uint256[2][] memory idsAndAmounts = new uint256[2][](commitments.length);
+
         uint256 minResetPeriod = type(uint256).max;
         for (uint256 i = 0; i < commitments.length; i++) {
             minResetPeriod = _checkInput(commitments[i], recipient, expires, minResetPeriod);
-
-            // Store the allocation
-            idsAndAmounts[i][0] = _toId(commitments[i].lockTag, commitments[i].token);
+            idsAndAmounts[i][0] = AL.toId(commitments[i].lockTag, commitments[i].token);
             uint224 amount = uint224(commitments[i].amount);
+
+            // If the amount is 0, we use the balance of the contract to deposit.
             if (amount == 0) {
                 amount = uint224(IERC20(commitments[i].token).balanceOf(address(this)));
             }
             idsAndAmounts[i][1] = amount;
 
+            // Approve the compact contract to spend the tokens.
             if (IERC20(commitments[i].token).allowance(address(this), COMPACT_CONTRACT) < amount) {
                 SafeTransferLib.safeApproveWithRetry(commitments[i].token, COMPACT_CONTRACT, type(uint256).max);
             }
@@ -110,27 +113,38 @@ contract OnChainAllocator is IOnChainAllocator {
             revert InvalidExpiration(expires, block.timestamp + minResetPeriod);
         }
 
+        // Deposit the tokens and register the claim in the compact
         (claimHash, registeredAmounts) = ITheCompact(COMPACT_CONTRACT).batchDepositAndRegisterFor(
             recipient, idsAndAmounts, arbiter, nonce, expires, typehash, witness
         );
 
-        Lock[] memory registeredCommitments = commitments;
-
-        // Store the allocation
-        for (uint256 i = 0; i < registeredAmounts.length; i++) {
-            bytes32 tokenHash = _getTokenHash(commitments[i], recipient);
-
-            Allocation memory allocation =
-                Allocation({expires: expires, amount: uint224(registeredAmounts[i]), claimHash: claimHash});
-            _allocations[tokenHash].push(allocation);
-
-            // Update the allocations with the actual registered amounts
-            registeredCommitments[i].amount = registeredAmounts[i];
-        }
+        // Update the commitments and store the allocation
+        Lock[] memory registeredCommitments =
+            _updateCommitmentsAndStoreAllocation(recipient, registeredAmounts, commitments, expires, claimHash);
 
         emit Allocated(recipient, registeredCommitments, nonce, expires, claimHash);
 
         return (claimHash, registeredAmounts, nonce);
+    }
+
+    function _updateCommitmentsAndStoreAllocation(
+        address recipient,
+        uint256[] memory registeredAmounts,
+        Lock[] memory commitments,
+        uint32 expires,
+        bytes32 claimHash
+    ) internal returns (Lock[] memory) {
+        // Store the allocation
+        for (uint256 i = 0; i < registeredAmounts.length; i++) {
+            // Update the allocations with the actual registered amounts
+            uint224 amount = uint224(registeredAmounts[i]);
+            commitments[i].amount = amount;
+
+            // Store the allocation
+            _storeAllocation(commitments[i].lockTag, commitments[i].token, amount, recipient, expires, claimHash);
+        }
+
+        return commitments;
     }
 
     function prepareAllocation(
@@ -142,29 +156,9 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes32 witness,
         bytes calldata /* orderData */
     ) external returns (uint256 nonce) {
-        uint256[] memory ids = new uint256[](idsAndAmounts.length);
-        for (uint256 i = 0; i < idsAndAmounts.length; i++) {
-            uint256 id = idsAndAmounts[i][0];
-            ids[i] = id;
-            uint256 currentBalance = ERC6909(COMPACT_CONTRACT).balanceOf(recipient, id);
-            assembly ("memory-safe") {
-                tstore(or(PREPARE_ALLOCATION_SELECTOR, id), currentBalance)
-            }
-
-            // Check the amount fits in the supported range
-            if (idsAndAmounts[i][1] > type(uint224).max) {
-                revert InvalidAmount(idsAndAmounts[i][1]);
-            }
-        }
-
-        // Store the nonce for the identifier to ensure the same data is used in `executeAllocation` and protect against replay attacks
-        bytes32 identifier = keccak256(
-            abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, uint32(expires), typehash, witness)
-        );
-        nonce = nonces[_toNonceId(msg.sender, recipient)] + 1;
-        assembly ("memory-safe") {
-            tstore(identifier, nonce)
-        }
+        bytes32 nonceId = _toNonceId(msg.sender, recipient);
+        nonce = nonces[nonceId] + 1;
+        AL.prepareAllocation(COMPACT_CONTRACT, nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
 
         return nonce;
     }
@@ -178,67 +172,45 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes32 witness,
         bytes calldata /* orderData */
     ) external {
-        uint256[] memory ids = new uint256[](idsAndAmounts.length);
-        Lock[] memory commitments = new Lock[](idsAndAmounts.length);
-        bytes32[] memory commitmentHashes = new bytes32[](idsAndAmounts.length);
-        expires = uint32(expires);
+        uint256 nonce = ++nonces[_toNonceId(msg.sender, recipient)];
+        uint32 expiration = uint32(expires);
 
-        // Check actual balance changes
-        for (uint256 i = 0; i < idsAndAmounts.length; i++) {
-            uint256 id = idsAndAmounts[i][0];
-            ids[i] = id;
-            uint256 oldBalance;
-            assembly ("memory-safe") {
-                oldBalance := tload(or(PREPARE_ALLOCATION_SELECTOR, id))
-                tstore(or(PREPARE_ALLOCATION_SELECTOR, id), 0)
-            }
-            uint256 newBalance = ERC6909(COMPACT_CONTRACT).balanceOf(recipient, id);
-            if (newBalance <= oldBalance) {
-                revert InsufficientBalance(recipient, id, newBalance, oldBalance + 1);
-            }
-            uint256 amount = newBalance - oldBalance;
+        (bytes32 claimHash, Lock[] memory commitments) =
+            _executeAllocation(nonce, recipient, idsAndAmounts, arbiter, expiration, typehash, witness);
 
-            // Check the amount fits in the supported range
-            if (amount > type(uint224).max) {
-                revert InvalidAmount(amount);
-            }
+        emit Allocated(recipient, commitments, nonce, expiration, claimHash);
+    }
 
-            // Create commitments
-            bytes12 lockTag = bytes12(bytes32(id));
-            address token = address(uint160(id));
-            commitmentHashes[i] = keccak256(abi.encode(LOCK_TYPEHASH, lockTag, token, amount));
-            commitments[i] = Lock({lockTag: lockTag, token: token, amount: amount});
-        }
-
-        // Check preparation was called with the same data
-        bytes32 identifier =
-            keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));
-        uint256 nonce;
-        assembly ("memory-safe") {
-            nonce := tload(identifier)
-            tstore(identifier, 0)
-        }
-        if (nonce != ++nonces[_toNonceId(msg.sender, recipient)]) {
-            revert InvalidPreparation();
-        }
-
-        // Check for a valid registration with the actual data
-        bytes32 claimHash = _getClaimHash(
-            arbiter, recipient, nonce, expires, keccak256(abi.encodePacked(commitmentHashes)), witness, typehash
-        );
-        if (!ITheCompact(COMPACT_CONTRACT).isRegistered(recipient, claimHash, typehash)) {
-            revert InvalidRegistration(recipient, claimHash);
-        }
+    function _executeAllocation(
+        uint256 nonce,
+        address recipient,
+        uint256[2][] calldata idsAndAmounts,
+        address arbiter,
+        uint32 expires,
+        bytes32 typehash,
+        bytes32 witness
+    ) internal returns (bytes32, Lock[] memory) {
+        (bytes32 claimHash, Lock[] memory commitments) =
+            AL.executeAllocation(COMPACT_CONTRACT, nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
 
         // Allocate the claim
-        for (uint256 i = 0; i < idsAndAmounts.length; i++) {
-            bytes32 tokenHash = _getTokenHash(idsAndAmounts[i][0], recipient);
-            Allocation memory allocation =
-                Allocation({expires: uint32(expires), amount: uint224(commitments[i].amount), claimHash: claimHash});
-            _allocations[tokenHash].push(allocation);
+        for (uint256 i = 0; i < commitments.length; i++) {
+            // Check the amount fits in the supported range
+            if (commitments[i].amount > type(uint224).max) {
+                revert InvalidAmount(commitments[i].amount);
+            }
+
+            _storeAllocation(
+                commitments[i].lockTag,
+                commitments[i].token,
+                uint224(commitments[i].amount),
+                recipient,
+                expires,
+                claimHash
+            );
         }
 
-        emit Allocated(recipient, commitments, nonce, expires, claimHash);
+        return (claimHash, commitments);
     }
 
     /// @inheritdoc IAllocator
@@ -322,8 +294,8 @@ contract OnChainAllocator is IOnChainAllocator {
         }
 
         nonce = ++nonces[_toNonceId(address(0), sponsor)]; // address(0) as caller allows anyone to relay
-        bytes32 commitmentsHash = _getCommitmentsHash(commitments);
-        claimHash = _getClaimHash(arbiter, sponsor, nonce, expires, commitmentsHash, witness, typehash);
+        bytes32 commitmentsHash = AL.getCommitmentsHash(commitments);
+        claimHash = AL.getClaimHash(arbiter, sponsor, nonce, expires, commitmentsHash, witness, typehash);
 
         uint256 minResetPeriod = type(uint256).max;
         for (uint256 i = 0; i < commitments.length; i++) {
@@ -332,8 +304,7 @@ contract OnChainAllocator is IOnChainAllocator {
 
             // Store the allocation
             uint224 amount = uint224(commitments[i].amount);
-            Allocation memory allocation = Allocation({expires: expires, amount: amount, claimHash: claimHash});
-            _allocations[tokenHash].push(allocation);
+            _storeAllocation(tokenHash, amount, expires, claimHash);
         }
         // Ensure expiration is not bigger then the smallest reset period
         if (expires >= block.timestamp + minResetPeriod) {
@@ -349,8 +320,8 @@ contract OnChainAllocator is IOnChainAllocator {
         returns (uint256)
     {
         // Check the allocator id fits this allocator
-        if (_splitAllocatorId(commitment.lockTag) != ALLOCATOR_ID) {
-            revert InvalidAllocator(_splitAllocatorId(commitment.lockTag), ALLOCATOR_ID);
+        if (AL.splitAllocatorId(commitment.lockTag) != ALLOCATOR_ID) {
+            revert InvalidAllocator(AL.splitAllocatorId(commitment.lockTag), ALLOCATOR_ID);
         }
 
         // Check the amount fits in the supported range
@@ -359,14 +330,14 @@ contract OnChainAllocator is IOnChainAllocator {
         }
 
         // Get the reset period for the token id
-        uint256 duration = _toSeconds(commitment.lockTag);
+        uint256 duration = AL.toSeconds(commitment.lockTag);
         if (duration < minResetPeriod) {
             minResetPeriod = duration;
         }
 
         // Ensure no forcedWithdrawal is active for the token id
         (, uint256 forcedWithdrawal) = ITheCompact(COMPACT_CONTRACT).getForcedWithdrawalStatus(
-            sponsor, _toId(commitment.lockTag, commitment.token)
+            sponsor, AL.toId(commitment.lockTag, commitment.token)
         );
         if (forcedWithdrawal != 0 && forcedWithdrawal <= expires) {
             revert ForceWithdrawalAvailable(expires, forcedWithdrawal);
@@ -377,15 +348,32 @@ contract OnChainAllocator is IOnChainAllocator {
 
     function _checkBalance(address sponsor, Lock calldata commitment) internal returns (bytes32 tokenHash) {
         // Check the balance of the recipient is sufficient
-        tokenHash = _getTokenHash(commitment, sponsor);
-        uint256 balance = ERC6909(COMPACT_CONTRACT).balanceOf(sponsor, _toId(commitment.lockTag, commitment.token));
+        tokenHash = _getTokenHash(commitment.lockTag, commitment.token, sponsor);
+        uint256 balance = ERC6909(COMPACT_CONTRACT).balanceOf(sponsor, AL.toId(commitment.lockTag, commitment.token));
         uint256 allocatedBalance = _allocatedBalance(tokenHash);
         uint256 requiredBalance = allocatedBalance + commitment.amount;
         if (requiredBalance > balance) {
             revert InsufficientBalance(
-                sponsor, _toId(commitment.lockTag, commitment.token), balance - allocatedBalance, commitment.amount
+                sponsor, AL.toId(commitment.lockTag, commitment.token), balance - allocatedBalance, commitment.amount
             );
         }
+    }
+
+    function _storeAllocation(
+        bytes12 lockTag,
+        address token,
+        uint224 amount,
+        address recipient,
+        uint32 expires,
+        bytes32 claimHash
+    ) internal {
+        bytes32 tokenHash = _getTokenHash(lockTag, token, recipient);
+        _storeAllocation(tokenHash, amount, expires, claimHash);
+    }
+
+    function _storeAllocation(bytes32 tokenHash, uint224 amount, uint32 expires, bytes32 claimHash) internal {
+        Allocation memory allocation = Allocation({expires: expires, amount: amount, claimHash: claimHash});
+        _allocations[tokenHash].push(allocation);
     }
 
     function _allocatedBalance(bytes32 tokenHash) internal returns (uint256 allocatedBalance) {
@@ -477,40 +465,10 @@ contract OnChainAllocator is IOnChainAllocator {
         }
     }
 
-    function _recoverSigner(bytes32 digest, bytes calldata signature) internal pure returns (address) {
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-
-        if (signature.length == 65) {
-            (r, s) = abi.decode(signature, (bytes32, bytes32));
-            v = uint8(signature[64]);
-        } else if (signature.length == 64) {
-            bytes32 vs;
-            (r, vs) = abi.decode(signature, (bytes32, bytes32));
-            v = uint8(uint256(vs >> 255) + 27);
-            s = vs << 1 >> 1;
-        } else {
-            return address(0);
-        }
-
-        return ecrecover(digest, v, r, s);
-    }
-
-    function _getCommitmentsHash(Lock[] memory commitments) internal pure returns (bytes32) {
-        bytes32[] memory commitmentsHashes = new bytes32[](commitments.length);
-        for (uint256 i = 0; i < commitments.length; i++) {
-            commitmentsHashes[i] = keccak256(
-                abi.encode(LOCK_TYPEHASH, commitments[i].lockTag, commitments[i].token, commitments[i].amount)
-            );
-        }
-        return keccak256(abi.encodePacked(commitmentsHashes));
-    }
-
-    function _getTokenHash(Lock calldata commitment, address sponsor) internal pure returns (bytes32 tokenHash) {
+    function _getTokenHash(bytes12 lockTag, address token, address sponsor) internal pure returns (bytes32 tokenHash) {
         assembly ("memory-safe") {
-            mstore(0x00, calldataload(commitment))
-            mstore(0x0c, shl(96, calldataload(add(commitment, 0x20))))
+            mstore(0x00, lockTag)
+            mstore(0x0c, shl(96, token))
             mstore(0x20, sponsor)
             tokenHash := keccak256(0x00, 0x40)
         }
@@ -520,57 +478,7 @@ contract OnChainAllocator is IOnChainAllocator {
         tokenHash = keccak256(abi.encode(id, sponsor));
     }
 
-    function _splitAllocatorId(bytes12 lockTag) internal pure returns (uint96) {
-        uint96 allocatorId_;
-        assembly ("memory-safe") {
-            allocatorId_ := shr(164, shl(4, lockTag))
-        }
-        return allocatorId_;
-    }
-
-    function _toId(bytes12 lockTag, address token) internal pure returns (uint256 id) {
-        assembly ("memory-safe") {
-            id := or(lockTag, token)
-        }
-    }
-
     function _toNonceId(address caller, address sponsor) internal pure returns (bytes32 nonce) {
         return keccak256(abi.encode(caller, sponsor));
-    }
-
-    function _toSeconds(bytes12 lockTag) internal pure returns (uint256 duration) {
-        assembly ("memory-safe") {
-            let resetPeriod := shr(253, shl(1, lockTag))
-
-            // Bitpacked durations in 24-bit segments:
-            // 278d00  094890  015180  000f3c  000258  00003c  00000f  000001
-            // 30 days 7 days  1 day   1 hour  10 min  1 min   15 sec  1 sec
-            let bitpacked := 0x278d00094890015180000f3c00025800003c00000f000001
-
-            // Shift right by period * 24 bits & mask the least significant 24 bits.
-            duration := and(shr(mul(resetPeriod, 24), bitpacked), 0xffffff)
-        }
-    }
-
-    function _getClaimHash(
-        address arbiter,
-        address sponsor,
-        uint256 nonce,
-        uint256 expires,
-        bytes32 commitmentsHash,
-        bytes32 witness,
-        bytes32 typehash
-    ) internal pure returns (bytes32 claimHash) {
-        assembly ("memory-safe") {
-            let m := mload(0x40)
-            mstore(m, typehash)
-            mstore(add(m, 0x20), arbiter)
-            mstore(add(m, 0x40), sponsor)
-            mstore(add(m, 0x60), nonce)
-            mstore(add(m, 0x80), expires)
-            mstore(add(m, 0xa0), commitmentsHash)
-            mstore(add(m, 0xc0), witness)
-            claimHash := keccak256(m, sub(0xe0, mul(iszero(witness), 0x20)))
-        }
     }
 }

@@ -14,9 +14,12 @@ import {Scope} from '@uniswap/the-compact/types/Scope.sol';
 
 import {Test} from 'forge-std/Test.sol';
 import {HybridAllocator} from 'src/allocators/HybridAllocator.sol';
+
+import {AllocatorLib} from 'src/allocators/lib/AllocatorLib.sol';
 import {BATCH_COMPACT_WITNESS_TYPEHASH} from 'src/allocators/lib/TypeHashes.sol';
 import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 import {ERC20Mock} from 'src/test/ERC20Mock.sol';
+import {OnChainAllocationCaller} from 'src/test/OnChainAllocationCaller.sol';
 
 contract HybridAllocatorTest is Test, TestHelper {
     TheCompact compact;
@@ -29,6 +32,8 @@ contract HybridAllocatorTest is Test, TestHelper {
     uint256 userPrivateKey;
     uint256 defaultAmount;
     uint256 defaultExpiration;
+
+    OnChainAllocationCaller allocationCaller;
 
     BatchCompact batchCompact;
 
@@ -44,10 +49,30 @@ contract HybridAllocatorTest is Test, TestHelper {
         defaultAmount = 1 ether;
         defaultExpiration = vm.getBlockTimestamp() + 1 days;
 
+        allocationCaller = new OnChainAllocationCaller(address(allocator), address(compact));
+
         batchCompact.arbiter = arbiter;
         batchCompact.sponsor = user;
         batchCompact.nonce = 1;
         batchCompact.expires = defaultExpiration;
+    }
+
+    function _idsAndAmounts(address token, uint256 amount) internal view returns (uint256[2][] memory arr) {
+        arr = new uint256[2][](1);
+        arr[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), token);
+        arr[0][1] = amount;
+    }
+
+    function _idsAndAmounts2(address tokenA, uint256 amountA, address tokenB, uint256 amountB)
+        internal
+        view
+        returns (uint256[2][] memory arr)
+    {
+        arr = new uint256[2][](2);
+        arr[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), tokenA);
+        arr[0][1] = amountA;
+        arr[1][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), tokenB);
+        arr[1][1] = amountB;
     }
 
     function test_constructor_revert_signerIsAddressZero() public {
@@ -72,6 +97,132 @@ contract HybridAllocatorTest is Test, TestHelper {
 
         assertTrue(allocator.signers(signer));
         assertFalse(allocator.signers(attacker));
+    }
+
+    function test_prepareAllocation_returnsNonce_andDoesNotIncrement() public {
+        uint256[2][] memory idsAndAmounts = _idsAndAmounts(address(usdc), defaultAmount);
+        uint96 beforeNonces = allocator.nonces();
+        // call prepare directly
+        uint256 returnedNonce = allocator.prepareAllocation(
+            user, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+        assertEq(returnedNonce, uint256(beforeNonces) + 1);
+        // storage not incremented yet
+        assertEq(allocator.nonces(), beforeNonces);
+    }
+
+    function test_executeAllocation_success_viaCaller_singleERC20() public {
+        uint256 amount = defaultAmount;
+        uint256[2][] memory idsAndAmounts = _idsAndAmounts(address(usdc), amount);
+        // fund caller and approve
+        usdc.mint(address(allocationCaller), amount);
+        vm.prank(address(allocationCaller));
+        usdc.approve(address(compact), amount);
+
+        // run flow in one tx
+        vm.prank(user);
+        allocationCaller.onChainAllocation(
+            user, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, '', 0
+        );
+        vm.snapshotGasLastCall('hybrid_execute_single');
+
+        // nonces incremented
+        assertEq(allocator.nonces(), 1);
+
+        // derive claim hash and ensure isClaimAuthorized is true
+        Lock[] memory commitments = _idsAndAmountsToCommitments(idsAndAmounts);
+        bytes32 claimHash = _toBatchCompactHash(
+            BatchCompact({
+                arbiter: arbiter,
+                sponsor: user,
+                nonce: allocator.nonces(),
+                expires: defaultExpiration,
+                commitments: commitments
+            })
+        );
+        assertTrue(allocator.isClaimAuthorized(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
+    }
+
+    function test_executeAllocation_revert_InvalidPreparation() public {
+        uint256 amount = defaultAmount;
+        uint256[2][] memory idsAndAmounts = _idsAndAmounts(address(usdc), amount);
+        // fund caller and approve
+        usdc.mint(address(allocationCaller), amount);
+        vm.prank(address(allocationCaller));
+        usdc.approve(address(compact), amount);
+
+        // todo=2: deposit+register without prepare -> expect AllocatorLib.InvalidPreparation
+        vm.prank(user);
+        vm.expectRevert(AllocatorLib.InvalidPreparation.selector);
+        allocationCaller.onChainAllocation(
+            user, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, '', 2
+        );
+    }
+
+    function test_executeAllocation_revert_InvalidRegistration() public {
+        uint256 amount = defaultAmount;
+        uint256[2][] memory idsAndAmounts = _idsAndAmounts(address(usdc), amount);
+        // fund caller and approve
+        usdc.mint(address(allocationCaller), amount);
+        vm.prank(address(allocationCaller));
+        usdc.approve(address(compact), amount);
+
+        // Compute expected claim hash for the deposit-only path
+        Lock[] memory commitments = _idsAndAmountsToCommitments(idsAndAmounts);
+        uint256 expectedNonce = uint256(allocator.nonces()) + 1; // prepare will use this
+        bytes32 expectedClaimHash = _toBatchCompactHash(
+            BatchCompact({
+                arbiter: arbiter,
+                sponsor: user,
+                nonce: expectedNonce,
+                expires: defaultExpiration,
+                commitments: commitments
+            })
+        );
+
+        // todo=1: deposit only, no register -> AllocatorLib.InvalidRegistration
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                AllocatorLib.InvalidRegistration.selector, user, expectedClaimHash, BATCH_COMPACT_TYPEHASH
+            )
+        );
+        allocationCaller.onChainAllocation(
+            user, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, '', 1
+        );
+    }
+
+    function test_executeAllocation_revert_InvalidBalanceChange_noDeposit() public {
+        uint256 amount = defaultAmount;
+        uint256[2][] memory idsAndAmounts = _idsAndAmounts(address(usdc), amount);
+        // give user prior ERC6909 balance so (oldBalance > 0)
+        bytes12 lockTag = _toLockTag(address(allocator), Scope.Multichain, ResetPeriod.TenMinutes);
+        vm.startPrank(user);
+        usdc.mint(user, amount);
+        usdc.approve(address(compact), amount);
+        compact.depositERC20(address(usdc), lockTag, amount, user);
+        vm.stopPrank();
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSignature('InvalidBalanceChange(uint256,uint256)', amount, amount));
+        allocationCaller.onChainAllocation(
+            user, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, '', 3
+        );
+    }
+
+    function test_executeAllocation_revert_InvalidPreparation_replaySameTx() public {
+        uint256 amount = defaultAmount;
+        uint256[2][] memory idsAndAmounts = _idsAndAmounts(address(usdc), amount);
+        // fund caller and approve
+        usdc.mint(address(allocationCaller), amount);
+        vm.prank(address(allocationCaller));
+        usdc.approve(address(compact), amount);
+
+        vm.prank(user);
+        vm.expectRevert(AllocatorLib.InvalidPreparation.selector);
+        allocationCaller.onChainAllocation(
+            user, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, '', 4
+        );
     }
 
     function test_allocateAndRegister_revert_InvalidIds() public {

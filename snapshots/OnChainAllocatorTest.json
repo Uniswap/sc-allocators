@@ -1,7 +1,9 @@
 {
-    "allocateFor_success_withRegistration": "133866",
-    "allocate_and_delete_expired_allocation": "66034",
-    "allocate_erc20": "129305",
-    "allocate_native": "129065",
-    "allocate_second_erc20": "97317"
+    "allocateFor_success_withRegistration": "133994",
+    "allocate_and_delete_expired_allocation": "66140",
+    "allocate_erc20": "129411",
+    "allocate_native": "129171",
+    "allocate_second_erc20": "97423",
+    "onchain_execute_double": "347964",
+    "onchain_execute_single": "220065"
 }

@@ -26,6 +26,8 @@ import {ERC6909} from '@solady/tokens/ERC6909.sol';
 import {ResetPeriod} from '@uniswap/the-compact/types/ResetPeriod.sol';
 import {Scope} from '@uniswap/the-compact/types/Scope.sol';
 
+import {AllocatorLib} from 'src/allocators/lib/AllocatorLib.sol';
+import {OnChainAllocationCaller} from 'src/test/OnChainAllocationCaller.sol';
 import {TestHelper} from 'test/util/TestHelper.sol';
 
 contract OnChainAllocatorTest is Test, TestHelper {
@@ -43,6 +45,8 @@ contract OnChainAllocatorTest is Test, TestHelper {
     address internal caller;
     uint256 internal callerPK;
 
+    OnChainAllocationCaller internal allocationCaller;
+
     uint256 internal defaultAmount;
     uint32 internal defaultExpiration;
 
@@ -57,6 +61,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         recipient = makeAddr('recipient');
         (caller, callerPK) = makeAddrAndKey('caller');
+        allocationCaller = new OnChainAllocationCaller(address(allocator), address(compact));
         deal(user, 1 ether);
         usdc.mint(user, 1 ether);
 
@@ -778,6 +783,259 @@ contract OnChainAllocatorTest is Test, TestHelper {
         );
         allocator.allocateAndRegister(
             recipient, commitments, arbiter, uint32(expiration), BATCH_COMPACT_TYPEHASH, bytes32(0)
+        );
+    }
+
+    /* --------------------------------------------------------------------- */
+    /*                   prepareAllocation / executeAllocation               */
+    /* --------------------------------------------------------------------- */
+
+    function _idsAndAmountsFor(address token, uint256 amount)
+        internal
+        view
+        returns (uint256[2][] memory idsAndAmounts)
+    {
+        idsAndAmounts = new uint256[2][](1);
+        idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), token);
+        idsAndAmounts[0][1] = amount;
+    }
+
+    function _idsAndAmountsFor2(address tokenA, uint256 amountA, address tokenB, uint256 amountB)
+        internal
+        view
+        returns (uint256[2][] memory idsAndAmounts)
+    {
+        idsAndAmounts = new uint256[2][](2);
+        idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), tokenA);
+        idsAndAmounts[0][1] = amountA;
+        idsAndAmounts[1][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), tokenB);
+        idsAndAmounts[1][1] = amountB;
+    }
+
+    function test_prepareAllocation_returnsNonce_and_doesNotIncrementStorage() public {
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), defaultAmount);
+
+        // call from an arbitrary EOA (caller)
+        vm.prank(caller);
+        uint256 returnedNonce = allocator.prepareAllocation(
+            recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+
+        assertEq(returnedNonce, 1);
+        // storage nonce is only incremented in executeAllocation
+        bytes32 nonceKey = keccak256(abi.encode(caller, recipient));
+        assertEq(allocator.nonces(nonceKey), 0);
+    }
+
+    function test_executeAllocation_success_viaCaller_singleERC20() public {
+        uint256 amount = defaultAmount;
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), amount);
+
+        // fund and approve from allocationCaller
+        usdc.mint(address(allocationCaller), amount);
+        vm.prank(address(allocationCaller));
+        usdc.approve(address(compact), amount);
+
+        // run the whole flow in a single tx through the helper
+        vm.prank(user);
+        allocationCaller.onChainAllocation(
+            recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), 0
+        );
+        vm.snapshotGasLastCall('onchain_execute_single');
+
+        // nonce is scoped to (callerContract, recipient)
+        bytes32 nonceKey = keccak256(abi.encode(address(allocationCaller), recipient));
+        assertEq(allocator.nonces(nonceKey), 1);
+
+        // compute claim hash and check authorization
+        Lock[] memory commitments = _idsAndAmountsToCommitments(idsAndAmounts);
+        bytes32 claimHash = _createClaimHash(recipient, arbiter, 1, defaultExpiration, commitments, bytes32(0));
+
+        assertTrue(allocator.isClaimAuthorized(claimHash, arbiter, recipient, 1, defaultExpiration, idsAndAmounts, ''));
+    }
+
+    function test_executeAllocation_revert_InvalidPreparation() public {
+        uint256 amount = defaultAmount;
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), amount);
+
+        // fund and approve from allocationCaller
+        usdc.mint(address(allocationCaller), amount);
+        vm.prank(address(allocationCaller));
+        usdc.approve(address(compact), amount);
+
+        // todo = 2: deposit+register without prepareAllocation -> executeAllocation must revert InvalidPreparation
+        vm.prank(user);
+        vm.expectRevert(AllocatorLib.InvalidPreparation.selector);
+        allocationCaller.onChainAllocation(
+            recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), 2
+        );
+    }
+
+    function test_executeAllocation_revert_InvalidRegistration() public {
+        uint256 amount = defaultAmount;
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), amount);
+
+        // fund and approve from allocationCaller
+        usdc.mint(address(allocationCaller), amount);
+        vm.prank(address(allocationCaller));
+        usdc.approve(address(compact), amount);
+
+        // todo = 1: deposit only (no registration) -> executeAllocation must revert InvalidRegistration
+        // Expect the precise error and arguments from AllocatorLib
+        // Compute the claimHash that AllocatorLib will recompute during execute.
+        Lock[] memory commitments = _idsAndAmountsToCommitments(idsAndAmounts);
+        bytes32 expectedClaimHash = _createClaimHash(recipient, arbiter, 1, defaultExpiration, commitments, bytes32(0));
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                AllocatorLib.InvalidRegistration.selector, recipient, expectedClaimHash, BATCH_COMPACT_TYPEHASH
+            )
+        );
+        allocationCaller.onChainAllocation(
+            recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), 1
+        );
+    }
+
+    function test_executeAllocation_revert_InvalidBalanceChange_onZeroAmountSecondId() public {
+        uint256 amountA = defaultAmount;
+        uint256 amountB = 0; // no deposit for second id -> balance unchanged -> InvalidBalanceChange
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor2(address(usdc), amountA, address(dai), amountB);
+
+        // fund and approve only the first token
+        usdc.mint(address(allocationCaller), amountA);
+        vm.startPrank(address(allocationCaller));
+        usdc.approve(address(compact), amountA);
+        // approve DAI even if amount is zero to avoid allowance issues
+        dai.approve(address(compact), 0);
+        vm.stopPrank();
+
+        // Even though registration will succeed (with 0 for the second id), executeAllocation should revert
+        vm.prank(user);
+        // Revert happens inside TheCompact deposit logic before executeAllocation runs
+        // Use the selector for InvalidDepositBalanceChange()
+        vm.expectRevert(bytes4(keccak256('InvalidDepositBalanceChange()')));
+        allocationCaller.onChainAllocation(
+            recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), 0
+        );
+    }
+
+    function test_executeAllocation_success_twoIds() public {
+        uint256 amountA = defaultAmount;
+        uint256 amountB = defaultAmount / 2;
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor2(address(usdc), amountA, address(dai), amountB);
+
+        // fund & approve caller for both tokens
+        usdc.mint(address(allocationCaller), amountA);
+        dai.mint(address(allocationCaller), amountB);
+        vm.startPrank(address(allocationCaller));
+        usdc.approve(address(compact), amountA);
+        dai.approve(address(compact), amountB);
+        vm.stopPrank();
+
+        vm.prank(user);
+        allocationCaller.onChainAllocation(
+            recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), 0
+        );
+        vm.snapshotGasLastCall('onchain_execute_double');
+
+        // authorization with the measured amounts
+        bytes32 nonceKey = keccak256(abi.encode(address(allocationCaller), recipient));
+        uint256 nonce = allocator.nonces(nonceKey);
+        assertEq(nonce, 1);
+
+        assertTrue(
+            allocator.isClaimAuthorized(
+                _createClaimHash(
+                    recipient, arbiter, nonce, defaultExpiration, _idsAndAmountsToCommitments(idsAndAmounts), bytes32(0)
+                ),
+                arbiter,
+                recipient,
+                nonce,
+                defaultExpiration,
+                idsAndAmounts,
+                ''
+            )
+        );
+    }
+
+    function test_executeAllocation_revert_InvalidBalanceChange_noDeposit() public {
+        // Prepare only, no deposit → newBalance <= oldBalance → InvalidBalanceChange
+        uint256 amount = defaultAmount;
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), amount);
+
+        // Give recipient a prior ERC6909 balance so revert is not (0,0)
+        bytes12 lockTag = _toLockTag(address(allocator), Scope.Multichain, ResetPeriod.TenMinutes);
+        vm.startPrank(user);
+        usdc.mint(user, amount);
+        usdc.approve(address(compact), amount);
+        compact.depositERC20(address(usdc), lockTag, amount, recipient);
+        vm.stopPrank();
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSignature('InvalidBalanceChange(uint256,uint256)', amount, amount));
+        allocationCaller.onChainAllocation(
+            recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), 3
+        );
+    }
+
+    function test_executeAllocation_revert_InvalidPreparation_replaySameTx() public {
+        // First execute succeeds; second execute in same tx (without new prepare) must fail with InvalidPreparation
+        uint256 amount = defaultAmount;
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), amount);
+
+        // fund and approve caller for deposit
+        usdc.mint(address(allocationCaller), amount);
+        vm.prank(address(allocationCaller));
+        usdc.approve(address(compact), amount);
+
+        vm.prank(user);
+        vm.expectRevert(AllocatorLib.InvalidPreparation.selector);
+        // todo=4 triggers deposit+register + execute, then a second execute at function end
+        allocationCaller.onChainAllocation(
+            recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), 4
+        );
+    }
+
+    function test_executeAllocation_fullAllocation_preventsFurtherAllocate() public {
+        uint256 amount = defaultAmount;
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), amount);
+
+        // fund and approve caller for deposit
+        usdc.mint(address(allocationCaller), amount);
+        vm.prank(address(allocationCaller));
+        usdc.approve(address(compact), amount);
+
+        // perform correct prepare + deposit + register + execute
+        vm.prank(user);
+        allocationCaller.onChainAllocation(
+            recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), 0
+        );
+
+        // Now the whole balance is allocated for recipient; another allocate should fail
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(usdc), 1);
+
+        uint256 id = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
+
+        vm.prank(recipient);
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InsufficientBalance.selector, recipient, id, 0, 1));
+        allocator.allocate(commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0));
+    }
+
+    function test_executeAllocation_revert_InvalidAmount_largeDeposit() public {
+        // Deposit an amount > uint224.max so executeAllocation reverts on range check
+        uint256 largeAmount = uint256(type(uint224).max) + 1;
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), largeAmount);
+
+        // fund and approve caller for large amount
+        usdc.mint(address(allocationCaller), largeAmount);
+        vm.prank(address(allocationCaller));
+        usdc.approve(address(compact), largeAmount);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidAmount.selector, largeAmount));
+        allocationCaller.onChainAllocation(
+            recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), 0
         );
     }
 
