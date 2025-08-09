@@ -1119,7 +1119,7 @@ contract HybridERC7683_qualificationTypehash is MocksSetup {
 contract HybridERC7683_hybridAllocatorInheritance is MocksSetup {
     function test_inheritsHybridAllocatorFunctionality() public view {
         // Test that it properly inherits from HybridAllocator
-        assertEq(hybridERC7683Allocator.nonce(), 0);
+        assertEq(hybridERC7683Allocator.nonces(), 0);
         assertEq(hybridERC7683Allocator.signerCount(), 1);
         assertTrue(hybridERC7683Allocator.signers(signer));
         assertEq(hybridERC7683Allocator.ALLOCATOR_ID(), _toAllocatorId(address(hybridERC7683Allocator)));

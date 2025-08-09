@@ -49,15 +49,16 @@ interface IOnChainAllocator is IAllocator {
     /// @notice Thrown if the claim hash is not registered on the compact
     error InvalidRegistration(address sponsor, bytes32 claimHash);
 
-    /// @notice Emitted when a lock is successfully created
+    /// @notice Thrown if the preparation was not called within the same transaction or the data is not the same
+    error InvalidPreparation();
+
+    /// @notice Emitted when a tokens are successfully allocated
     /// @param sponsor The address of the sponsor
-    /// @param claimHash The hash of the claim
-    /// @param nonce The nonce of the claim
-    /// @param expires The expiration of the claim
     /// @param commitments The commitments of the allocations
-    event AllocationRegistered(
-        address indexed sponsor, bytes32 indexed claimHash, uint256 indexed nonce, uint256 expires, Lock[] commitments
-    );
+    /// @param nonce The nonce of the allocation
+    /// @param expires The expiration of the allocation
+    /// @param claimHash The hash of the allocation
+    event Allocated(address indexed sponsor, Lock[] commitments, uint256 nonce, uint256 expires, bytes32 claimHash);
 
     /// @notice Registers an allocation for a set of tokens
     /// @param commitments The commitments of the allocations

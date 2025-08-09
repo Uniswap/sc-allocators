@@ -3,9 +3,11 @@
 pragma solidity ^0.8.27;
 
 import {SafeTransferLib} from '@solady/utils/SafeTransferLib.sol';
-import {BatchCompact, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
+import {BatchCompact, LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
+
+import {ERC6909} from '@solady/tokens/ERC6909.sol';
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
@@ -14,11 +16,13 @@ contract HybridAllocator is IHybridAllocator {
     uint96 public immutable ALLOCATOR_ID;
     ITheCompact internal immutable _COMPACT;
     bytes32 internal immutable _COMPACT_DOMAIN_SEPARATOR;
+    // bytes4(keccak256('prepareAllocation(address,uint256[2][],address,uint256,bytes32,bytes32,bytes)'));
+    bytes4 public constant PREPARE_ALLOCATION_SELECTOR = 0x7ef6597a;
 
     mapping(bytes32 => bool) internal claims;
 
     /// @dev The off chain allocator must use a uint256 nonce where the first 160 bits are the sponsors address to ensure no nonce collisions
-    uint96 public nonce;
+    uint96 public nonces;
     uint256 public signerCount;
     mapping(address => bool) public signers;
 
@@ -89,15 +93,119 @@ contract HybridAllocator is IHybridAllocator {
         idsAndAmounts = _actualIdsAndAmounts(idsAndAmounts);
 
         (bytes32 claimHash, uint256[] memory registeredAmounts) = _COMPACT.batchDepositAndRegisterFor{value: msg.value}(
-            recipient, idsAndAmounts, arbiter, ++nonce, expires, typehash, witness
+            recipient, idsAndAmounts, arbiter, ++nonces, expires, typehash, witness
         );
+
+        Lock[] memory commitments = new Lock[](idsAndAmounts.length);
+        for (uint256 i = 0; i < idsAndAmounts.length; i++) {
+            commitments[i] = Lock({
+                lockTag: bytes12(bytes32(idsAndAmounts[i][0])),
+                token: address(uint160(idsAndAmounts[i][0])),
+                amount: registeredAmounts[i]
+            });
+        }
 
         // Allocate the claim
         claims[claimHash] = true;
 
-        emit ClaimRegistered(recipient, registeredAmounts, nonce, claimHash);
+        emit Allocated(recipient, commitments, nonces, expires, claimHash);
 
-        return (claimHash, registeredAmounts, nonce);
+        return (claimHash, registeredAmounts, nonces);
+    }
+
+    function prepareAllocation(
+        address recipient,
+        uint256[2][] calldata idsAndAmounts,
+        address arbiter,
+        uint256 expires,
+        bytes32 typehash,
+        bytes32 witness,
+        bytes calldata /* orderData */
+    ) external returns (uint256 nonce) {
+        uint256[] memory ids = new uint256[](idsAndAmounts.length);
+        for (uint256 i = 0; i < idsAndAmounts.length; i++) {
+            uint256 id = idsAndAmounts[i][0];
+            // Store Id for the identifier
+            ids[i] = id;
+
+            // Store the current balance to calculate the deposited amounts in `executeAllocation`
+            uint256 currentBalance = ERC6909(address(_COMPACT)).balanceOf(recipient, id);
+            assembly ("memory-safe") {
+                tstore(or(PREPARE_ALLOCATION_SELECTOR, id), currentBalance)
+            }
+        }
+
+        // Store the nonce for the identifier to ensure the same data is used in `executeAllocation`
+        bytes32 identifier =
+            keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));
+        nonce = nonces + 1;
+        assembly ("memory-safe") {
+            tstore(identifier, nonce)
+        }
+
+        return nonce;
+    }
+
+    function executeAllocation(
+        address recipient,
+        uint256[2][] calldata idsAndAmounts,
+        address arbiter,
+        uint256 expires,
+        bytes32 typehash,
+        bytes32 witness,
+        bytes calldata /* orderData */
+    ) external {
+        uint256[] memory ids = new uint256[](idsAndAmounts.length);
+        Lock[] memory commitments = new Lock[](idsAndAmounts.length);
+        bytes32[] memory commitmentHashes = new bytes32[](idsAndAmounts.length);
+
+        // Check actual balance changes
+        for (uint256 i = 0; i < idsAndAmounts.length; i++) {
+            uint256 id = idsAndAmounts[i][0];
+            // Store Id for the identifier
+            ids[i] = id;
+
+            // calculate Balance
+            uint256 oldBalance;
+            assembly ("memory-safe") {
+                oldBalance := tload(or(PREPARE_ALLOCATION_SELECTOR, id))
+            }
+            uint256 newBalance = ERC6909(address(_COMPACT)).balanceOf(recipient, id);
+            if (newBalance <= oldBalance) {
+                revert InvalidValue(newBalance, oldBalance + 1);
+            }
+
+            // Create commitments
+            bytes12 lockTag = bytes12(bytes32(id));
+            address token = address(uint160(id));
+            uint256 amount = newBalance - oldBalance;
+            commitmentHashes[i] = keccak256(abi.encode(LOCK_TYPEHASH, lockTag, token, amount));
+            commitments[i] = Lock({lockTag: lockTag, token: token, amount: amount});
+        }
+
+        // Ensure preparation was called with the same data
+        bytes32 identifier =
+            keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));
+        uint256 nonce;
+        assembly ("memory-safe") {
+            nonce := tload(identifier)
+        }
+        if (nonce != ++nonces) {
+            revert InvalidPreparation();
+        }
+
+        // Check for a valid registration with the actual data
+        bytes32 claimHash = _getClaimHash(
+            arbiter, recipient, nonce, expires, keccak256(abi.encodePacked(commitmentHashes)), witness, typehash
+        );
+        if (!_COMPACT.isRegistered(recipient, claimHash, typehash)) {
+            revert InvalidRegistration(recipient, claimHash);
+        }
+
+        // Allocate the claim
+        claims[claimHash] = true;
+
+        emit Allocated(recipient, commitments, nonce, expires, claimHash);
     }
 
     /// @inheritdoc IAllocator
@@ -228,7 +336,47 @@ contract HybridAllocator is IHybridAllocator {
         return allocatorId_;
     }
 
+    function _splitAllocatorId(bytes12 lockTag) internal pure returns (uint96) {
+        uint96 allocatorId;
+        assembly ("memory-safe") {
+            allocatorId := shr(164, shl(4, lockTag))
+        }
+        return allocatorId;
+    }
+
     function _splitToken(uint256 id) internal pure returns (address) {
         return address(uint160(id));
+    }
+
+    function _getClaimHash(
+        address arbiter,
+        address sponsor,
+        uint256 nonce,
+        uint256 expires,
+        bytes32 commitmentsHash,
+        bytes32 witness,
+        bytes32 typehash
+    ) internal pure returns (bytes32 claimHash) {
+        assembly ("memory-safe") {
+            let m := mload(0x40)
+            mstore(m, typehash)
+            mstore(add(m, 0x20), arbiter)
+            mstore(add(m, 0x40), sponsor)
+            mstore(add(m, 0x60), nonce)
+            mstore(add(m, 0x80), expires)
+            mstore(add(m, 0xa0), commitmentsHash)
+            mstore(add(m, 0xc0), witness)
+            claimHash := keccak256(m, sub(0xe0, mul(iszero(witness), 0x20)))
+        }
+    }
+
+    function _getCommitmentsHash(Lock[] memory commitments) internal pure returns (bytes32) {
+        bytes32[] memory commitmentsHashes = new bytes32[](commitments.length);
+        for (uint256 i = 0; i < commitments.length; i++) {
+            commitmentsHashes[i] = keccak256(
+                abi.encode(LOCK_TYPEHASH, commitments[i].lockTag, commitments[i].token, commitments[i].amount)
+            );
+        }
+        return keccak256(abi.encodePacked(commitmentsHashes));
     }
 }
