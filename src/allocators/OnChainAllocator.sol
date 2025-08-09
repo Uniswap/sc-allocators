@@ -157,8 +157,9 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes calldata /* orderData */
     ) external returns (uint256 nonce) {
         bytes32 nonceId = _toNonceId(msg.sender, recipient);
+        uint32 expiration = uint32(expires);
         nonce = nonces[nonceId] + 1;
-        AL.prepareAllocation(COMPACT_CONTRACT, nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
+        AL.prepareAllocation(COMPACT_CONTRACT, nonce, recipient, idsAndAmounts, arbiter, expiration, typehash, witness);
 
         return nonce;
     }
@@ -436,21 +437,23 @@ contract OnChainAllocator is IOnChainAllocator {
             mstore(0x00, lengthSlot)
             let contentSlot := keccak256(0x00, 0x20)
             for { let i := 0 } lt(i, length) { i := add(i, 1) } {
-                let slot2 := add(contentSlot, add(mul(i, 2), 1)) // add 0x20 to skip the expires/amount slot
-                let content2 := sload(slot2)
-                if eq(content2, claimHash) {
-                    // delete the allocation
-                    let lastSlot := add(contentSlot, mul(sub(length, 1), 0x40))
-                    if iszero(eq(sub(slot2, 0x20), lastSlot)) {
-                        // is not the last allocation of the array
-                        let contentLast1 := sload(lastSlot)
-                        let contentLast2 := sload(add(lastSlot, 0x20))
-                        sstore(sub(slot2, 0x20), contentLast1)
-                        sstore(slot2, contentLast2)
+                // Each allocation occupies two consecutive slots:
+                // first: packed expires/amount; second: claimHash
+                let first := add(contentSlot, mul(i, 2))
+                let second := add(first, 1)
+                if eq(sload(second), claimHash) {
+                    // Swap-and-pop delete
+                    let lastFirst := add(contentSlot, mul(sub(length, 1), 2))
+                    let lastSecond := add(lastFirst, 1)
+                    if iszero(eq(first, lastFirst)) {
+                        let contentLast1 := sload(lastFirst)
+                        let contentLast2 := sload(lastSecond)
+                        sstore(first, contentLast1)
+                        sstore(second, contentLast2)
                     }
 
-                    sstore(lastSlot, 0)
-                    sstore(add(lastSlot, 0x20), 0)
+                    sstore(lastFirst, 0)
+                    sstore(lastSecond, 0)
 
                     // update the array length
                     sstore(lengthSlot, sub(length, 1))

@@ -712,6 +712,69 @@ contract OnChainAllocatorTest is Test, TestHelper {
         allocator.authorizeClaim(claimHash, arbiter, user, 1, defaultExpiration, idsAndAmounts, '');
     }
 
+    function test_authorizeClaim_deletesMiddleOfMultipleAllocations_correctly() public {
+        // Prepare a large ERC20 deposit so three allocations can be made for the same id.
+        uint256 amount1 = 1 ether;
+        uint256 amount2 = 2 ether;
+        uint256 amount3 = 3 ether;
+        uint256 total = amount1 + amount2 + amount3;
+
+        // Deposit ERC20 into Compact for the user
+        bytes12 lockTag = _toLockTag(address(allocator), Scope.Multichain, ResetPeriod.TenMinutes);
+        vm.startPrank(user);
+        usdc.mint(user, total);
+        usdc.approve(address(compact), total);
+        compact.depositERC20(address(usdc), lockTag, total, user);
+        vm.stopPrank();
+
+        // Make three allocations for the same id with increasing expirations
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: amount1});
+        bytes32 claimHash1;
+        {
+            vm.prank(user);
+            (claimHash1,) = allocator.allocate(commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, '');
+        }
+
+        bytes32 claimHash2;
+        {
+            commitments[0].amount = amount2;
+            vm.prank(user);
+            (claimHash2,) = allocator.allocate(commitments, arbiter, defaultExpiration + 10, BATCH_COMPACT_TYPEHASH, '');
+        }
+
+        bytes32 claimHash3;
+        {
+            commitments[0].amount = amount3;
+            vm.prank(user);
+            (claimHash3,) = allocator.allocate(commitments, arbiter, defaultExpiration + 20, BATCH_COMPACT_TYPEHASH, '');
+        }
+
+        // idsAndAmounts used by authorizeClaim (amount is not used for verification but keep it consistent)
+        uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+        idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
+        idsAndAmounts[0][1] = amount1;
+
+        // 1) Delete the MIDDLE allocation first (claimHash2). This exercises swap-and-pop correctness.
+        vm.prank(address(compact));
+        bytes4 sel = allocator.authorizeClaim(claimHash2, arbiter, user, 0, defaultExpiration, idsAndAmounts, '');
+        assertEq(sel, IAllocator.authorizeClaim.selector);
+
+        // 2) The other allocations must still be present and independently deletable.
+        vm.prank(address(compact));
+        sel = allocator.authorizeClaim(claimHash3, arbiter, user, 0, defaultExpiration, idsAndAmounts, '');
+        assertEq(sel, IAllocator.authorizeClaim.selector);
+
+        vm.prank(address(compact));
+        sel = allocator.authorizeClaim(claimHash1, arbiter, user, 0, defaultExpiration, idsAndAmounts, '');
+        assertEq(sel, IAllocator.authorizeClaim.selector);
+
+        // 3) All allocations are deleted now; reusing any claim should revert.
+        vm.prank(address(compact));
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidClaim.selector, claimHash1));
+        allocator.authorizeClaim(claimHash1, arbiter, user, 0, defaultExpiration, idsAndAmounts, '');
+    }
+
     /* --------------------------------------------------------------------- */
     /*                                 attest                                */
     /* --------------------------------------------------------------------- */

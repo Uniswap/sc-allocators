@@ -6,5 +6,5 @@
     "allocateAndRegister_nativeToken_emptyAmountInput": "139141",
     "allocateAndRegister_second_erc20Token": "114975",
     "allocateAndRegister_second_nativeToken": "104941",
-    "hybrid_execute_single": "174260"
+    "hybrid_execute_single": "174518"
 }
