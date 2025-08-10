@@ -19,11 +19,12 @@ import {Test} from 'forge-std/Test.sol';
 
 import {TestHelper} from 'test/util/TestHelper.sol';
 
+import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAllocation.sol';
 import {ERC7683Allocator} from 'src/allocators/ERC7683Allocator.sol';
 import {BatchClaim as TribunalClaim, Mandate} from 'src/allocators/types/TribunalStructs.sol';
 import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 import {IERC7683Allocator} from 'src/interfaces/IERC7683Allocator.sol';
-import {IOnChainAllocator} from 'src/interfaces/IOnchainAllocator.sol';
+import {IOnChainAllocator} from 'src/interfaces/IOnChainAllocator.sol';
 
 import {ERC20Mock} from 'src/test/ERC20Mock.sol';
 
@@ -512,7 +513,7 @@ contract ERC7683Allocator_open is OnChainCrossChainOrderData {
         bytes32 claimHash = _hashCompact(compact_, mandate_);
 
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidRegistration.selector, user, claimHash));
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocation.InvalidRegistration.selector, user, claimHash));
         erc7683Allocator.open(onChainCrossChainOrder_);
     }
 
