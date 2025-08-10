@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {IOnChainAllocation} from '../interfaces/IOnChainAllocation.sol';
+import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAllocation.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 
 contract OnChainAllocationCaller {

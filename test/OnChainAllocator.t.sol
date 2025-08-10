@@ -17,6 +17,7 @@ import {TheCompact} from '@uniswap/the-compact/TheCompact.sol';
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 
+import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAllocation.sol';
 import {OnChainAllocator} from 'src/allocators/OnChainAllocator.sol';
 import {IOnChainAllocator} from 'src/interfaces/IOnChainAllocator.sol';
 
@@ -309,7 +310,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         vm.prank(user);
         vm.expectEmit(true, true, true, true);
-        emit IOnChainAllocator.Allocated(user, commitments, 1, defaultExpiration, claimHash);
+        emit IOnChainAllocation.Allocated(user, commitments, 1, defaultExpiration, claimHash);
         (bytes32 returnedClaimHash, uint256 nonce) =
             allocator.allocate(commitments, arbiter, defaultExpiration, typehash, witness);
 
@@ -341,7 +342,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
             // expect a successful second allocation
             claimHash = _createClaimHash(user, arbiter, 2, defaultExpiration, commitments, witness);
             vm.expectEmit(true, true, true, true);
-            emit IOnChainAllocator.Allocated(user, commitments, 2, defaultExpiration, claimHash);
+            emit IOnChainAllocation.Allocated(user, commitments, 2, defaultExpiration, claimHash);
         }
         (claimHash, nonce) = allocator.allocate(commitments, arbiter, defaultExpiration, typehash, witness);
 
@@ -562,7 +563,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         // Expect InvalidRegistration revert because claimHash is NOT registered on The Compact
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidRegistration.selector, user, claimHash));
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocation.InvalidRegistration.selector, user, claimHash));
         allocator.allocateFor(
             user,
             commitments,

@@ -2,10 +2,10 @@
 
 pragma solidity ^0.8.27;
 
-import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
+import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAllocation.sol';
 import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
-interface IOnChainAllocator is IAllocator {
+interface IOnChainAllocator is IOnChainAllocation {
     struct Allocation {
         uint32 expires;
         uint224 amount;
@@ -45,20 +45,6 @@ interface IOnChainAllocator is IAllocator {
 
     /// @notice Thrown if the provided signature is invalid
     error InvalidSignature(address signer, address expectedSigner);
-
-    /// @notice Thrown if the claim hash is not registered on the compact
-    error InvalidRegistration(address sponsor, bytes32 claimHash);
-
-    /// @notice Thrown if the preparation was not called within the same transaction or the data is not the same
-    error InvalidPreparation();
-
-    /// @notice Emitted when a tokens are successfully allocated
-    /// @param sponsor The address of the sponsor
-    /// @param commitments The commitments of the allocations
-    /// @param nonce The nonce of the allocation
-    /// @param expires The expiration of the allocation
-    /// @param claimHash The hash of the allocation
-    event Allocated(address indexed sponsor, Lock[] commitments, uint256 nonce, uint256 expires, bytes32 claimHash);
 
     /// @notice Registers an allocation for a set of tokens
     /// @param commitments The commitments of the allocations
