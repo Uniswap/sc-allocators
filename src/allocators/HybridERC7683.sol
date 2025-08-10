@@ -11,6 +11,7 @@ import {HybridAllocator} from 'src/allocators/HybridAllocator.sol';
 import {BATCH_COMPACT_WITNESS_TYPEHASH, MANDATE_TYPEHASH} from 'src/allocators/lib/TypeHashes.sol';
 import {IHybridERC7683} from 'src/interfaces/IHybridERC7683.sol';
 
+import {AllocatorLib as AL} from 'src/allocators/lib/AllocatorLib.sol';
 import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 
 contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
@@ -80,7 +81,7 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
 
         Lock[] memory locks = new Lock[](registeredAmounts.length);
         for (uint256 i = 0; i < registeredAmounts.length; i++) {
-            locks[i] = _createLock(orderData.idsAndAmounts[i][0], registeredAmounts[i]);
+            locks[i] = AL.toLock(orderData.idsAndAmounts[i][0], registeredAmounts[i]);
         }
 
         BatchCompact memory batchCompact = BatchCompact({
@@ -132,7 +133,7 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
 
         Lock[] memory locks = new Lock[](registeredAmounts.length);
         for (uint256 i = 0; i < registeredAmounts.length; i++) {
-            locks[i] = _createLock(orderData.idsAndAmounts[i][0], registeredAmounts[i]);
+            locks[i] = AL.toLock(orderData.idsAndAmounts[i][0], registeredAmounts[i]);
         }
 
         BatchCompact memory batchCompact = BatchCompact({
@@ -205,13 +206,13 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
 
         Lock[] memory locks = new Lock[](orderData.idsAndAmounts.length);
         for (uint256 i = 0; i < orderData.idsAndAmounts.length; i++) {
-            locks[i] = _createLock(orderData.idsAndAmounts[i][0], orderData.idsAndAmounts[i][1]);
+            locks[i] = AL.toLock(orderData.idsAndAmounts[i][0], orderData.idsAndAmounts[i][1]);
         }
 
         BatchCompact memory batchCompact = BatchCompact({
             arbiter: orderData.arbiter,
             sponsor: order.user,
-            nonce: nonce + 1,
+            nonce: nonces + 1,
             expires: order.openDeadline,
             commitments: locks
         });
@@ -231,12 +232,12 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
         Lock[] memory locks = new Lock[](idsLength);
         for (uint256 i = 0; i < idsLength; i++) {
             uint256 id = orderData.idsAndAmounts[i][0];
-            locks[i] = _createLock(id, orderData.idsAndAmounts[i][1]);
+            locks[i] = AL.toLock(id, orderData.idsAndAmounts[i][1]);
         }
         BatchCompact memory batchCompact = BatchCompact({
             arbiter: orderData.arbiter,
             sponsor: msg.sender,
-            nonce: nonce + 1, // nonce is incremented by 1 when the claim is registered
+            nonce: nonces + 1, // nonce is incremented by 1 when the claim is registered
             expires: expires,
             commitments: locks
         });
@@ -375,9 +376,5 @@ contract HybridERC7683 is HybridAllocator, IHybridERC7683 {
 
     function _convertAddressToBytes32(address address_) private pure returns (bytes32) {
         return bytes32(uint256(uint160(address_)));
-    }
-
-    function _createLock(uint256 id, uint256 amount) private pure returns (Lock memory) {
-        return Lock({lockTag: bytes12(bytes32(id)), token: _splitToken(id), amount: amount});
     }
 }

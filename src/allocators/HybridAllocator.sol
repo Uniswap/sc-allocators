@@ -3,9 +3,12 @@
 pragma solidity ^0.8.27;
 
 import {SafeTransferLib} from '@solady/utils/SafeTransferLib.sol';
-import {BatchCompact, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
+import {BatchCompact, LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
+
+import {AllocatorLib as AL} from './lib/AllocatorLib.sol';
+import {ERC6909} from '@solady/tokens/ERC6909.sol';
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
@@ -14,11 +17,13 @@ contract HybridAllocator is IHybridAllocator {
     uint96 public immutable ALLOCATOR_ID;
     ITheCompact internal immutable _COMPACT;
     bytes32 internal immutable _COMPACT_DOMAIN_SEPARATOR;
+    // bytes4(keccak256('prepareAllocation(address,uint256[2][],address,uint256,bytes32,bytes32,bytes)'));
+    bytes4 public constant PREPARE_ALLOCATION_SELECTOR = 0x7ef6597a;
 
     mapping(bytes32 => bool) internal claims;
 
     /// @dev The off chain allocator must use a uint256 nonce where the first 160 bits are the sponsors address to ensure no nonce collisions
-    uint96 public nonce;
+    uint96 public nonces;
     uint256 public signerCount;
     mapping(address => bool) public signers;
 
@@ -43,7 +48,7 @@ contract HybridAllocator is IHybridAllocator {
 
     /// @inheritdoc IHybridAllocator
     function addSigner(address signer_) external onlySigner {
-        if (signer_ == address(0)) {
+        if (signer_ == address(0) || signers[signer_]) {
             revert InvalidSigner();
         }
         signers[signer_] = true;
@@ -52,7 +57,7 @@ contract HybridAllocator is IHybridAllocator {
 
     /// @inheritdoc IHybridAllocator
     function removeSigner(address signer_) external onlySigner {
-        if (signerCount == 1) {
+        if (signerCount == 1 || !signers[signer_]) {
             revert LastSigner();
         }
         signers[signer_] = false;
@@ -61,7 +66,7 @@ contract HybridAllocator is IHybridAllocator {
 
     /// @inheritdoc IHybridAllocator
     function replaceSigner(address newSigner_) external onlySigner {
-        if (newSigner_ == address(0)) {
+        if (newSigner_ == address(0) || signers[newSigner_]) {
             revert InvalidSigner();
         }
         signers[msg.sender] = false;
@@ -89,15 +94,58 @@ contract HybridAllocator is IHybridAllocator {
         idsAndAmounts = _actualIdsAndAmounts(idsAndAmounts);
 
         (bytes32 claimHash, uint256[] memory registeredAmounts) = _COMPACT.batchDepositAndRegisterFor{value: msg.value}(
-            recipient, idsAndAmounts, arbiter, ++nonce, expires, typehash, witness
+            recipient, idsAndAmounts, arbiter, ++nonces, expires, typehash, witness
+        );
+
+        Lock[] memory commitments = new Lock[](idsAndAmounts.length);
+        for (uint256 i = 0; i < idsAndAmounts.length; i++) {
+            commitments[i] = Lock({
+                lockTag: bytes12(bytes32(idsAndAmounts[i][0])),
+                token: address(uint160(idsAndAmounts[i][0])),
+                amount: registeredAmounts[i]
+            });
+        }
+
+        // Allocate the claim
+        claims[claimHash] = true;
+
+        emit Allocated(recipient, commitments, nonces, expires, claimHash);
+
+        return (claimHash, registeredAmounts, nonces);
+    }
+
+    function prepareAllocation(
+        address recipient,
+        uint256[2][] calldata idsAndAmounts,
+        address arbiter,
+        uint256 expires,
+        bytes32 typehash,
+        bytes32 witness,
+        bytes calldata /* orderData */
+    ) external returns (uint256 nonce) {
+        nonce = nonces + 1;
+        AL.prepareAllocation(address(_COMPACT), nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
+    }
+
+    function executeAllocation(
+        address recipient,
+        uint256[2][] calldata idsAndAmounts,
+        address arbiter,
+        uint256 expires,
+        bytes32 typehash,
+        bytes32 witness,
+        bytes calldata /* orderData */
+    ) external {
+        uint256 nonce = ++nonces;
+
+        (bytes32 claimHash, Lock[] memory commitments) = AL.executeAllocation(
+            address(_COMPACT), nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness
         );
 
         // Allocate the claim
         claims[claimHash] = true;
 
-        emit ClaimRegistered(recipient, registeredAmounts, nonce, claimHash);
-
-        return (claimHash, registeredAmounts, nonce);
+        emit Allocated(recipient, commitments, nonce, expires, claimHash);
     }
 
     /// @inheritdoc IAllocator
@@ -160,10 +208,10 @@ contract HybridAllocator is IHybridAllocator {
         }
 
         // Check for native token - Native tokens must always be the first id
-        if (_splitToken(idsAndAmounts[0][0]) == address(0)) {
+        if (AL.splitToken(idsAndAmounts[0][0]) == address(0)) {
             // Check allocator id
-            if (_splitAllocatorId(idsAndAmounts[0][0]) != ALLOCATOR_ID) {
-                revert InvalidAllocatorId(_splitAllocatorId(idsAndAmounts[0][0]), ALLOCATOR_ID);
+            if (AL.splitAllocatorId(idsAndAmounts[0][0]) != ALLOCATOR_ID) {
+                revert InvalidAllocatorId(AL.splitAllocatorId(idsAndAmounts[0][0]), ALLOCATOR_ID);
             }
             if (idsAndAmounts[0][1] != 0 && msg.value != idsAndAmounts[0][1]) {
                 revert InvalidValue(msg.value, idsAndAmounts[0][1]);
@@ -174,7 +222,7 @@ contract HybridAllocator is IHybridAllocator {
         }
 
         for (; idIndex < idsLength; idIndex++) {
-            (uint96 allocatorId, address token) = _splitId(idsAndAmounts[idIndex][0]);
+            (uint96 allocatorId, address token) = AL.splitId(idsAndAmounts[idIndex][0]);
 
             // Check allocator id
             if (allocatorId != ALLOCATOR_ID) {
@@ -195,40 +243,8 @@ contract HybridAllocator is IHybridAllocator {
     }
 
     function _checkSignature(bytes32 digest, bytes calldata signature) internal view returns (bool) {
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-
-        if (signature.length == 65) {
-            (r, s) = abi.decode(signature, (bytes32, bytes32));
-            v = uint8(signature[64]);
-        } else if (signature.length == 64) {
-            bytes32 vs;
-            (r, vs) = abi.decode(signature, (bytes32, bytes32));
-            v = uint8(uint256(vs >> 255) + 27);
-            s = vs << 1 >> 1;
-        } else {
-            return false;
-        }
-
         // Check if the signer is an authorized allocator address
-        address signer = ecrecover(digest, v, r, s);
+        address signer = AL.recoverSigner(digest, signature);
         return signers[signer] && signer != address(0);
-    }
-
-    function _splitId(uint256 id) internal pure returns (uint96 allocatorId_, address token_) {
-        return (_splitAllocatorId(id), _splitToken(id));
-    }
-
-    function _splitAllocatorId(uint256 id) internal pure returns (uint96) {
-        uint96 allocatorId_;
-        assembly ("memory-safe") {
-            allocatorId_ := shr(164, shl(4, id))
-        }
-        return allocatorId_;
-    }
-
-    function _splitToken(uint256 id) internal pure returns (address) {
-        return address(uint160(id));
     }
 }

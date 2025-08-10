@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
+import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAllocation.sol';
+import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
-interface IHybridAllocator is IAllocator {
+interface IHybridAllocator is IOnChainAllocation {
     error Unsupported();
     error InvalidIds();
     error InvalidAllocatorId(uint96 allocatorId, uint96 expectedAllocatorId);
@@ -13,8 +14,6 @@ interface IHybridAllocator is IAllocator {
     error InvalidSigner();
     error LastSigner();
     error InvalidValue(uint256 value, uint256 expectedValue);
-
-    event ClaimRegistered(address indexed sponsor, uint256[] registeredAmounts, uint256 nonce, bytes32 claimHash);
 
     /**
      * @notice Add an offchain signer to the allocator.
