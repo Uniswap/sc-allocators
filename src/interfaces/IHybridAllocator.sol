@@ -2,7 +2,6 @@
 pragma solidity ^0.8.27;
 
 import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAllocation.sol';
-import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 interface IHybridAllocator is IOnChainAllocation {
     error Unsupported();

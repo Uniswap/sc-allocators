@@ -1,0 +1,15 @@
+forge-std/=lib/forge-std/src/
+@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
+@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/
+@uniswap/the-compact/=lib/the-compact/src/
+@solady/=lib/solady/src/
+ds-test/=lib/the-compact/lib/permit2/lib/forge-std/lib/ds-test/src/
+erc4626-tests/=lib/openzeppelin-contracts/lib/erc4626-tests/
+forge-gas-snapshot/=lib/forge-gas-snapshot/src/
+halmos-cheatcodes/=lib/openzeppelin-contracts/lib/halmos-cheatcodes/src/
+openzeppelin-contracts/=lib/openzeppelin-contracts/
+permit2/=lib/the-compact/lib/permit2/
+solady/=lib/solady/src/
+soledge/=lib/the-compact/lib/soledge/src/
+solmate/=lib/the-compact/lib/permit2/lib/solmate/
+the-compact/=lib/the-compact/
