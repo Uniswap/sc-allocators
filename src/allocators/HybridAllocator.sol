@@ -3,12 +3,11 @@
 pragma solidity ^0.8.27;
 
 import {SafeTransferLib} from '@solady/utils/SafeTransferLib.sol';
-import {BatchCompact, LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
+import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 
 import {AllocatorLib as AL} from './lib/AllocatorLib.sol';
-import {ERC6909} from '@solady/tokens/ERC6909.sol';
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
@@ -17,8 +16,6 @@ contract HybridAllocator is IHybridAllocator {
     uint96 public immutable ALLOCATOR_ID;
     ITheCompact internal immutable _COMPACT;
     bytes32 internal immutable _COMPACT_DOMAIN_SEPARATOR;
-    // bytes4(keccak256('prepareAllocation(address,uint256[2][],address,uint256,bytes32,bytes32,bytes)'));
-    bytes4 public constant PREPARE_ALLOCATION_SELECTOR = 0x7ef6597a;
 
     mapping(bytes32 => bool) internal claims;
 

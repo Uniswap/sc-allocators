@@ -10,7 +10,7 @@ import {ERC6909} from '@solady/tokens/ERC6909.sol';
 import {SafeTransferLib} from '@solady/utils/SafeTransferLib.sol';
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
-import {LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
+import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 /// @title OnChainAllocator
 /// @notice Allocates tokens deposited into the compact.

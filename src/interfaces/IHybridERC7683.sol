@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 
