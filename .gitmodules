@@ -20,4 +20,3 @@
 [submodule "lib/tribunal"]
 	path = lib/tribunal
 	url = https://github.com/Uniswap/tribunal
-	branch = new-mandate

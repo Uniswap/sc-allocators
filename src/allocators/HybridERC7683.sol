@@ -37,14 +37,6 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
             IOriginSettler.ResolvedCrossChainOrder memory resolvedOrder
         ) = ERC7683AL.openForPreparation(order, sponsorSignature);
 
-        uint160 caller = uint160(deposit * uint160(msg.sender)); // for a deposit, the nonce will be scoped to the caller
-
-        // Early revert if the expected nonce is not the next nonce
-        if (order.nonce != nonces + 1) {
-            revert InvalidNonce(order.nonce, nonces + 1);
-        }
-
-        uint256 nonce;
         if (deposit == 0) {
             // Hybrid Allocator requires a deposit
             revert OnlyDepositsAllowed();
@@ -56,9 +48,8 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
                 idsAndAmounts[i][1] = orderData.commitments[i].amount;
             }
 
-            // Register the allocation on chain
-            uint256[] memory registeredAmounts;
-            (, registeredAmounts, nonce) = allocateAndRegister(
+            // Register the allocation on chain by using a deposit
+            (, uint256[] memory registeredAmounts, uint256 nonce) = allocateAndRegister(
                 order.user,
                 idsAndAmounts,
                 orderData.arbiter,
@@ -67,12 +58,17 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
                 mandateHash
             );
 
+            // We ignore the order.nonce and use the one assigned by the hybrid allocator
+            resolvedOrder.orderId = bytes32(nonce);
+
+            // Update the resolved order with the registered amounts
             for (uint256 i = 0; i < orderData.commitments.length; i++) {
                 resolvedOrder.minReceived[i].amount = registeredAmounts[i];
             }
+
+            // Emit an open event
+            emit Open(bytes32(nonce), resolvedOrder);
         }
-        // Emit an open event
-        emit Open(bytes32(nonce), resolvedOrder);
     }
 
     /// @inheritdoc IOriginSettler
@@ -88,7 +84,7 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
         }
 
         // deposit the the tokens into the compact and register the claim
-        (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce) = allocateAndRegister(
+        (, uint256[] memory registeredAmounts, uint256 nonce) = allocateAndRegister(
             msg.sender, idsAndAmounts, orderData.arbiter, expires, COMPACT_TYPEHASH_WITH_MANDATE, mandateHash
         );
         ResolvedCrossChainOrder memory resolvedOrder =

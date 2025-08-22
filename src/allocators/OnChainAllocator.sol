@@ -23,7 +23,7 @@ contract OnChainAllocator is IOnChainAllocator {
 
     mapping(bytes32 tokenHash => Allocation[] allocations) internal _allocations;
 
-    mapping(bytes32 user => uint96 nonce) public nonces;
+    mapping(address user => uint96 nonce) public nonces;
 
     modifier onlyCompact() {
         if (msg.sender != COMPACT_CONTRACT) {
@@ -157,7 +157,7 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes calldata /* orderData */
     ) external returns (uint256 nonce) {
         uint32 expiration = uint32(expires);
-        nonce = _getAndUpdateNonce(msg.sender, recipient);
+        nonce = _getNonce(msg.sender, recipient);
         AL.prepareAllocation(COMPACT_CONTRACT, nonce, recipient, idsAndAmounts, arbiter, expiration, typehash, witness);
 
         return nonce;
@@ -476,6 +476,17 @@ contract OnChainAllocator is IOnChainAllocator {
             let nonce96 := sload(nonceSlot)
             nonce := or(shl(96, calling), add(nonce96, 1))
             sstore(nonceSlot, add(nonce96, 1))
+        }
+    }
+
+    function _getNonce(address calling, address sponsor) internal view returns (uint256 nonce) {
+        assembly ("memory-safe") {
+            calling := xor(calling, mul(sponsor, iszero(calling)))
+            mstore(0x00, calling)
+            mstore(0x20, nonces.slot)
+            let nonceSlot := keccak256(0x00, 0x40)
+            let nonce96 := sload(nonceSlot)
+            nonce := or(shl(96, calling), add(nonce96, 1))
         }
     }
 

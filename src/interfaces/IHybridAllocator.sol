@@ -8,7 +8,6 @@ interface IHybridAllocator is IOnChainAllocation {
     error InvalidIds();
     error InvalidAllocatorId(uint96 allocatorId, uint96 expectedAllocatorId);
     error InvalidCaller(address sender, address expectedSender);
-    error InvalidAllocatorData(uint256 length);
     error InvalidSignature();
     error InvalidSigner();
     error LastSigner();
