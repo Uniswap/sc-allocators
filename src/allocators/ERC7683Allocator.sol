@@ -12,6 +12,7 @@ import {Tribunal} from '@uniswap/tribunal/Tribunal.sol';
 import {Fill, Mandate, RecipientCallback} from '@uniswap/tribunal/types/TribunalStructs.sol';
 
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
+import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {
     COMPACT_TYPEHASH_WITH_MANDATE,
     COMPACT_WITH_MANDATE_TYPESTRING,
@@ -43,7 +44,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         uint160 caller = uint160(deposit * uint160(msg.sender)); // for a deposit, the nonce will be scoped to the caller
 
         // Early revert if the expected nonce is not the next nonce
-        if (order.nonce != _getNonce(address(caller), order.user)) {
+        if (deposit == 0 && order.nonce != _getNonce(address(caller), order.user)) {
             revert InvalidNonce(order.nonce, _getNonce(address(caller), order.user));
         }
 
@@ -60,7 +61,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
                 sponsorSignature
             );
         } else {
-            // Register the allocation on chain
+            // Register the allocation on chain by using a deposit
             uint256[] memory registeredAmounts;
             (, registeredAmounts, nonce) = allocateAndRegister(
                 order.user,
@@ -71,6 +72,10 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
                 mandateHash
             );
 
+            // We ignore the order.nonce and use the one assigned by the hybrid allocator
+            resolvedOrder.orderId = bytes32(nonce);
+
+            // Update the resolved order with the registered amounts
             for (uint256 i = 0; i < orderData.commitments.length; i++) {
                 resolvedOrder.minReceived[i].amount = registeredAmounts[i];
             }
@@ -85,8 +90,13 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
             ERC7683AL.openPreparation(order);
 
         // Register the allocation on chain
-        (, uint256 nonce) =
+        (bytes32 claimHash, uint256 nonce) =
             allocate(orderData.commitments, orderData.arbiter, expires, COMPACT_TYPEHASH_WITH_MANDATE, mandateHash);
+
+        // Ensure a registration exists before opening the order
+        if (!ITheCompact(COMPACT_CONTRACT).isRegistered(msg.sender, claimHash, COMPACT_TYPEHASH_WITH_MANDATE)) {
+            revert InvalidRegistration(msg.sender, claimHash);
+        }
 
         ResolvedCrossChainOrder memory resolvedOrder =
             ERC7683AL.resolveOrder(msg.sender, nonce, expires, fillHashes, orderData, LibBytes.emptyCalldata());
@@ -106,7 +116,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
 
         uint160 caller = uint160(deposit * uint160(msg.sender)); // for a deposit, the nonce will be scoped to the caller + user
 
-        // Early revert if the expected nonce is not the next nonce
+        // Revert if the expected nonce is not the next nonce
         if (order.nonce != _getNonce(address(caller), order.user)) {
             revert InvalidNonce(order.nonce, _getNonce(address(caller), order.user));
         }
@@ -142,16 +152,5 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
     /// @inheritdoc IERC7683Allocator
     function createFillerData(address claimant) external pure returns (bytes memory fillerData) {
         return abi.encode(claimant);
-    }
-
-    function _getNonce(address calling, address sponsor) internal view returns (uint256 nonce) {
-        assembly ("memory-safe") {
-            calling := xor(calling, mul(sponsor, iszero(calling)))
-            mstore(0x00, calling)
-            mstore(0x20, nonces.slot)
-            let nonceSlot := keccak256(0x00, 0x40)
-            let nonce96 := sload(nonceSlot)
-            nonce := or(shl(96, calling), add(nonce96, 1))
-        }
     }
 }
