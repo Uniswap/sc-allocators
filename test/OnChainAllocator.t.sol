@@ -51,6 +51,8 @@ contract OnChainAllocatorTest is Test, TestHelper {
     uint256 internal defaultAmount;
     uint32 internal defaultExpiration;
 
+    uint256 defaultNonce;
+
     function setUp() public {
         compact = new TheCompact();
         arbiter = makeAddr('arbiter');
@@ -68,11 +70,16 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         defaultAmount = 1 ether;
         defaultExpiration = uint32(block.timestamp + 300); // 5 minutes fits 10-minute reset period
+        defaultNonce = _composeNonceUint(user, 1);
     }
 
     /* --------------------------------------------------------------------- */
     /*                               Helpers                                 */
     /* --------------------------------------------------------------------- */
+
+    function _composeNonceUint(address a, uint256 nonce) internal pure returns (uint256) {
+        return (uint256(uint160(a)) << 96) | nonce;
+    }
 
     function _commitmentsHash(Lock[] memory commitments) internal pure returns (bytes32) {
         bytes32[] memory hashes = new bytes32[](commitments.length);
@@ -213,7 +220,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0));
         idsAndAmounts[0][1] = defaultAmount;
 
-        assertEq(nonce, 1);
+        assertEq(nonce, defaultNonce);
         assertTrue(allocator.isClaimAuthorized(claimHash, arbiter, user, nonce, defaultExpiration, idsAndAmounts, ''));
     }
 
@@ -236,7 +243,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
         idsAndAmounts[0][1] = defaultAmount;
 
-        assertEq(nonce, 1);
+        assertEq(nonce, defaultNonce);
         assertTrue(allocator.isClaimAuthorized(claimHash, arbiter, user, nonce, defaultExpiration, idsAndAmounts, ''));
     }
 
@@ -260,7 +267,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
         idsAndAmounts[0][1] = amount;
 
-        assertEq(nonce, 1);
+        assertEq(nonce, defaultNonce);
         assertTrue(allocator.isClaimAuthorized(claimHash, arbiter, user, nonce, defaultExpiration, idsAndAmounts, ''));
 
         vm.prank(user);
@@ -268,7 +275,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
             allocator.allocate(commitments, arbiter, defaultExpiration + 10, BATCH_COMPACT_TYPEHASH, bytes32(0));
         vm.snapshotGasLastCall('allocate_second_erc20');
 
-        assertEq(nonce, 2);
+        assertEq(nonce, defaultNonce + 1);
         assertTrue(
             allocator.isClaimAuthorized(claimHash, arbiter, user, nonce, defaultExpiration + 10, idsAndAmounts, '')
         );
@@ -280,7 +287,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
             allocator.allocate(commitments, arbiter, defaultExpiration + 10, BATCH_COMPACT_TYPEHASH, bytes32(0));
         vm.snapshotGasLastCall('allocate_and_delete_expired_allocation');
 
-        assertEq(nonce, 3);
+        assertEq(nonce, defaultNonce + 2);
         assertTrue(
             allocator.isClaimAuthorized(claimHash, arbiter, user, nonce, defaultExpiration + 10, idsAndAmounts, '')
         );
@@ -302,7 +309,8 @@ contract OnChainAllocatorTest is Test, TestHelper {
         compact.depositERC20(address(usdc), commitments[0].lockTag, depositAmount, user);
         vm.stopPrank();
 
-        bytes32 claimHash = _createClaimHash(user, arbiter, 1, defaultExpiration, commitments, witness);
+        uint256 expectedNonce = defaultNonce;
+        bytes32 claimHash = _createClaimHash(user, arbiter, expectedNonce, defaultExpiration, commitments, witness);
 
         // first allocation
 
@@ -310,7 +318,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         vm.prank(user);
         vm.expectEmit(true, true, true, true);
-        emit IOnChainAllocation.Allocated(user, commitments, 1, defaultExpiration, claimHash);
+        emit IOnChainAllocation.Allocated(user, commitments, expectedNonce, defaultExpiration, claimHash);
         (bytes32 returnedClaimHash, uint256 nonce) =
             allocator.allocate(commitments, arbiter, defaultExpiration, typehash, witness);
 
@@ -320,7 +328,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
         idsAndAmounts[0][1] = firstAmount;
 
-        assertEq(nonce, 1);
+        assertEq(nonce, expectedNonce, 'nonce 1');
         assertTrue(allocator.isClaimAuthorized(claimHash, arbiter, user, nonce, defaultExpiration, idsAndAmounts, ''));
 
         // second allocation
@@ -340,9 +348,10 @@ contract OnChainAllocatorTest is Test, TestHelper {
             );
         } else {
             // expect a successful second allocation
-            claimHash = _createClaimHash(user, arbiter, 2, defaultExpiration, commitments, witness);
+            expectedNonce = defaultNonce + 1;
+            claimHash = _createClaimHash(user, arbiter, expectedNonce, defaultExpiration, commitments, witness);
             vm.expectEmit(true, true, true, true);
-            emit IOnChainAllocation.Allocated(user, commitments, 2, defaultExpiration, claimHash);
+            emit IOnChainAllocation.Allocated(user, commitments, expectedNonce, defaultExpiration, claimHash);
         }
         (claimHash, nonce) = allocator.allocate(commitments, arbiter, defaultExpiration, typehash, witness);
 
@@ -350,12 +359,16 @@ contract OnChainAllocatorTest is Test, TestHelper {
             // Check the allocations
             idsAndAmounts[0][1] = secondAmount;
 
-            assertEq(nonce, 2);
+            assertEq(nonce, expectedNonce, 'nonce 1');
             assertTrue(
-                allocator.isClaimAuthorized(claimHash, arbiter, user, 1, /*nonce*/ defaultExpiration, idsAndAmounts, '')
+                allocator.isClaimAuthorized(
+                    claimHash, arbiter, user, defaultNonce, /*nonce*/ defaultExpiration, idsAndAmounts, ''
+                )
             );
             assertTrue(
-                allocator.isClaimAuthorized(claimHash, arbiter, user, 2, /*nonce*/ defaultExpiration, idsAndAmounts, '')
+                allocator.isClaimAuthorized(
+                    claimHash, arbiter, user, defaultNonce + 1, /*nonce*/ defaultExpiration, idsAndAmounts, ''
+                )
             );
 
             uint256 amountToAttest = depositAmount - (uint256(secondAmount) + uint256(firstAmount));
@@ -378,9 +391,11 @@ contract OnChainAllocatorTest is Test, TestHelper {
             // Second allocation should be possible after the first one is expired
             vm.warp(defaultExpiration + 1);
             uint32 expiration = defaultExpiration + 100;
+            expectedNonce = defaultNonce + 1;
+
             vm.prank(user);
             (claimHash, nonce) = allocator.allocate(commitments, arbiter, expiration, typehash, witness);
-            assertEq(nonce, 2);
+            assertEq(nonce, expectedNonce, 'nonce 2');
             assertTrue(allocator.isClaimAuthorized(claimHash, arbiter, user, nonce, expiration, idsAndAmounts, ''));
         }
     }
@@ -412,11 +427,11 @@ contract OnChainAllocatorTest is Test, TestHelper {
         (address attacker, uint256 attackerPK) = makeAddrAndKey('attacker');
 
         // build digest exactly like allocator expects
-        bytes32 nonceKey = keccak256(abi.encode(address(0), user));
-        uint256 nonceBefore = allocator.nonces(nonceKey);
+        uint256 expectedNonce = _composeNonceUint(user, allocator.nonces(user) + 1);
+
         bytes32 commitmentsHash = _commitmentsHash(commitments);
         bytes32 claimHash = keccak256(
-            abi.encode(BATCH_COMPACT_TYPEHASH, arbiter, user, nonceBefore + 1, defaultExpiration, commitmentsHash)
+            abi.encode(BATCH_COMPACT_TYPEHASH, arbiter, user, expectedNonce, defaultExpiration, commitmentsHash)
         );
         bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), compact.DOMAIN_SEPARATOR(), claimHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(attackerPK, digest);
@@ -434,11 +449,11 @@ contract OnChainAllocatorTest is Test, TestHelper {
         compact.depositNative{value: defaultAmount}(commitments[0].lockTag, user);
 
         // build digest exactly like allocator expects
-        bytes32 nonceKey = keccak256(abi.encode(address(0), user));
-        uint256 nonceBefore = allocator.nonces(nonceKey);
+        uint256 expectedNonce = _composeNonceUint(user, allocator.nonces(user) + 1);
+
         bytes32 commitmentsHash = _commitmentsHash(commitments);
         bytes32 claimHash = keccak256(
-            abi.encode(BATCH_COMPACT_TYPEHASH, arbiter, user, nonceBefore + 1, defaultExpiration, commitmentsHash)
+            abi.encode(BATCH_COMPACT_TYPEHASH, arbiter, user, expectedNonce, defaultExpiration, commitmentsHash)
         );
         bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), compact.DOMAIN_SEPARATOR(), claimHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPK, digest);
@@ -456,11 +471,11 @@ contract OnChainAllocatorTest is Test, TestHelper {
         compact.depositNative{value: defaultAmount}(commitments[0].lockTag, user);
 
         // build digest exactly like allocator expects
-        bytes32 nonceKey = keccak256(abi.encode(address(0), user));
-        uint256 nonceBefore = allocator.nonces(nonceKey);
+        uint256 expectedNonce = _composeNonceUint(user, allocator.nonces(user) + 1);
+
         bytes32 commitmentsHash = _commitmentsHash(commitments);
         bytes32 claimHash = keccak256(
-            abi.encode(BATCH_COMPACT_TYPEHASH, arbiter, user, nonceBefore + 1, defaultExpiration, commitmentsHash)
+            abi.encode(BATCH_COMPACT_TYPEHASH, arbiter, user, expectedNonce, defaultExpiration, commitmentsHash)
         );
         bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), compact.DOMAIN_SEPARATOR(), claimHash));
         (bytes32 r, bytes32 vs) = vm.signCompact(userPK, digest);
@@ -475,7 +490,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         idsAndAmounts[0][1] = defaultAmount;
 
         assertEq(returnedHash, claimHash);
-        assertEq(nonce, nonceBefore + 1);
+        assertEq(nonce, expectedNonce);
         assertTrue(allocator.isClaimAuthorized(claimHash, arbiter, user, nonce, defaultExpiration, idsAndAmounts, ''));
     }
 
@@ -486,11 +501,10 @@ contract OnChainAllocatorTest is Test, TestHelper {
         compact.depositNative{value: defaultAmount}(commitments[0].lockTag, user);
 
         // build digest exactly like allocator expects
-        bytes32 nonceKey = keccak256(abi.encode(address(0), user));
-        uint256 nonceBefore = allocator.nonces(nonceKey);
+        uint256 expectedNonce = _composeNonceUint(user, allocator.nonces(user) + 1);
         bytes32 commitmentsHash = _commitmentsHash(commitments);
         bytes32 claimHash = keccak256(
-            abi.encode(BATCH_COMPACT_TYPEHASH, arbiter, user, nonceBefore + 1, defaultExpiration, commitmentsHash)
+            abi.encode(BATCH_COMPACT_TYPEHASH, arbiter, user, expectedNonce, defaultExpiration, commitmentsHash)
         );
         bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), compact.DOMAIN_SEPARATOR(), claimHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPK, digest);
@@ -505,7 +519,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         idsAndAmounts[0][1] = defaultAmount;
 
         assertEq(returnedHash, claimHash);
-        assertEq(nonce, nonceBefore + 1);
+        assertEq(nonce, expectedNonce);
         assertTrue(allocator.isClaimAuthorized(claimHash, arbiter, user, nonce, defaultExpiration, idsAndAmounts, ''));
     }
 
@@ -516,13 +530,12 @@ contract OnChainAllocatorTest is Test, TestHelper {
         compact.depositNative{value: defaultAmount}(commitments[0].lockTag, user);
 
         // build digest exactly like allocator expects
-        bytes32 nonceKey = keccak256(abi.encode(address(0), user));
-        uint256 nonceBefore = allocator.nonces(nonceKey);
+        uint256 expectedNonce = _composeNonceUint(user, allocator.nonces(user) + 1);
         bytes32 witness = bytes32(keccak256('witness'));
         bytes32 commitmentsHash = _commitmentsHash(commitments);
         bytes32 claimHash = keccak256(
             abi.encode(
-                BATCH_COMPACT_TYPEHASH, arbiter, user, nonceBefore + 1, defaultExpiration, commitmentsHash, witness
+                BATCH_COMPACT_TYPEHASH, arbiter, user, expectedNonce, defaultExpiration, commitmentsHash, witness
             )
         );
         bytes memory sig;
@@ -540,10 +553,10 @@ contract OnChainAllocatorTest is Test, TestHelper {
         idsAndAmounts[0][1] = defaultAmount;
 
         assertEq(returnedHash, claimHash);
-        assertEq(nonce, nonceBefore + 1);
+        assertEq(nonce, expectedNonce);
         assertTrue(allocator.isClaimAuthorized(claimHash, arbiter, user, nonce, defaultExpiration, idsAndAmounts, ''));
 
-        assertEq(allocator.nonces(nonceKey), nonceBefore + 1);
+        assertEq(allocator.nonces(user), 1);
     }
 
     function test_allocateFor_revert_InvalidRegistration(address relayer) public {
@@ -554,9 +567,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         compact.depositNative{value: defaultAmount}(commitments[0].lockTag, user);
 
         // Nonce that allocateFor will use
-        bytes32 nonceKey = keccak256(abi.encode(address(0), user));
-        uint256 nonceBefore = allocator.nonces(nonceKey);
-        uint256 expectedNonce = nonceBefore + 1;
+        uint256 expectedNonce = _composeNonceUint(user, allocator.nonces(user) + 1);
 
         // Compute claimHash that allocateFor will create internally
         bytes32 claimHash = _createClaimHash(user, arbiter, expectedNonce, defaultExpiration, commitments, bytes32(0));
@@ -580,10 +591,8 @@ contract OnChainAllocatorTest is Test, TestHelper {
         Lock[] memory commitments = new Lock[](1);
         commitments[0] = _makeLock(address(0), defaultAmount);
 
-        // Determine nonce as allocator will use
-        bytes32 nonceKey = keccak256(abi.encode(address(0), user));
-        uint256 nonceBefore = allocator.nonces(nonceKey);
-        uint256 expectedNonce = nonceBefore + 1;
+        // Determine nonce the allocator will use
+        uint256 expectedNonce = _composeNonceUint(user, allocator.nonces(user) + 1);
 
         // Pre-compute claimHash that `allocateFor` will produce
         bytes32 claimHash = _createClaimHash(user, arbiter, expectedNonce, defaultExpiration, commitments, bytes32(0));
@@ -885,10 +894,9 @@ contract OnChainAllocatorTest is Test, TestHelper {
             recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
         );
 
-        assertEq(returnedNonce, 1);
+        assertEq(returnedNonce, _composeNonceUint(caller, 1));
         // storage nonce is only incremented in executeAllocation
-        bytes32 nonceKey = keccak256(abi.encode(caller, recipient));
-        assertEq(allocator.nonces(nonceKey), 0);
+        assertEq(allocator.nonces(caller), 0);
     }
 
     function test_executeAllocation_success_viaCaller_singleERC20() public {
@@ -900,22 +908,29 @@ contract OnChainAllocatorTest is Test, TestHelper {
         vm.prank(address(allocationCaller));
         usdc.approve(address(compact), amount);
 
+        // Check nonce previous to the allocation
+        assertEq(allocator.nonces(address(allocationCaller)), 0);
+
         // run the whole flow in a single tx through the helper
-        vm.prank(user);
         allocationCaller.onChainAllocation(
             recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), 0
         );
         vm.snapshotGasLastCall('onchain_execute_single');
 
         // nonce is scoped to (callerContract, recipient)
-        bytes32 nonceKey = keccak256(abi.encode(address(allocationCaller), recipient));
-        assertEq(allocator.nonces(nonceKey), 1);
+        assertEq(allocator.nonces(address(allocationCaller)), 1);
+        uint256 expectedNonce = _composeNonceUint(address(allocationCaller), 1);
 
         // compute claim hash and check authorization
         Lock[] memory commitments = _idsAndAmountsToCommitments(idsAndAmounts);
-        bytes32 claimHash = _createClaimHash(recipient, arbiter, 1, defaultExpiration, commitments, bytes32(0));
+        bytes32 claimHash =
+            _createClaimHash(recipient, arbiter, expectedNonce, defaultExpiration, commitments, bytes32(0));
 
-        assertTrue(allocator.isClaimAuthorized(claimHash, arbiter, recipient, 1, defaultExpiration, idsAndAmounts, ''));
+        assertTrue(
+            allocator.isClaimAuthorized(
+                claimHash, arbiter, recipient, expectedNonce, defaultExpiration, idsAndAmounts, ''
+            )
+        );
     }
 
     function test_executeAllocation_revert_InvalidPreparation() public {
@@ -948,7 +963,14 @@ contract OnChainAllocatorTest is Test, TestHelper {
         // Expect the precise error and arguments from AllocatorLib
         // Compute the claimHash that AllocatorLib will recompute during execute.
         Lock[] memory commitments = _idsAndAmountsToCommitments(idsAndAmounts);
-        bytes32 expectedClaimHash = _createClaimHash(recipient, arbiter, 1, defaultExpiration, commitments, bytes32(0));
+        bytes32 expectedClaimHash = _createClaimHash(
+            recipient,
+            arbiter,
+            _composeNonceUint(address(allocationCaller), 1),
+            defaultExpiration,
+            commitments,
+            bytes32(0)
+        );
         vm.prank(user);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -1003,18 +1025,21 @@ contract OnChainAllocatorTest is Test, TestHelper {
         vm.snapshotGasLastCall('onchain_execute_double');
 
         // authorization with the measured amounts
-        bytes32 nonceKey = keccak256(abi.encode(address(allocationCaller), recipient));
-        uint256 nonce = allocator.nonces(nonceKey);
-        assertEq(nonce, 1);
+        uint256 expectedNonce = _composeNonceUint(address(allocationCaller), 1);
 
         assertTrue(
             allocator.isClaimAuthorized(
                 _createClaimHash(
-                    recipient, arbiter, nonce, defaultExpiration, _idsAndAmountsToCommitments(idsAndAmounts), bytes32(0)
+                    recipient,
+                    arbiter,
+                    expectedNonce,
+                    defaultExpiration,
+                    _idsAndAmountsToCommitments(idsAndAmounts),
+                    bytes32(0)
                 ),
                 arbiter,
                 recipient,
-                nonce,
+                expectedNonce,
                 defaultExpiration,
                 idsAndAmounts,
                 ''
@@ -1143,7 +1168,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
         idsAndAmounts[0][1] = defaultAmount;
 
-        assertEq(nonce, 1);
+        assertEq(nonce, _composeNonceUint(caller, 1));
         assertEq(registeredAmounts.length, 1);
         assertEq(registeredAmounts[0], defaultAmount);
         assertEq(ERC6909(address(compact)).balanceOf(recipient, idsAndAmounts[0][0]), defaultAmount);
@@ -1172,7 +1197,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
         idsAndAmounts[0][1] = defaultAmount;
 
-        assertEq(nonce, 1);
+        assertEq(nonce, _composeNonceUint(caller, 1));
         assertEq(registeredAmounts.length, 1);
         assertEq(registeredAmounts[0], defaultAmount);
         assertEq(ERC6909(address(compact)).balanceOf(recipient, idsAndAmounts[0][0]), defaultAmount);

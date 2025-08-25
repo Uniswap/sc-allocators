@@ -97,14 +97,17 @@ library AllocatorLib {
         return (claimHash, commitments);
     }
 
-    function getCommitmentsHash(Lock[] memory commitments) internal pure returns (bytes32) {
+    function getCommitmentsHash(Lock[] memory commitments, bytes32 typehash) internal pure returns (bytes32) {
         bytes32[] memory commitmentsHashes = new bytes32[](commitments.length);
         for (uint256 i = 0; i < commitments.length; i++) {
-            commitmentsHashes[i] = keccak256(
-                abi.encode(LOCK_TYPEHASH, commitments[i].lockTag, commitments[i].token, commitments[i].amount)
-            );
+            commitmentsHashes[i] =
+                keccak256(abi.encode(typehash, commitments[i].lockTag, commitments[i].token, commitments[i].amount));
         }
         return keccak256(abi.encodePacked(commitmentsHashes));
+    }
+
+    function getCommitmentsHash(Lock[] memory commitments) internal pure returns (bytes32) {
+        return getCommitmentsHash(commitments, LOCK_TYPEHASH);
     }
 
     function getClaimHash(

@@ -23,7 +23,7 @@ contract OnChainAllocator is IOnChainAllocator {
 
     mapping(bytes32 tokenHash => Allocation[] allocations) internal _allocations;
 
-    mapping(bytes32 user => uint256 nonce) public nonces;
+    mapping(address user => uint96 nonce) public nonces;
 
     modifier onlyCompact() {
         if (msg.sender != COMPACT_CONTRACT) {
@@ -87,7 +87,7 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes32 typehash,
         bytes32 witness
     ) public returns (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce) {
-        nonce = ++nonces[_toNonceId(msg.sender, recipient)]; // prevents griefing of frontrunning nonces
+        nonce = _getAndUpdateNonce(msg.sender, recipient);
 
         uint256[2][] memory idsAndAmounts = new uint256[2][](commitments.length);
 
@@ -156,9 +156,8 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes32 witness,
         bytes calldata /* orderData */
     ) external returns (uint256 nonce) {
-        bytes32 nonceId = _toNonceId(msg.sender, recipient);
         uint32 expiration = uint32(expires);
-        nonce = nonces[nonceId] + 1;
+        nonce = _getNonce(msg.sender, recipient);
         AL.prepareAllocation(COMPACT_CONTRACT, nonce, recipient, idsAndAmounts, arbiter, expiration, typehash, witness);
 
         return nonce;
@@ -173,7 +172,7 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes32 witness,
         bytes calldata /* orderData */
     ) external {
-        uint256 nonce = ++nonces[_toNonceId(msg.sender, recipient)];
+        uint256 nonce = _getAndUpdateNonce(msg.sender, recipient);
         uint32 expiration = uint32(expires);
 
         (bytes32 claimHash, Lock[] memory commitments) =
@@ -294,7 +293,7 @@ contract OnChainAllocator is IOnChainAllocator {
             revert InvalidExpiration(expires, block.timestamp);
         }
 
-        nonce = ++nonces[_toNonceId(address(0), sponsor)]; // address(0) as caller allows anyone to relay
+        nonce = _getAndUpdateNonce(address(0), sponsor); // address(0) as caller allows anyone to relay
         bytes32 commitmentsHash = AL.getCommitmentsHash(commitments);
         claimHash = AL.getClaimHash(arbiter, sponsor, nonce, expires, commitmentsHash, witness, typehash);
 
@@ -468,6 +467,29 @@ contract OnChainAllocator is IOnChainAllocator {
         }
     }
 
+    function _getAndUpdateNonce(address calling, address sponsor) internal returns (uint256 nonce) {
+        assembly ("memory-safe") {
+            calling := xor(calling, mul(sponsor, iszero(calling)))
+            mstore(0x00, calling)
+            mstore(0x20, nonces.slot)
+            let nonceSlot := keccak256(0x00, 0x40)
+            let nonce96 := sload(nonceSlot)
+            nonce := or(shl(96, calling), add(nonce96, 1))
+            sstore(nonceSlot, add(nonce96, 1))
+        }
+    }
+
+    function _getNonce(address calling, address sponsor) internal view returns (uint256 nonce) {
+        assembly ("memory-safe") {
+            calling := xor(calling, mul(sponsor, iszero(calling)))
+            mstore(0x00, calling)
+            mstore(0x20, nonces.slot)
+            let nonceSlot := keccak256(0x00, 0x40)
+            let nonce96 := sload(nonceSlot)
+            nonce := or(shl(96, calling), add(nonce96, 1))
+        }
+    }
+
     function _getTokenHash(bytes12 lockTag, address token, address sponsor) internal pure returns (bytes32 tokenHash) {
         assembly ("memory-safe") {
             mstore(0x00, lockTag)
@@ -479,9 +501,5 @@ contract OnChainAllocator is IOnChainAllocator {
 
     function _getTokenHash(uint256 id, address sponsor) internal pure returns (bytes32 tokenHash) {
         tokenHash = keccak256(abi.encode(id, sponsor));
-    }
-
-    function _toNonceId(address caller, address sponsor) internal pure returns (bytes32 nonce) {
-        return keccak256(abi.encode(caller, sponsor));
     }
 }
