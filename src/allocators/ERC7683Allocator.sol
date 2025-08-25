@@ -71,7 +71,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
                 mandateHash
             );
 
-            // We ignore order.nonce and use the one assigned by the hybrid allocator
+            // We ignore order.nonce and use the one assigned by the allocator
             resolvedOrder.orderId = bytes32(nonce);
 
             // Update the resolved order with the registered amounts
@@ -116,6 +116,9 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         // Revert if the expected nonce is not the next nonce and the order does not include a deposit
         if (deposit == 0 && order.nonce != _getNonce(address(0), order.user)) {
             revert InvalidNonce(order.nonce, _getNonce(address(0), order.user));
+        } else if (deposit == 1) {
+            // We ignore the order.nonce and use the one assigned by the allocator
+            resolvedOrder.orderId = bytes32(_getNonce(msg.sender, order.user));
         }
 
         return resolvedOrder;
