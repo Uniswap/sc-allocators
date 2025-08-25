@@ -23,6 +23,9 @@ import {IERC7683Allocator} from 'src/interfaces/IERC7683Allocator.sol';
 import {AllocatorLib as AL} from 'src/allocators/lib/AllocatorLib.sol';
 import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 
+/// @title HybridERC7683
+/// @notice Hybrid allocator that can be used with the ERC7683 standard and the Uniswap Tribunal as the destination settler.
+/// @custom:security-contact security@uniswap.org
 contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
     error OnlyDepositsAllowed();
 
@@ -89,6 +92,8 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
         );
         ResolvedCrossChainOrder memory resolvedOrder =
             ERC7683AL.resolveOrder(msg.sender, nonce, expires, fillHashes, orderData, LibBytes.emptyCalldata());
+
+        // Update the resolved order with the registered amounts
         for (uint256 i = 0; i < orderData.commitments.length; i++) {
             resolvedOrder.minReceived[i].amount = registeredAmounts[i];
         }
@@ -106,15 +111,13 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
         (, uint32 deposit,, IOriginSettler.ResolvedCrossChainOrder memory resolvedOrder) =
             ERC7683AL.openForPreparation(order, LibBytes.emptyCalldata());
 
-        // Revert if the nonce is not the next nonce
-        if (order.nonce != nonces + 1) {
-            revert InvalidNonce(order.nonce, nonces + 1);
-        }
-
         if (deposit == 0) {
             // Hybrid Allocator requires a deposit
             revert OnlyDepositsAllowed();
         }
+
+        // We ignore the order.nonce and use the one assigned by the hybrid allocator
+        resolvedOrder.orderId = bytes32(uint256(nonces) + 1);
 
         return resolvedOrder;
     }
@@ -127,6 +130,7 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
         return ERC7683AL.resolveOrder(msg.sender, nonces + 1, expires, fillHashes, orderData, LibBytes.emptyCalldata());
     }
 
+    /// @inheritdoc IERC7683Allocator
     function getCompactWitnessTypeString() external pure returns (string memory) {
         return COMPACT_WITH_MANDATE_TYPESTRING;
     }

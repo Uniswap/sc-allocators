@@ -908,8 +908,10 @@ contract OnChainAllocatorTest is Test, TestHelper {
         vm.prank(address(allocationCaller));
         usdc.approve(address(compact), amount);
 
+        // Check nonce previous to the allocation
+        assertEq(allocator.nonces(address(allocationCaller)), 0);
+
         // run the whole flow in a single tx through the helper
-        vm.prank(user);
         allocationCaller.onChainAllocation(
             recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), 0
         );

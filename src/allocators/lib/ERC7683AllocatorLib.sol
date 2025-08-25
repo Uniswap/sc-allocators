@@ -12,6 +12,7 @@ import {
     COMPACT_WITH_MANDATE_TYPESTRING,
     MANDATE_BATCH_COMPACT_TYPEHASH,
     MANDATE_FILL_TYPEHASH,
+    MANDATE_LOCK_TYPEHASH,
     MANDATE_RECIPIENT_CALLBACK_TYPEHASH,
     MANDATE_TYPEHASH
 } from '@uniswap/tribunal/types/TribunalTypeHashes.sol';
@@ -21,6 +22,9 @@ import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 import {IERC7683Allocator} from 'src/interfaces/IERC7683Allocator.sol';
 
+/// @title ERC7683AllocatorLib
+/// @notice Library for ERC7683 allocator contracts that interact with the Uniswap Tribunal as the destination settler.
+/// @custom:security-contact security@uniswap.org
 library ERC7683AllocatorLib {
     /// @notice The typehash of the OrderDataOnChain struct
     //          keccak256("OrderDataOnChain(Order order,uint32 expires)
@@ -49,6 +53,13 @@ library ERC7683AllocatorLib {
     error InvalidOriginSettler(address originSettler, address expectedOriginSettler);
     error InvalidOrderData(bytes orderData);
 
+    /// @notice Checks and decodes the order data for a gasless cross-chain order.
+    /// @param order The gasless cross-chain order used to prepare the data.
+    /// @param sponsorSignature The sponsor signature of the order.
+    /// @return orderData The decoded order data.
+    /// @return deposit The deposit of the order.
+    /// @return mandateHash The mandate hash of the order.
+    /// @return resolvedOrder The resolved order with the fill instructions.
     function openForPreparation(IOriginSettler.GaslessCrossChainOrder calldata order, bytes calldata sponsorSignature)
         internal
         view
@@ -82,6 +93,12 @@ library ERC7683AllocatorLib {
             resolveOrder(order.user, order.nonce, order.openDeadline, fillHashes, orderData, sponsorSignature);
     }
 
+    /// @notice Checks and decodes the order data for an on-chain cross-chain order.
+    /// @param order The on-chain cross-chain order used to prepare the data.
+    /// @return orderData The decoded order data.
+    /// @return expires The expiration of the order.
+    /// @return mandateHash The mandate hash of the order.
+    /// @return fillHashes The fill hashes of the order.
     function openPreparation(IOriginSettler.OnchainCrossChainOrder calldata order)
         internal
         pure
@@ -109,6 +126,10 @@ library ERC7683AllocatorLib {
         (mandateHash, fillHashes) = hashMandate(orderData.mandate);
     }
 
+    /// @notice Decodes the order data for an on-chain or gasless cross-chain order.
+    /// @param orderData The order data to decode.
+    /// @return order The decoded order.
+    /// @return additionalInput The additional input of the order, either the expiration or the deposit.
     function decodeOrderData(bytes calldata orderData)
         internal
         pure
@@ -121,6 +142,7 @@ library ERC7683AllocatorLib {
 
         // 0x00: OrderDataGasless.offset
         // 0x20: OrderDataGasless.order.offset
+        // 0x40: OrderDataGasless.deposit
 
         assembly ("memory-safe") {
             let l := sub(orderData.length, 0x20)
@@ -132,6 +154,14 @@ library ERC7683AllocatorLib {
         }
     }
 
+    /// @notice Resolves the order into the ERC7683 standard format.
+    /// @param sponsor The sponsor of the order.
+    /// @param nonce The nonce of the order.
+    /// @param expires The expiration of the order.
+    /// @param fillHashes The fill hashes of the orders Mandate.
+    /// @param orderData The decoded order data of either the OnChain or Gasless order.
+    /// @param sponsorSignature The sponsor signature of the order proving their intention to execute the order.
+    /// @return resolvedOrder The resolved order with the fill instructions.
     function resolveOrder(
         address sponsor,
         uint256 nonce,
@@ -165,7 +195,7 @@ library ERC7683AllocatorLib {
             chainId: block.chainid,
             compact: compact,
             sponsorSignature: sponsorSignature,
-            allocatorSignature: '' // No signature required from this allocator, it will verify the claim on chain via ERC1271.
+            allocatorSignature: '' // No signature required from this allocator, it will verify the claim via the compacts `authorizeClaim` callback.
         });
 
         IOriginSettler.FillInstruction[] memory fillInstructions = new IOriginSettler.FillInstruction[](1);
@@ -191,6 +221,9 @@ library ERC7683AllocatorLib {
         return resolvedOrder;
     }
 
+    /// @notice Creates the minimum received Output array for an order.
+    /// @param commitments The sponsor's commitments of the order.
+    /// @return minReceived The minimum received Output array for the order.
     function createMinimumReceived(Lock[] calldata commitments)
         internal
         view
@@ -202,7 +235,7 @@ library ERC7683AllocatorLib {
             IOriginSettler.Output memory received = IOriginSettler.Output({
                 token: addressToBytes32(commitments[i].token),
                 amount: commitments[i].amount,
-                recipient: bytes32(0),
+                recipient: bytes32(0), // Leave empty since these tokens will be received by the filler
                 chainId: block.chainid
             });
             minReceived[i] = received;
@@ -210,6 +243,10 @@ library ERC7683AllocatorLib {
         return minReceived;
     }
 
+    /// @notice Hashes the mandate of the order.
+    /// @param mandate The mandate of the order.
+    /// @return mandateHash The hash of the full mandate.
+    /// @return fillHashes The hashes of the fills within the mandate.
     function hashMandate(Mandate calldata mandate) internal pure returns (bytes32, bytes32[] memory fillHashes) {
         fillHashes = new bytes32[](mandate.fills.length);
         for (uint256 i = 0; i < mandate.fills.length; i++) {
@@ -221,6 +258,7 @@ library ERC7683AllocatorLib {
         );
     }
 
+    /// @notice Hashes a fill of the mandate.
     function hashFill(Fill calldata fill) internal pure returns (bytes32) {
         bytes32 priceCurveHash = keccak256(abi.encodePacked(fill.priceCurve));
         return keccak256(
@@ -241,6 +279,7 @@ library ERC7683AllocatorLib {
         );
     }
 
+    /// @notice Hashes a recipient callback of the fill.
     function hashRecipientCallback(RecipientCallback[] calldata recipientCallback) internal pure returns (bytes32) {
         if (recipientCallback.length == 0) {
             // empty hash
@@ -262,7 +301,7 @@ library ERC7683AllocatorLib {
                             callback.compact.sponsor,
                             callback.compact.nonce,
                             callback.compact.expires,
-                            AL.getCommitmentsHash(callback.compact.commitments),
+                            AL.getCommitmentsHash(callback.compact.commitments, MANDATE_LOCK_TYPEHASH),
                             callback.mandateHash,
                             MANDATE_BATCH_COMPACT_TYPEHASH
                         ),

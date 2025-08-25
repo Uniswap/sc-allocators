@@ -29,6 +29,7 @@ import {BatchCompact, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 /// @notice Allocates tokens deposited into the compact and broadcasts orders following the ERC7683 standard.
 /// @dev The contract ensures tokens can not be double spent by a user in a fully decentralized manner.
 /// @dev Users can open orders for themselves or for others by providing a signature or the tokens directly.
+/// @custom:security-contact security@uniswap.org
 contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
     constructor(address compact) OnChainAllocator(compact) {}
 
@@ -41,11 +42,9 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
             IOriginSettler.ResolvedCrossChainOrder memory resolvedOrder
         ) = ERC7683AL.openForPreparation(order, sponsorSignature);
 
-        uint160 caller = uint160(deposit * uint160(msg.sender)); // for a deposit, the nonce will be scoped to the caller
-
-        // Early revert if the expected nonce is not the next nonce
-        if (deposit == 0 && order.nonce != _getNonce(address(caller), order.user)) {
-            revert InvalidNonce(order.nonce, _getNonce(address(caller), order.user));
+        // Early revert if the expected nonce is not the next nonce and the order does not include a deposit
+        if (deposit == 0 && order.nonce != _getNonce(address(0), order.user)) {
+            revert InvalidNonce(order.nonce, _getNonce(address(0), order.user));
         }
 
         uint256 nonce;
@@ -72,7 +71,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
                 mandateHash
             );
 
-            // We ignore the order.nonce and use the one assigned by the hybrid allocator
+            // We ignore order.nonce and use the one assigned by the hybrid allocator
             resolvedOrder.orderId = bytes32(nonce);
 
             // Update the resolved order with the registered amounts
@@ -114,11 +113,9 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         (, uint32 deposit,, IOriginSettler.ResolvedCrossChainOrder memory resolvedOrder) =
             ERC7683AL.openForPreparation(order, LibBytes.emptyCalldata());
 
-        uint160 caller = uint160(deposit * uint160(msg.sender)); // for a deposit, the nonce will be scoped to the caller + user
-
-        // Revert if the expected nonce is not the next nonce
-        if (order.nonce != _getNonce(address(caller), order.user)) {
-            revert InvalidNonce(order.nonce, _getNonce(address(caller), order.user));
+        // Revert if the expected nonce is not the next nonce and the order does not include a deposit
+        if (deposit == 0 && order.nonce != _getNonce(address(0), order.user)) {
+            revert InvalidNonce(order.nonce, _getNonce(address(0), order.user));
         }
 
         return resolvedOrder;

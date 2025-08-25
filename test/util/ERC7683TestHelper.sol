@@ -26,6 +26,7 @@ import {
     COMPACT_TYPEHASH_WITH_MANDATE,
     MANDATE_BATCH_COMPACT_TYPEHASH,
     MANDATE_FILL_TYPEHASH,
+    MANDATE_LOCK_TYPEHASH,
     MANDATE_RECIPIENT_CALLBACK_TYPEHASH,
     MANDATE_TYPEHASH
 } from '@uniswap/tribunal/types/TribunalTypeHashes.sol';
@@ -125,8 +126,37 @@ abstract contract CreateHash is MocksSetup {
     }
 
     function _hashRecipientCallback(RecipientCallback[] memory rc) internal pure returns (bytes32) {
-        if (rc.length == 0) return EMPTY_HASH;
-        revert('RecipientCallback not supported in tests');
+        if (rc.length == 0) {
+            return EMPTY_HASH;
+        } else if (rc.length != 1) {
+            revert('RecipientCallback not supported in tests');
+        } else {
+            RecipientCallback memory rc_ = rc[0];
+            bytes32[] memory commitmentsHashes = new bytes32[](rc_.compact.commitments.length);
+            for (uint256 i = 0; i < rc_.compact.commitments.length; i++) {
+                commitmentsHashes[i] = keccak256(
+                    abi.encode(
+                        MANDATE_LOCK_TYPEHASH,
+                        rc_.compact.commitments[i].lockTag,
+                        rc_.compact.commitments[i].token,
+                        rc_.compact.commitments[i].amount
+                    )
+                );
+            }
+            bytes32 commitmentsHash = keccak256(abi.encodePacked(commitmentsHashes));
+
+            return keccak256(
+                abi.encode(
+                    MANDATE_RECIPIENT_CALLBACK_TYPEHASH,
+                    rc_.compact.arbiter,
+                    rc_.compact.sponsor,
+                    rc_.compact.nonce,
+                    rc_.compact.expires,
+                    commitmentsHash,
+                    rc_.mandateHash
+                )
+            );
+        }
     }
 
     function _hashFill(Fill memory f) internal pure returns (bytes32) {
