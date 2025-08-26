@@ -99,7 +99,12 @@ contract OnChainAllocator is IOnChainAllocator {
 
             // If the amount is 0, we use the balance of the contract to deposit.
             if (amount == 0) {
-                amount = uint224(IERC20(commitments[i].token).balanceOf(address(this)));
+                uint256 balance = IERC20(commitments[i].token).balanceOf(address(this));
+                // Check the amount fits in the supported range
+                if (balance > type(uint224).max) {
+                    revert InvalidAmount(balance);
+                }
+                amount = uint224(balance);
             }
             idsAndAmounts[i][1] = amount;
 
