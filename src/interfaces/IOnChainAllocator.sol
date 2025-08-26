@@ -12,6 +12,9 @@ interface IOnChainAllocator is IOnChainAllocation {
         bytes32 claimHash;
     }
 
+    /// @notice Thrown if the allocator is not successfully registered
+    error InvalidAllocatorRegistration(address alreadyRegisteredAllocator);
+
     /// @notice Thrown if a claim is already active
     error ClaimActive(address sponsor);
 

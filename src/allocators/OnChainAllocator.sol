@@ -35,7 +35,24 @@ contract OnChainAllocator is IOnChainAllocator {
     constructor(address compactContract_) {
         COMPACT_CONTRACT = compactContract_;
         COMPACT_DOMAIN_SEPARATOR = ITheCompact(COMPACT_CONTRACT).DOMAIN_SEPARATOR();
-        ALLOCATOR_ID = ITheCompact(COMPACT_CONTRACT).__registerAllocator(address(this), '');
+        try ITheCompact(COMPACT_CONTRACT).__registerAllocator(address(this), '') returns (uint96 allocatorId) {
+            ALLOCATOR_ID = allocatorId;
+        } catch (bytes memory lowLevelData) {
+            // Allocator is already registered. Check the registered allocator in the revert data
+            if (lowLevelData.length != 0x44) {
+                revert InvalidAllocatorRegistration(address(0));
+            }
+            (bytes4 errorSelector, uint96 allocatorId, address registeredAllocator) =
+                abi.decode(lowLevelData, (bytes4, uint96, address));
+            if (errorSelector != 0xc18b0e97) {
+                // Did not revert with 'ALLOCATOR_ALREADY_REGISTERED_ERROR'
+                revert InvalidAllocatorRegistration(address(0));
+            }
+            if (registeredAllocator != address(this)) {
+                revert InvalidAllocatorRegistration(registeredAllocator);
+            }
+            ALLOCATOR_ID = allocatorId;
+        }
     }
 
     /// @inheritdoc IOnChainAllocator
