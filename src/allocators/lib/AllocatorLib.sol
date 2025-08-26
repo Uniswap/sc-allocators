@@ -33,9 +33,11 @@ library AllocatorLib {
             // Store the current balance to calculate the deposited amounts in `executeAllocation`
             uint256 currentBalance = ERC6909(compactContract).balanceOf(recipient, id);
             assembly ("memory-safe") {
-                mstore(0x00, PREPARE_ALLOCATION_SELECTOR)
-                mstore(0x20, id)
-                tstore(keccak256(0x00, 0x40), currentBalance)
+                let m := mload(0x40)
+                mstore(m, PREPARE_ALLOCATION_SELECTOR)
+                mstore(add(m, 0x20), recipient)
+                mstore(add(m, 0x40), id)
+                tstore(keccak256(m, 0x60), currentBalance)
             }
         }
 
@@ -208,9 +210,11 @@ library AllocatorLib {
         // Calculate the balance
         uint256 oldBalance;
         assembly ("memory-safe") {
-            mstore(0x00, PREPARE_ALLOCATION_SELECTOR)
-            mstore(0x20, id)
-            oldBalance := tload(keccak256(0x00, 0x40))
+            let m := mload(0x40)
+            mstore(m, PREPARE_ALLOCATION_SELECTOR)
+            mstore(add(m, 0x20), recipient)
+            mstore(add(m, 0x40), id)
+            oldBalance := tload(keccak256(m, 0x60))
         }
         uint256 newBalance = ERC6909(compactContract).balanceOf(recipient, id);
         if (newBalance <= oldBalance) {
