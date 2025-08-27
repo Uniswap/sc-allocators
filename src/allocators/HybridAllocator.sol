@@ -88,6 +88,7 @@ contract HybridAllocator is IHybridAllocator {
         bytes32 typehash,
         bytes32 witness
     ) public payable returns (bytes32, uint256[] memory, uint256) {
+        recipient = AL.getRecipient(recipient);
         idsAndAmounts = _actualIdsAndAmounts(idsAndAmounts);
 
         (bytes32 claimHash, uint256[] memory registeredAmounts) = _COMPACT.batchDepositAndRegisterFor{value: msg.value}(

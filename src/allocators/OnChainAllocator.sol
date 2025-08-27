@@ -87,6 +87,7 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes32 typehash,
         bytes32 witness
     ) public returns (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce) {
+        recipient = AL.getRecipient(recipient);
         nonce = _getAndUpdateNonce(msg.sender, recipient);
 
         uint256[2][] memory idsAndAmounts = new uint256[2][](commitments.length);
