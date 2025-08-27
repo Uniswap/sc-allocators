@@ -86,13 +86,28 @@ contract OnChainAllocator is IOnChainAllocator {
         uint32 expires,
         bytes32 typehash,
         bytes32 witness
-    ) public returns (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce) {
+    ) public payable returns (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce) {
         nonce = _getAndUpdateNonce(msg.sender, recipient);
+
+        if (commitments.length == 0) {
+            revert InvalidCommitments();
+        }
 
         uint256[2][] memory idsAndAmounts = new uint256[2][](commitments.length);
 
         uint256 minResetPeriod = type(uint256).max;
-        for (uint256 i = 0; i < commitments.length; i++) {
+        uint256 i = 0;
+        if (commitments[i].token == address(0)) {
+            minResetPeriod = _checkInput(commitments[i], recipient, expires, minResetPeriod);
+            idsAndAmounts[i][0] = AL.toId(commitments[i].lockTag, commitments[i].token);
+
+            if (commitments[i].amount != 0 && commitments[i].amount != msg.value) {
+                revert InvalidAmount(commitments[i].amount);
+            }
+            idsAndAmounts[i][1] = msg.value;
+            i++;
+        }
+        for (; i < commitments.length; i++) {
             minResetPeriod = _checkInput(commitments[i], recipient, expires, minResetPeriod);
             idsAndAmounts[i][0] = AL.toId(commitments[i].lockTag, commitments[i].token);
             uint224 amount = uint224(commitments[i].amount);
@@ -114,7 +129,7 @@ contract OnChainAllocator is IOnChainAllocator {
         }
 
         // Deposit the tokens and register the claim in the compact
-        (claimHash, registeredAmounts) = ITheCompact(COMPACT_CONTRACT).batchDepositAndRegisterFor(
+        (claimHash, registeredAmounts) = ITheCompact(COMPACT_CONTRACT).batchDepositAndRegisterFor{value: msg.value}(
             recipient, idsAndAmounts, arbiter, nonce, expires, typehash, witness
         );
 
