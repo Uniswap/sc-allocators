@@ -12,6 +12,7 @@ library AllocatorLib {
 
     error InvalidBalanceChange(uint256 newBalance, uint256 oldBalance);
     error InvalidPreparation();
+    error InvalidAllocatorId(uint96 providedId, uint96 allocatorId);
     error InvalidRegistration(address recipient, bytes32 claimHash, bytes32 typehash);
 
     function prepareAllocation(
@@ -22,11 +23,16 @@ library AllocatorLib {
         address arbiter,
         uint256 expires,
         bytes32 typehash,
-        bytes32 witness
+        bytes32 witness,
+        uint96 allocatorId
     ) internal {
         uint256[] memory ids = new uint256[](idsAndAmounts.length);
         for (uint256 i = 0; i < idsAndAmounts.length; i++) {
             uint256 id = idsAndAmounts[i][0];
+            // Check the id fits the allocator
+            if (splitAllocatorId(id) != allocatorId) {
+                revert InvalidAllocatorId(splitAllocatorId(id), allocatorId);
+            }
             // Store Id for the identifier
             ids[i] = id;
 
