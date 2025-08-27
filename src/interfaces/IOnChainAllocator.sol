@@ -46,6 +46,9 @@ interface IOnChainAllocator is IOnChainAllocation {
     /// @notice Thrown if the provided signature is invalid
     error InvalidSignature(address signer, address expectedSigner);
 
+    /// @notice Thrown if the provided commitments are empty
+    error InvalidCommitments();
+
     /// @notice Registers an allocation for a set of tokens
     /// @param commitments The commitments of the allocations
     /// @param arbiter The arbiter of the allocation
@@ -89,5 +92,5 @@ interface IOnChainAllocator is IOnChainAllocation {
         uint32 expires,
         bytes32 typehash,
         bytes32 witness
-    ) external returns (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce);
+    ) external payable returns (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce);
 }
