@@ -13,6 +13,7 @@ import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 
 contract HybridAllocator is IHybridAllocator {
+    uint256 private immutable _INITIAL_CHAIN_ID;
     uint96 public immutable ALLOCATOR_ID;
     ITheCompact internal immutable _COMPACT;
     bytes32 internal immutable _COMPACT_DOMAIN_SEPARATOR;
@@ -35,6 +36,7 @@ contract HybridAllocator is IHybridAllocator {
         if (signer_ == address(0)) {
             revert InvalidSigner();
         }
+        _INITIAL_CHAIN_ID = block.chainid;
         _COMPACT = ITheCompact(compact_);
         ALLOCATOR_ID = _COMPACT.__registerAllocator(address(this), '');
         _COMPACT_DOMAIN_SEPARATOR = _COMPACT.DOMAIN_SEPARATOR();
@@ -170,6 +172,10 @@ contract HybridAllocator is IHybridAllocator {
 
         // Check the allocator data for a valid signature by an authorized signer
         bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), _COMPACT_DOMAIN_SEPARATOR, claimHash));
+        if (block.chainid != _INITIAL_CHAIN_ID) {
+            // If the chain was forked, we can not use the cached domain separator
+            digest = keccak256(abi.encodePacked(bytes2(0x1901), _COMPACT.DOMAIN_SEPARATOR(), claimHash));
+        }
         if (!_checkSignature(digest, allocatorData_)) {
             revert InvalidSignature();
         }
@@ -194,6 +200,10 @@ contract HybridAllocator is IHybridAllocator {
 
         // Check the allocator data for a valid signature by an authorized allocator address
         bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), _COMPACT_DOMAIN_SEPARATOR, claimHash));
+        if (block.chainid != _INITIAL_CHAIN_ID) {
+            // If the chain was forked, we can not use the cached domain separator
+            digest = keccak256(abi.encodePacked(bytes2(0x1901), _COMPACT.DOMAIN_SEPARATOR(), claimHash));
+        }
         return _checkSignature(digest, allocatorData);
     }
 

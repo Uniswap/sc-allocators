@@ -17,6 +17,7 @@ import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 /// @dev The contract ensures tokens can not be double spent by a user in a fully decentralized manner.
 /// @dev Users can open orders for themselves or for others by providing a signature or the tokens directly.
 contract OnChainAllocator is IOnChainAllocator {
+    uint256 private immutable _INITIAL_CHAIN_ID;
     address public immutable COMPACT_CONTRACT;
     bytes32 public immutable COMPACT_DOMAIN_SEPARATOR;
     uint96 public immutable ALLOCATOR_ID;
@@ -33,6 +34,7 @@ contract OnChainAllocator is IOnChainAllocator {
     }
 
     constructor(address compactContract_) {
+        _INITIAL_CHAIN_ID = block.chainid;
         COMPACT_CONTRACT = compactContract_;
         COMPACT_DOMAIN_SEPARATOR = ITheCompact(COMPACT_CONTRACT).DOMAIN_SEPARATOR();
         ALLOCATOR_ID = ITheCompact(COMPACT_CONTRACT).__registerAllocator(address(this), '');
@@ -65,6 +67,11 @@ contract OnChainAllocator is IOnChainAllocator {
         if (signature.length > 0) {
             // confirm the provided signature is valid
             bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), COMPACT_DOMAIN_SEPARATOR, claimHash));
+            if (block.chainid != _INITIAL_CHAIN_ID) {
+                digest = keccak256(
+                    abi.encodePacked(bytes2(0x1901), ITheCompact(COMPACT_CONTRACT).DOMAIN_SEPARATOR(), claimHash)
+                );
+            }
             address signer_ = AL.recoverSigner(digest, signature);
             if (sponsor != signer_ || signer_ == address(0)) {
                 revert InvalidSignature(signer_, sponsor);
