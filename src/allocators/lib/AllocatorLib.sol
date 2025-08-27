@@ -152,6 +152,13 @@ library AllocatorLib {
         return ecrecover(digest, v, r, s);
     }
 
+    function getRecipient(address recipient) internal view returns (address) {
+        assembly ("memory-safe") {
+            recipient := xor(recipient, mul(caller(), iszero(recipient)))
+        }
+        return recipient;
+    }
+
     function splitId(uint256 id) internal pure returns (uint96 allocatorId_, address token_) {
         return (splitAllocatorId(id), splitToken(id));
     }

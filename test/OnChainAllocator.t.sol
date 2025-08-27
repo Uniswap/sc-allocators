@@ -1304,4 +1304,36 @@ contract OnChainAllocatorTest is Test, TestHelper {
         vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InsufficientBalance.selector, recipient, id2, 0, 1));
         allocator.attest(address(this), recipient, address(this), id2, 1);
     }
+
+    function test_allocateAndRegister_emptyRecipientBecomesCaller() public {
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(usdc), defaultAmount);
+
+        usdc.mint(address(allocator), defaultAmount);
+
+        vm.prank(caller);
+        (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce) = allocator.allocateAndRegister(
+            address(0), /* allocate for an empty recipient */
+            commitments,
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0)
+        );
+
+        uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+        idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
+        idsAndAmounts[0][1] = defaultAmount;
+
+        assertEq(nonce, _composeNonceUint(caller, 1));
+        assertEq(registeredAmounts.length, 1);
+        assertEq(registeredAmounts[0], defaultAmount);
+        // Ensure the allocation happened for the caller, not address(0)
+        assertEq(ERC6909(address(compact)).balanceOf(caller, idsAndAmounts[0][0]), defaultAmount);
+        assertTrue(allocator.isClaimAuthorized(claimHash, arbiter, caller, nonce, defaultExpiration, idsAndAmounts, ''));
+        assertTrue(compact.isRegistered(caller, claimHash, BATCH_COMPACT_TYPEHASH));
+        bytes32 claimHashRecreated =
+            _createClaimHash(caller, arbiter, nonce, defaultExpiration, commitments, bytes32(0));
+        assertEq(claimHashRecreated, claimHash);
+    }
 }

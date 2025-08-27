@@ -520,6 +520,35 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertTrue(allocator.isClaimAuthorized(createdHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
     }
 
+    function test_allocateAndRegister_success_emptyRecipientBecomesCaller() public {
+        uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+        idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
+        idsAndAmounts[0][1] = defaultAmount;
+
+        // Provide tokens
+        vm.prank(user);
+        usdc.transfer(address(allocator), defaultAmount);
+        assertEq(usdc.balanceOf(address(allocator)), defaultAmount);
+
+        vm.prank(user);
+        (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce) = allocator.allocateAndRegister(
+            address(0), /* allocate for an empty recipient */
+            idsAndAmounts,
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            ''
+        );
+
+        // Ensure the allocation happened for the caller (user), not address(0)
+        assertTrue(compact.isRegistered(user, claimHash, BATCH_COMPACT_TYPEHASH));
+        assertTrue(allocator.isClaimAuthorized(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
+        assertEq(registeredAmounts[0], defaultAmount);
+        assertEq(usdc.balanceOf(address(compact)), defaultAmount);
+        assertEq(compact.balanceOf(address(user), idsAndAmounts[0][0]), defaultAmount);
+        assertEq(nonce, 1);
+    }
+
     function test_allocateAndRegister_slot() public {
         uint256[2][] memory idsAndAmounts = new uint256[2][](1);
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0));
