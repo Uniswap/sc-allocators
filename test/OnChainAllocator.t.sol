@@ -894,9 +894,10 @@ contract OnChainAllocatorTest is Test, TestHelper {
             recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
         );
 
-        assertEq(returnedNonce, _composeNonceUint(caller, 1));
+        assertEq(returnedNonce, _composeNonceUint(address(0), 1));
         // storage nonce is only incremented in executeAllocation
         assertEq(allocator.nonces(caller), 0);
+        assertEq(allocator.nonces(address(0)), 0);
     }
 
     function test_executeAllocation_success_viaCaller_singleERC20() public {
@@ -918,8 +919,9 @@ contract OnChainAllocatorTest is Test, TestHelper {
         vm.snapshotGasLastCall('onchain_execute_single');
 
         // nonce is scoped to (callerContract, recipient)
-        assertEq(allocator.nonces(address(allocationCaller)), 1);
-        uint256 expectedNonce = _composeNonceUint(address(allocationCaller), 1);
+        assertEq(allocator.nonces(address(allocationCaller)), 0);
+        assertEq(allocator.nonces(address(0)), 1);
+        uint256 expectedNonce = _composeNonceUint(address(0), 1);
 
         // compute claim hash and check authorization
         Lock[] memory commitments = _idsAndAmountsToCommitments(idsAndAmounts);
@@ -930,6 +932,148 @@ contract OnChainAllocatorTest is Test, TestHelper {
             allocator.isClaimAuthorized(
                 claimHash, arbiter, recipient, expectedNonce, defaultExpiration, idsAndAmounts, ''
             )
+        );
+    }
+
+    /// forge-config: default.isolate = false
+    function test_executeAllocation_revert_multiplePreparations() public {
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), defaultAmount);
+
+        uint256[2][] memory idsAndAmountsCrooked = new uint256[2][](2);
+        idsAndAmountsCrooked[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0)); // additionally use another ids to receive a unique identifier slot
+        idsAndAmountsCrooked[0][1] = defaultAmount;
+        idsAndAmountsCrooked[1] = idsAndAmounts[0]; // Crooked idsAndAmounts is also using USDC as the same ID, among others
+
+        usdc.mint(address(this), defaultAmount);
+        usdc.approve(address(compact), defaultAmount);
+
+        // prepare for the recipient using caller 1
+        vm.prank(recipient);
+        uint256 nonce1 = allocator.prepareAllocation(
+            recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+
+        // prepare for second recipient - DIFFERENT CALLER TO RECEIVE A DIFFERENT NONCE SLOT
+        vm.prank(address(this));
+        uint256 nonce2 = allocator.prepareAllocation(
+            recipient, idsAndAmountsCrooked, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+
+        assertEq(nonce1, _composeNonceUint(address(0), 1));
+        assertEq(nonce2, _composeNonceUint(address(0), 1));
+
+        // We do a single deposit of usdc with defaultAmount. This would mean, that we SHOULD only able to allocate defaultAmount of usdc
+        ITheCompact(compact).batchDeposit{value: defaultAmount}(idsAndAmountsCrooked, recipient);
+
+        // Crooked registrations: we register two claims that would each use all of the usdc (so defaultAmount * 2 combined)
+        Lock[] memory commitments = _idsAndAmountsToCommitments(idsAndAmounts);
+        bytes32 claimHash1Crooked =
+            _createClaimHash(recipient, arbiter, nonce1, defaultExpiration, commitments, bytes32(0));
+        Lock[] memory commitmentsCrooked = _idsAndAmountsToCommitments(idsAndAmountsCrooked);
+        bytes32 claimHash2Crooked =
+            _createClaimHash(recipient, arbiter, nonce2, defaultExpiration, commitmentsCrooked, bytes32(0));
+        vm.prank(recipient);
+        ITheCompact(compact).register(claimHash1Crooked, BATCH_COMPACT_TYPEHASH);
+        vm.prank(recipient);
+        ITheCompact(compact).register(claimHash2Crooked, BATCH_COMPACT_TYPEHASH);
+
+        // execute for first allocation
+        vm.prank(recipient);
+        allocator.executeAllocation(
+            recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+
+        // execute for second allocation which must fail
+        vm.prank(address(this));
+        vm.expectRevert(abi.encodeWithSelector(AllocatorLib.InvalidPreparation.selector));
+        allocator.executeAllocation(
+            recipient, idsAndAmountsCrooked, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+
+        assertTrue(
+            allocator.isClaimAuthorized(
+                claimHash1Crooked, arbiter, recipient, nonce1, defaultExpiration, idsAndAmounts, ''
+            )
+        );
+        assertFalse(
+            allocator.isClaimAuthorized(
+                claimHash2Crooked, arbiter, recipient, nonce2, defaultExpiration, idsAndAmounts, ''
+            )
+        );
+    }
+
+    /// forge-config: default.isolate = false
+    function test_executeAllocation_revert_multipleDifferentPreparations(address recipient1, address recipient2)
+        public
+    {
+        vm.assume(recipient1 != address(0));
+        vm.assume(recipient2 != address(0));
+
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), defaultAmount);
+
+        uint256 previousBalance = 1_000_000;
+        usdc.mint(address(this), previousBalance + 2 * defaultAmount);
+        usdc.approve(address(compact), previousBalance + 2 * defaultAmount);
+
+        // deposit funds to recipient1
+        compact.depositERC20(
+            address(usdc),
+            _toLockTag(address(allocator), Scope.Multichain, ResetPeriod.TenMinutes),
+            previousBalance,
+            recipient1
+        );
+
+        // Check nonce previous to the allocation
+        assertEq(allocator.nonces(address(0)), 0);
+
+        // prepare for first recipient
+        vm.prank(recipient1);
+        uint256 nonce1 = allocator.prepareAllocation(
+            recipient1, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+
+        // prepare for second recipient
+        vm.prank(recipient2);
+        uint256 nonce2 = allocator.prepareAllocation(
+            recipient2, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+
+        assertEq(nonce1, _composeNonceUint(address(0), 1));
+        assertEq(nonce2, _composeNonceUint(address(0), 1));
+        // The provided nonces should be the same because they use the same pool of nonces, independent of the recipient or caller
+        assertEq(nonce1, nonce2);
+
+        // compute claim hash and check authorization
+        Lock[] memory commitments = _idsAndAmountsToCommitments(idsAndAmounts);
+        bytes32 claimHash1 = _createClaimHash(recipient1, arbiter, nonce1, defaultExpiration, commitments, bytes32(0));
+        bytes32 claimHash2 = _createClaimHash(recipient2, arbiter, nonce2, defaultExpiration, commitments, bytes32(0));
+
+        ITheCompact(compact).batchDepositAndRegisterFor(
+            recipient1, idsAndAmounts, arbiter, nonce1, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0)
+        );
+
+        ITheCompact(compact).batchDepositAndRegisterFor(
+            recipient2, idsAndAmounts, arbiter, nonce2, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0)
+        );
+
+        // execute for first recipient
+        vm.prank(recipient1);
+        allocator.executeAllocation(
+            recipient1, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+
+        // execute for second recipient
+        vm.prank(recipient2);
+        vm.expectRevert(abi.encodeWithSelector(AllocatorLib.InvalidPreparation.selector));
+        allocator.executeAllocation(
+            recipient2, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+
+        assertTrue(
+            allocator.isClaimAuthorized(claimHash1, arbiter, recipient1, nonce1, defaultExpiration, idsAndAmounts, '')
+        );
+        assertFalse(
+            allocator.isClaimAuthorized(claimHash2, arbiter, recipient2, nonce2, defaultExpiration, idsAndAmounts, '')
         );
     }
 
@@ -964,12 +1108,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         // Compute the claimHash that AllocatorLib will recompute during execute.
         Lock[] memory commitments = _idsAndAmountsToCommitments(idsAndAmounts);
         bytes32 expectedClaimHash = _createClaimHash(
-            recipient,
-            arbiter,
-            _composeNonceUint(address(allocationCaller), 1),
-            defaultExpiration,
-            commitments,
-            bytes32(0)
+            recipient, arbiter, _composeNonceUint(address(0), 1), defaultExpiration, commitments, bytes32(0)
         );
         vm.prank(user);
         vm.expectRevert(
@@ -1025,7 +1164,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         vm.snapshotGasLastCall('onchain_execute_double');
 
         // authorization with the measured amounts
-        uint256 expectedNonce = _composeNonceUint(address(allocationCaller), 1);
+        uint256 expectedNonce = _composeNonceUint(address(0), 1);
 
         assertTrue(
             allocator.isClaimAuthorized(
@@ -1168,7 +1307,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
         idsAndAmounts[0][1] = defaultAmount;
 
-        assertEq(nonce, _composeNonceUint(caller, 1));
+        assertEq(nonce, _composeNonceUint(address(0), 1));
         assertEq(registeredAmounts.length, 1);
         assertEq(registeredAmounts[0], defaultAmount);
         assertEq(ERC6909(address(compact)).balanceOf(recipient, idsAndAmounts[0][0]), defaultAmount);
@@ -1197,7 +1336,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
         idsAndAmounts[0][1] = defaultAmount;
 
-        assertEq(nonce, _composeNonceUint(caller, 1));
+        assertEq(nonce, _composeNonceUint(address(0), 1));
         assertEq(registeredAmounts.length, 1);
         assertEq(registeredAmounts[0], defaultAmount);
         assertEq(ERC6909(address(compact)).balanceOf(recipient, idsAndAmounts[0][0]), defaultAmount);
