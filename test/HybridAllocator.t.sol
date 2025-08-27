@@ -753,6 +753,88 @@ contract HybridAllocatorTest is Test, TestHelper {
         compact.batchClaim(claim);
     }
 
+    function test_authorizeClaim_revert_oldSignatureAfterFork(uint128 nonce) public {
+        uint256[2][] memory idsAndAmounts = new uint256[2][](2);
+        idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0));
+        idsAndAmounts[0][1] = defaultAmount;
+
+        idsAndAmounts[1][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
+        idsAndAmounts[1][1] = defaultAmount;
+
+        // Approve tokens
+        vm.prank(user);
+        usdc.approve(address(compact), defaultAmount);
+
+        bytes32 witness = keccak256(abi.encode(WITNESS_TYPEHASH, 1));
+
+        bytes32 claimHash = _toBatchCompactHashWithWitness(
+            BATCH_COMPACT_TYPEHASH_WITH_WITNESS,
+            BatchCompact({
+                arbiter: arbiter,
+                sponsor: user,
+                nonce: nonce,
+                expires: defaultExpiration,
+                commitments: _idsAndAmountsToCommitments(idsAndAmounts)
+            }),
+            witness
+        );
+
+        bytes32[2][] memory claimHashesAndTypehashes = new bytes32[2][](1);
+        claimHashesAndTypehashes[0][0] = claimHash;
+        claimHashesAndTypehashes[0][1] = BATCH_COMPACT_TYPEHASH_WITH_WITNESS;
+
+        // Deposit and register
+        vm.prank(user);
+        compact.batchDepositAndRegisterMultiple{value: defaultAmount}(idsAndAmounts, claimHashesAndTypehashes);
+
+        // Off chain signing the claim
+        bytes32 digest = _toDigest(claimHash, compact.DOMAIN_SEPARATOR());
+        (bytes32 r, bytes32 vs) = vm.signCompact(signerPrivateKey, digest);
+        bytes memory allocatorData = abi.encodePacked(r, vs);
+
+        address target = makeAddr('target');
+
+        BatchClaimComponent[] memory claims = new BatchClaimComponent[](2);
+        {
+            Component[] memory portions = new Component[](1);
+            portions[0] = Component({
+                claimant: uint256(bytes32(abi.encodePacked(bytes12(0), target))), // indicating a withdrawal
+                amount: defaultAmount
+            });
+
+            claims[0] =
+                BatchClaimComponent({id: idsAndAmounts[0][0], allocatedAmount: defaultAmount, portions: portions});
+            claims[1] =
+                BatchClaimComponent({id: idsAndAmounts[1][0], allocatedAmount: defaultAmount, portions: portions});
+        }
+
+        BatchClaim memory claim = BatchClaim({
+            allocatorData: allocatorData,
+            sponsorSignature: '',
+            sponsor: user,
+            nonce: nonce,
+            expires: defaultExpiration,
+            witness: witness,
+            witnessTypestring: WITNESS_STRING,
+            claims: claims
+        });
+
+        uint256 snap = vm.snapshot();
+        assertEq(block.chainid, 31_337);
+
+        vm.prank(arbiter);
+        compact.batchClaim(claim);
+        // Call did not revert
+
+        vm.revertTo(snap);
+        vm.chainId(1);
+        assertEq(block.chainid, 1);
+
+        vm.prank(arbiter);
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSignature.selector));
+        compact.batchClaim(claim);
+    }
+
     function test_authorizeClaim_success_onChain() public {
         uint256[2][] memory idsAndAmounts = new uint256[2][](2);
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0));

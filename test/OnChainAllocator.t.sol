@@ -464,6 +464,50 @@ contract OnChainAllocatorTest is Test, TestHelper {
         allocator.allocateFor(user, commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, 0x0, sig);
     }
 
+    function test_allocateFor_revert_oldSignatureAfterFork(address relayer) public {
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(0), defaultAmount);
+        vm.prank(user);
+        compact.depositNative{value: defaultAmount}(commitments[0].lockTag, user);
+
+        // build digest exactly like allocator expects
+        uint256 expectedNonce = _composeNonceUint(user, allocator.nonces(user) + 1);
+        bytes32 commitmentsHash = _commitmentsHash(commitments);
+        bytes32 claimHash = keccak256(
+            abi.encode(BATCH_COMPACT_TYPEHASH, arbiter, user, expectedNonce, defaultExpiration, commitmentsHash)
+        );
+        bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), compact.DOMAIN_SEPARATOR(), claimHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPK, digest);
+        bytes memory sig = abi.encodePacked(r, s, v);
+
+        uint256 snap = vm.snapshot();
+        assertEq(block.chainid, 31_337);
+
+        vm.prank(relayer);
+        (bytes32 returnedHash, uint256 nonce) =
+            allocator.allocateFor(user, commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, 0x0, sig);
+
+        uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+        idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0));
+        idsAndAmounts[0][1] = defaultAmount;
+
+        assertEq(returnedHash, claimHash);
+        assertEq(nonce, expectedNonce);
+        assertTrue(allocator.isClaimAuthorized(claimHash, arbiter, user, nonce, defaultExpiration, idsAndAmounts, ''));
+
+        vm.revertTo(snap);
+        vm.chainId(1);
+        assertEq(block.chainid, 1);
+
+        vm.prank(relayer);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IOnChainAllocator.InvalidSignature.selector, address(0x71efFb57bf7C717a0a5012186792C45A4851ef5d), user
+            )
+        );
+        allocator.allocateFor(user, commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, 0x0, sig);
+    }
+
     function test_allocateFor_success_withCompactSignature(address relayer) public {
         Lock[] memory commitments = new Lock[](1);
         commitments[0] = _makeLock(address(0), defaultAmount);
