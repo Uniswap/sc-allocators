@@ -17,6 +17,7 @@ library AllocatorLib {
 
     error InvalidBalanceChange(uint256 newBalance, uint256 oldBalance);
     error InvalidPreparation();
+    error InvalidAllocatorId(uint96 providedId, uint96 allocatorId);
     error InvalidRegistration(address recipient, bytes32 claimHash, bytes32 typehash);
 
     function prepareAllocation(
@@ -27,7 +28,8 @@ library AllocatorLib {
         address arbiter,
         uint256 expires,
         bytes32 typehash,
-        bytes32 witness
+        bytes32 witness,
+        uint96 allocatorId
     ) internal {
         assembly ("memory-safe") {
             // identifier = keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));

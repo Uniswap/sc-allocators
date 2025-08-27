@@ -257,7 +257,9 @@ contract OnChainAllocator is IOnChainAllocator {
         }
         uint32 expiration = uint32(expires);
         nonce = _getNonce(msg.sender, recipient);
-        AL.prepareAllocation(COMPACT_CONTRACT, nonce, recipient, idsAndAmounts, arbiter, expiration, typehash, witness);
+        AL.prepareAllocation(
+            COMPACT_CONTRACT, nonce, recipient, idsAndAmounts, arbiter, expiration, typehash, witness, ALLOCATOR_ID
+        );
 
         return nonce;
     }
