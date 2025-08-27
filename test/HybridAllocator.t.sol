@@ -21,6 +21,12 @@ import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 import {ERC20Mock} from 'src/test/ERC20Mock.sol';
 import {OnChainAllocationCaller} from 'src/test/OnChainAllocationCaller.sol';
 
+contract HybridAllocatorFactory {
+    function deploy(bytes32 salt, address compact, address signer) external returns (address) {
+        return address(new HybridAllocator{salt: salt}(compact, signer));
+    }
+}
+
 contract HybridAllocatorTest is Test, TestHelper {
     TheCompact compact;
     address arbiter;
@@ -1046,5 +1052,28 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertEq(allocator.signerCount(), 1);
         assertFalse(allocator.signers(signer));
         assertTrue(allocator.signers(newSigner));
+    }
+
+    function test_constructor_allowsPreRegisteredAllocator_create2() public {
+        HybridAllocatorFactory factory = new HybridAllocatorFactory();
+
+        bytes32 salt = keccak256('hybrid-allocator-pre-registered');
+        bytes memory initCode =
+            abi.encodePacked(type(HybridAllocator).creationCode, abi.encode(address(compact), signer));
+        bytes32 initCodeHash = keccak256(initCode);
+
+        address expected =
+            address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(factory), salt, initCodeHash)))));
+
+        bytes memory proof = abi.encodePacked(bytes1(0xff), address(factory), salt, initCodeHash);
+
+        uint96 preId = compact.__registerAllocator(expected, proof);
+        assertEq(_toAllocatorId(expected), preId);
+
+        address deployed = HybridAllocatorFactory(address(factory)).deploy(salt, address(compact), signer);
+        assertEq(deployed, expected);
+
+        HybridAllocator newAllocator = HybridAllocator(deployed);
+        assertEq(newAllocator.ALLOCATOR_ID(), _toAllocatorId(deployed));
     }
 }

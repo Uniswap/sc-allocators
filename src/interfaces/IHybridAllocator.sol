@@ -4,6 +4,7 @@ pragma solidity ^0.8.27;
 import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAllocation.sol';
 
 interface IHybridAllocator is IOnChainAllocation {
+    error InvalidAllocatorRegistration(address alreadyRegisteredAllocator);
     error Unsupported();
     error InvalidIds();
     error InvalidAllocatorId(uint96 allocatorId, uint96 expectedAllocatorId);
