@@ -409,7 +409,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         vm.prank(user);
         compact.depositNative{value: defaultAmount}(commitments[0].lockTag, user);
 
-        vm.warp(defaultExpiration + 1);
+        vm.warp(defaultExpiration);
 
         vm.prank(relayer);
         vm.expectRevert(
@@ -1125,6 +1125,22 @@ contract OnChainAllocatorTest is Test, TestHelper {
         vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidAmount.selector, largeAmount));
         allocationCaller.onChainAllocation(
             recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), 0
+        );
+    }
+
+    function test_allocateAndRegister_revert_invalidExpiration() public {
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(usdc), defaultAmount);
+
+        usdc.mint(address(allocator), defaultAmount);
+
+        vm.warp(defaultExpiration);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IOnChainAllocator.InvalidExpiration.selector, defaultExpiration, block.timestamp)
+        );
+        allocator.allocateAndRegister(
+            recipient, commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0)
         );
     }
 
