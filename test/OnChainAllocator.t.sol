@@ -31,6 +31,12 @@ import {AllocatorLib} from 'src/allocators/lib/AllocatorLib.sol';
 import {OnChainAllocationCaller} from 'src/test/OnChainAllocationCaller.sol';
 import {TestHelper} from 'test/util/TestHelper.sol';
 
+contract OnChainAllocatorFactory {
+    function deploy(bytes32 salt, address compact) external returns (address) {
+        return address(new OnChainAllocator{salt: salt}(compact));
+    }
+}
+
 contract OnChainAllocatorTest is Test, TestHelper {
     TheCompact internal compact;
     OnChainAllocator internal allocator;
@@ -1272,6 +1278,28 @@ contract OnChainAllocatorTest is Test, TestHelper {
         assertTrue(
             allocator.isClaimAuthorized(claimHash, arbiter, recipient, nonce, defaultExpiration, idsAndAmounts, '')
         );
+    }
+
+    function test_constructor_allowsPreRegisteredAllocator_create2() public {
+        OnChainAllocatorFactory factory = new OnChainAllocatorFactory();
+
+        bytes32 salt = keccak256('onchain-allocator-pre-registered');
+        bytes memory initCode = abi.encodePacked(type(OnChainAllocator).creationCode, abi.encode(address(compact)));
+        bytes32 initCodeHash = keccak256(initCode);
+
+        address expected =
+            address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(factory), salt, initCodeHash)))));
+
+        bytes memory proof = abi.encodePacked(bytes1(0xff), address(factory), salt, initCodeHash);
+
+        uint96 preId = compact.__registerAllocator(expected, proof);
+        assertEq(_toAllocatorId(expected), preId);
+
+        address deployed = OnChainAllocatorFactory(address(factory)).deploy(salt, address(compact));
+        assertEq(deployed, expected);
+
+        OnChainAllocator newAllocator = OnChainAllocator(deployed);
+        assertEq(newAllocator.ALLOCATOR_ID(), _toAllocatorId(deployed));
     }
 
     function test_allocateAndRegister_tokensImmediatelyAllocated() public {

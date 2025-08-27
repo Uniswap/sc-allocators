@@ -42,11 +42,16 @@ contract OnChainAllocator is IOnChainAllocator {
             if (lowLevelData.length != 0x44) {
                 revert InvalidAllocatorRegistration(address(0));
             }
-            (bytes4 errorSelector, uint96 allocatorId, address registeredAllocator) =
-                abi.decode(lowLevelData, (bytes4, uint96, address));
+            bytes4 errorSelector = bytes4(lowLevelData);
             if (errorSelector != 0xc18b0e97) {
                 // Did not revert with 'ALLOCATOR_ALREADY_REGISTERED_ERROR'
                 revert InvalidAllocatorRegistration(address(0));
+            }
+            uint96 allocatorId;
+            address registeredAllocator;
+            assembly {
+                allocatorId := mload(add(lowLevelData, 0x24))
+                registeredAllocator := mload(add(lowLevelData, 0x44))
             }
             if (registeredAllocator != address(this)) {
                 revert InvalidAllocatorRegistration(registeredAllocator);
