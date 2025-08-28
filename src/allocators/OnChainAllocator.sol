@@ -10,6 +10,8 @@ import {ERC6909} from '@solady/tokens/ERC6909.sol';
 import {SafeTransferLib} from '@solady/utils/SafeTransferLib.sol';
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
+import {Extsload} from '@uniswap/the-compact/lib/Extsload.sol';
+import {IdLib} from '@uniswap/the-compact/lib/IdLib.sol';
 import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 /// @title OnChainAllocator
@@ -37,25 +39,28 @@ contract OnChainAllocator is IOnChainAllocator {
         COMPACT_DOMAIN_SEPARATOR = ITheCompact(COMPACT_CONTRACT).DOMAIN_SEPARATOR();
         try ITheCompact(COMPACT_CONTRACT).__registerAllocator(address(this), '') returns (uint96 allocatorId) {
             ALLOCATOR_ID = allocatorId;
-        } catch (bytes memory lowLevelData) {
-            // Allocator is already registered. Check the registered allocator in the revert data
-            if (lowLevelData.length != 0x44) {
-                revert InvalidAllocatorRegistration(address(0));
+        } catch {
+            // The Compact does not have a getter function for retrieving the status of allocator registration,
+            // so we need to calculate it manually.
+            uint96 allocatorId = IdLib.toAllocatorId(address(this));
+            bytes32 allocatorSlot;
+            assembly ("memory-safe") {
+                // Identical to the registration logic slot calculation in The Compact:
+                // let allocatorSlot := or(_ALLOCATOR_BY_ALLOCATOR_ID_SLOT_SEED, allocatorId)
+                allocatorSlot := or(0x000044036fc77deaed2300000000000000000000000, allocatorId)
             }
-            bytes4 errorSelector = bytes4(lowLevelData);
-            if (errorSelector != 0xc18b0e97) {
-                // Did not revert with 'ALLOCATOR_ALREADY_REGISTERED_ERROR'
-                revert InvalidAllocatorRegistration(address(0));
+
+            bytes32 registeredAllocator = Extsload(COMPACT_CONTRACT).extsload(allocatorSlot);
+
+            assembly ("memory-safe") {
+                if iszero(eq(registeredAllocator, address())) {
+                    // revert InvalidAllocatorRegistration(registeredAllocator)
+                    mstore(0x00, 0x161ab6ea)
+                    mstore(0x20, registeredAllocator)
+                    revert(0x1c, 0x24)
+                }
             }
-            uint96 allocatorId;
-            address registeredAllocator;
-            assembly {
-                allocatorId := mload(add(lowLevelData, 0x24))
-                registeredAllocator := mload(add(lowLevelData, 0x44))
-            }
-            if (registeredAllocator != address(this)) {
-                revert InvalidAllocatorRegistration(registeredAllocator);
-            }
+
             ALLOCATOR_ID = allocatorId;
         }
     }
