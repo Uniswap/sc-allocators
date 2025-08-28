@@ -289,6 +289,9 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes32 typehash,
         bytes32 witness
     ) internal returns (bytes32 claimHash, uint256 nonce) {
+        if (commitments.length == 0) {
+            revert InvalidCommitments();
+        }
         if (expires < block.timestamp) {
             revert InvalidExpiration(expires, block.timestamp);
         }

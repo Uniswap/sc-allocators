@@ -46,6 +46,9 @@ interface IOnChainAllocator is IOnChainAllocation {
     /// @notice Thrown if the provided signature is invalid
     error InvalidSignature(address signer, address expectedSigner);
 
+    /// @notice Thrown if the provided commitments are empty
+    error InvalidCommitments();
+
     /// @notice Registers an allocation for a set of tokens
     /// @param commitments The commitments of the allocations
     /// @param arbiter The arbiter of the allocation

@@ -120,6 +120,12 @@ contract OnChainAllocatorTest is Test, TestHelper {
     /*                               allocate()                              */
     /* --------------------------------------------------------------------- */
 
+    function test_allocate_revert_InvalidCommitments() public {
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidCommitments.selector));
+        allocator.allocate(new Lock[](0), arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0));
+    }
+
     function test_allocate_revert_InvalidExpiration() public {
         Lock[] memory commitments = new Lock[](1);
         commitments[0] = _makeLock(address(0), defaultAmount);
