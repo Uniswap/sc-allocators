@@ -12,14 +12,8 @@ interface IOnChainAllocator is IOnChainAllocation {
         bytes32 claimHash;
     }
 
-    /// @notice Thrown if a claim is already active
-    error ClaimActive(address sponsor);
-
     /// @notice Thrown if the caller is invalid
     error InvalidCaller(address caller, address expected);
-
-    /// @notice Thrown if the nonce has already been consumed on the compact contract
-    error NonceAlreadyInUse(uint256 nonce);
 
     /// @notice Thrown if the sponsor does not have enough balance to lock the amount
     error InsufficientBalance(address sponsor, uint256 id, uint256 availableBalance, uint256 expectedBalance);
@@ -35,10 +29,6 @@ interface IOnChainAllocator is IOnChainAllocation {
 
     /// @notice Thrown if the provided lock is not available or expired
     error InvalidClaim(bytes32 claimHash);
-
-    /// @notice Thrown if the current allocation is bigger then uint224
-    /// @dev Allocations above uint224 do not support attestations
-    error ExtensiveAllocationActive(address sponsor, uint256 id);
 
     /// @notice Thrown if the provided amount is not valid
     error InvalidAmount(uint256 amount);
