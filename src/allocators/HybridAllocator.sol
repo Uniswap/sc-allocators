@@ -169,7 +169,7 @@ contract HybridAllocator is IHybridAllocator {
         }
 
         // Check the allocator data for a valid signature by an authorized signer
-        bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), _COMPACT_DOMAIN_SEPARATOR, claimHash));
+        bytes32 digest = _deriveDigest(claimHash, _COMPACT_DOMAIN_SEPARATOR);
         if (!_checkSignature(digest, allocatorData_)) {
             revert InvalidSignature();
         }
@@ -193,7 +193,7 @@ contract HybridAllocator is IHybridAllocator {
         }
 
         // Check the allocator data for a valid signature by an authorized allocator address
-        bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), _COMPACT_DOMAIN_SEPARATOR, claimHash));
+        bytes32 digest = _deriveDigest(claimHash, _COMPACT_DOMAIN_SEPARATOR);
         return _checkSignature(digest, allocatorData);
     }
 
@@ -243,5 +243,15 @@ contract HybridAllocator is IHybridAllocator {
         // Check if the signer is an authorized allocator address
         address signer = AL.recoverSigner(digest, signature);
         return signers[signer] && signer != address(0);
+    }
+
+    function _deriveDigest(bytes32 claimHash, bytes32 domainSeparator) internal pure returns (bytes32 digest) {
+        assembly ("memory-safe") {
+            let m := mload(0x40)
+            mstore(m, 0x1901)
+            mstore(add(m, 0x20), domainSeparator)
+            mstore(add(m, 0x40), claimHash)
+            digest := keccak256(add(m, 0x1e), 0x42)
+        }
     }
 }

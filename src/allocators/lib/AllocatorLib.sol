@@ -24,26 +24,51 @@ library AllocatorLib {
         bytes32 typehash,
         bytes32 witness
     ) internal {
-        uint256[] memory ids = new uint256[](idsAndAmounts.length);
-        for (uint256 i = 0; i < idsAndAmounts.length; i++) {
-            uint256 id = idsAndAmounts[i][0];
-            // Store Id for the identifier
-            ids[i] = id;
-
-            // Store the current balance to calculate the deposited amounts in `executeAllocation`
-            uint256 currentBalance = ERC6909(compactContract).balanceOf(recipient, id);
-            assembly ("memory-safe") {
-                mstore(0x00, PREPARE_ALLOCATION_SELECTOR)
-                mstore(0x20, id)
-                tstore(keccak256(0x00, 0x40), currentBalance)
-            }
-        }
-
-        // Store the nonce for the identifier to ensure the same data is used in `executeAllocation` and protect against replay attacks
-        bytes32 identifier =
-            keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));
         assembly ("memory-safe") {
+            // identifier = keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));
+            let memoryPointer := mload(0x40)
+            mstore(add(memoryPointer, 0x00), PREPARE_ALLOCATION_SELECTOR)
+            mstore(add(memoryPointer, 0x20), recipient)
+            mstore(add(memoryPointer, 0x40), 0xe0) // Store the offset for the ids
+            mstore(add(memoryPointer, 0x60), arbiter)
+            mstore(add(memoryPointer, 0x80), expires)
+            mstore(add(memoryPointer, 0xa0), typehash)
+            mstore(add(memoryPointer, 0xc0), witness)
+
+            mstore(add(memoryPointer, 0xe0), idsAndAmounts.length) // Store the length of the ids
+
+            for { let i := 0 } lt(i, idsAndAmounts.length) { i := add(i, 1) } {
+                let id := calldataload(add(idsAndAmounts.offset, mul(i, 0x40)))
+
+                // Retrieve and store the current balance of the recipient in transient storage
+                mstore(0x14, recipient) // Store the `owner` argument.
+                mstore(0x34, id)
+                mstore(0x00, 0x00fdd58e000000000000000000000000) // `balanceOf(address,uint256)`.
+                let currentBalance :=
+                    mul( // The arguments of `mul` are evaluated from right to left.
+                        mload(0x20),
+                        and( // The arguments of `and` are evaluated from right to left.
+                            gt(returndatasize(), 0x1f), // At least 32 bytes returned.
+                            staticcall(gas(), compactContract, 0x10, 0x44, 0x20, 0x20)
+                        )
+                    )
+                mstore(0x00, PREPARE_ALLOCATION_SELECTOR)
+                mstore(0x20, recipient)
+                mstore(0x40, id)
+                // Store the current balance in transient storage
+                tstore(keccak256(0x00, 0x60), currentBalance)
+
+                // store the id for the identifier creation
+                mstore(add(add(memoryPointer, 0x100), mul(i, 0x20)), id)
+            }
+
+            // Derive the identifier for the transient storage slot to store the nonce
+            let identifier := keccak256(memoryPointer, add(0x100, mul(idsAndAmounts.length, 0x20)))
+            // Store the nonce for the identifier to ensure the same data is used in `executeAllocation` and protect against replay attacks
             tstore(identifier, nonce)
+
+            // Reset the dirtied memory pointer
+            mstore(0x40, memoryPointer) // Store the memory pointer for the identifier creation
         }
     }
 
@@ -56,57 +81,131 @@ library AllocatorLib {
         uint256 expires,
         bytes32 typehash,
         bytes32 witness
-    ) internal view returns (bytes32 claimHash, Lock[] memory commitments) {
-        uint256[] memory ids = new uint256[](idsAndAmounts.length);
-        commitments = new Lock[](idsAndAmounts.length);
+    ) internal view returns (bytes32 claimHash, Lock[] memory) {
         bytes32[] memory commitmentHashes = new bytes32[](idsAndAmounts.length);
-
-        // Check actual balance changes
-        for (uint256 i = 0; i < idsAndAmounts.length; i++) {
-            // Store Id for the identifier
-            ids[i] = idsAndAmounts[i][0];
-
-            uint256 amount = _calculateBalanceChange(compactContract, recipient, ids[i]);
-
-            // Create commitments
-            bytes12 lockTag = bytes12(bytes32(ids[i]));
-            address token = address(uint160(ids[i]));
-            commitmentHashes[i] = keccak256(abi.encode(LOCK_TYPEHASH, lockTag, token, amount));
-            commitments[i] = Lock({lockTag: lockTag, token: token, amount: amount});
-        }
-
-        // Ensure preparation was called with the same data
-        bytes32 identifier =
-            keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));
+        Lock[] memory commitments = new Lock[](idsAndAmounts.length);
+        bytes32 commitmentsHash;
         uint256 storedNonce;
+
         assembly ("memory-safe") {
+            // identifier = keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));
+            let memoryPointer := mload(0x40)
+            mstore(add(memoryPointer, 0x00), PREPARE_ALLOCATION_SELECTOR)
+            mstore(add(memoryPointer, 0x20), recipient)
+            mstore(add(memoryPointer, 0x40), 0xe0) // Store the offset for the ids
+            mstore(add(memoryPointer, 0x60), arbiter)
+            mstore(add(memoryPointer, 0x80), expires)
+            mstore(add(memoryPointer, 0xa0), typehash)
+            mstore(add(memoryPointer, 0xc0), witness)
+
+            mstore(add(memoryPointer, 0xe0), idsAndAmounts.length) // Store the length of the ids
+
+            let freeSlots := add(add(memoryPointer, 0x100), mul(idsAndAmounts.length, 0x20))
+            mstore(freeSlots, LOCK_TYPEHASH) // Store the typehash for the commitment hash creation
+
+            for { let i := 0 } lt(i, idsAndAmounts.length) { i := add(i, 1) } {
+                let id := calldataload(add(idsAndAmounts.offset, mul(i, 0x40)))
+                // store the id for the identifier creation
+                mstore(add(add(memoryPointer, 0x100), mul(i, 0x20)), id)
+
+                // Retrieve and store the current balance of the recipient in transient storage
+                mstore(0x14, recipient) // Store the `owner` argument.
+                mstore(0x34, id)
+                mstore(0x00, 0x00fdd58e000000000000000000000000) // `balanceOf(address,uint256)`.
+                let currentBalance :=
+                    mul( // The arguments of `mul` are evaluated from right to left.
+                        mload(0x20),
+                        and( // The arguments of `and` are evaluated from right to left.
+                            gt(returndatasize(), 0x1f), // At least 32 bytes returned.
+                            staticcall(gas(), compactContract, 0x10, 0x44, 0x20, 0x20)
+                        )
+                    )
+                mstore(0x00, PREPARE_ALLOCATION_SELECTOR)
+                mstore(0x20, recipient)
+                mstore(0x40, id)
+                // Store the current balance in transient storage
+                let oldBalance := tload(keccak256(0x00, 0x60))
+                if iszero(gt(currentBalance, oldBalance)) {
+                    mstore(0x00, 0x9f2aec67) // InvalidBalanceChange()
+                    mstore(0x20, currentBalance)
+                    mstore(0x40, oldBalance)
+                    revert(0x1c, 0x44)
+                }
+                let diffBalance := sub(currentBalance, oldBalance)
+
+                // Store the commitment
+                let commitmentOffset := add(add(commitments, 0x20 /* skip length */ ), mul(i, 0x20))
+                let commitmentContent :=
+                    add(
+                        add(commitments, 0x20 /* skip length */ ),
+                        add(mul(idsAndAmounts.length, 0x20 /* skip offsets */ ), mul(i, 0x60))
+                    )
+                // Store the offset for the commitment in the Lock array
+                mstore(commitmentOffset, commitmentContent) // lockTag
+                // Store the actual Lock struct
+                mstore(add(commitmentContent, 0x00), id) // lockTag
+                mstore(add(commitmentContent, 0x20), id) // token
+                mstore(add(commitmentContent, 0x0c), 0x00) // empty word to separate lockTag and token
+                mstore(add(commitmentContent, 0x40), diffBalance) // amount
+
+                // Create the commitment hash
+                mstore(add(freeSlots, 0x20), id) // lockTag
+                mstore(add(freeSlots, 0x40), id) // token
+                mstore(add(freeSlots, 0x2c), 0) // empty word to separate lockTag and token
+                mstore(add(freeSlots, 0x60), diffBalance) // amount
+                mstore(add(add(commitmentHashes, 0x20 /* skip length */ ), mul(i, 0x20)), keccak256(freeSlots, 0x80))
+            }
+
+            // Derive the identifier for the transient storage slot to store the nonce
+            let identifier := keccak256(memoryPointer, add(0x100, mul(idsAndAmounts.length, 0x20)))
+            // Store the nonce for the identifier to ensure the same data is used in `executeAllocation` and protect against replay attacks
             storedNonce := tload(identifier)
-        }
-        if (nonce != storedNonce) {
-            revert InvalidPreparation();
+            if xor(storedNonce, nonce) {
+                mstore(0x00, 0xf3c41a04) // InvalidPreparation()
+                revert(0x1c, 0x04)
+            }
+
+            // keccak256(abi.encodePacked(commitmentHashes))
+            commitmentsHash :=
+                keccak256(add(commitmentHashes, 0x20 /* skip length */ ), mul(idsAndAmounts.length, 0x20))
+
+            // Reset the dirtied memory pointer
+            mstore(0x40, memoryPointer) // Store the memory pointer for the identifier creation
         }
 
         // Check for a valid registration with the actual data
-        claimHash = getClaimHash(
-            arbiter, recipient, storedNonce, expires, keccak256(abi.encodePacked(commitmentHashes)), witness, typehash
-        );
+        claimHash = getClaimHash(arbiter, recipient, storedNonce, expires, commitmentsHash, witness, typehash);
         if (!ITheCompact(compactContract).isRegistered(recipient, claimHash, typehash)) {
             revert InvalidRegistration(recipient, claimHash, typehash);
         }
-
         return (claimHash, commitments);
     }
 
-    function getCommitmentsHash(Lock[] memory commitments, bytes32 typehash) internal pure returns (bytes32) {
+    function getCommitmentsHash(Lock[] calldata commitments, bytes32 typehash)
+        internal
+        pure
+        returns (bytes32 commitmentsHash)
+    {
         bytes32[] memory commitmentsHashes = new bytes32[](commitments.length);
-        for (uint256 i = 0; i < commitments.length; i++) {
-            commitmentsHashes[i] =
-                keccak256(abi.encode(typehash, commitments[i].lockTag, commitments[i].token, commitments[i].amount));
+
+        assembly ("memory-safe") {
+            let memoryPointer := mload(0x40)
+            mstore(memoryPointer, typehash) // store once to reuse typehash
+
+            for { let i := 0 } lt(i, commitments.length) { i := add(i, 1) } {
+                let commitmentOffset := add(commitments.offset, mul(i, 0x60))
+                mstore(add(memoryPointer, 0x20), calldataload(commitmentOffset)) // lockTag
+                mstore(add(memoryPointer, 0x40), calldataload(add(commitmentOffset, 0x20))) // token
+                mstore(add(memoryPointer, 0x60), calldataload(add(commitmentOffset, 0x40))) // amount
+                let commitmentsHashPointer := add(add(commitmentsHashes, 0x20 /* skip length */ ), mul(i, 0x20))
+                mstore(commitmentsHashPointer, keccak256(memoryPointer, 0x80))
+            }
+            // keccak256(abi.encodePacked(commitmentsHashes))
+            commitmentsHash := keccak256(add(commitmentsHashes, 0x20 /* skip length */ ), mul(commitments.length, 0x20))
         }
-        return keccak256(abi.encodePacked(commitmentsHashes));
     }
 
-    function getCommitmentsHash(Lock[] memory commitments) internal pure returns (bytes32) {
+    function getCommitmentsHash(Lock[] calldata commitments) internal pure returns (bytes32) {
         return getCommitmentsHash(commitments, LOCK_TYPEHASH);
     }
 
@@ -198,24 +297,5 @@ library AllocatorLib {
             // Shift right by period * 24 bits & mask the least significant 24 bits.
             duration := and(shr(mul(resetPeriod, 24), bitpacked), 0xffffff)
         }
-    }
-
-    function _calculateBalanceChange(address compactContract, address recipient, uint256 id)
-        private
-        view
-        returns (uint256 amount)
-    {
-        // Calculate the balance
-        uint256 oldBalance;
-        assembly ("memory-safe") {
-            mstore(0x00, PREPARE_ALLOCATION_SELECTOR)
-            mstore(0x20, id)
-            oldBalance := tload(keccak256(0x00, 0x40))
-        }
-        uint256 newBalance = ERC6909(compactContract).balanceOf(recipient, id);
-        if (newBalance <= oldBalance) {
-            revert InvalidBalanceChange(newBalance, oldBalance);
-        }
-        return newBalance - oldBalance;
     }
 }

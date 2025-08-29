@@ -503,6 +503,10 @@ contract OnChainAllocator is IOnChainAllocator {
     }
 
     function _getTokenHash(uint256 id, address sponsor) internal pure returns (bytes32 tokenHash) {
-        tokenHash = keccak256(abi.encode(id, sponsor));
+        assembly ("memory-safe") {
+            mstore(0x00, id)
+            mstore(0x20, sponsor)
+            tokenHash := keccak256(0x00, 0x40)
+        }
     }
 }
