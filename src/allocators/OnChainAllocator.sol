@@ -87,43 +87,72 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes32 typehash,
         bytes32 witness
     ) public payable returns (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce) {
-        nonce = _getAndUpdateNonce(msg.sender, recipient);
-
+        // Check for empty commitments
         if (commitments.length == 0) {
             revert InvalidCommitments();
         }
 
+        nonce = _getAndUpdateNonce(msg.sender, recipient);
+
+        // Transformed locks will be stored in idsAndAmounts
         uint256[2][] memory idsAndAmounts = new uint256[2][](commitments.length);
 
+        // Init minResetPeriod to the max value
         uint256 minResetPeriod = type(uint256).max;
-        uint256 i = 0;
-        if (commitments[i].token == address(0)) {
-            minResetPeriod = _checkInput(commitments[i], recipient, expires, minResetPeriod);
-            idsAndAmounts[i][0] = AL.toId(commitments[i].lockTag, commitments[i].token);
 
-            if (commitments[i].amount != 0 && commitments[i].amount != msg.value) {
+        // Process native token (zero address) first
+        uint256 i;
+        if (commitments[i].token == address(0)) {
+            // The Compact will revert if invalid value is provided for native token
+            // Possible cases:
+            // 1. The callvalue is zero but the first token is native
+            // 2. the callvalue is nonzero but the first token is non-native
+            // 3. the first token is native and the callvalue doesn't equal the first amount
+
+            // Handle first and third points
+            if (commitments[i].amount == 0 || commitments[i].amount != msg.value) {
                 revert InvalidAmount(commitments[i].amount);
             }
+
+            minResetPeriod = _checkInput(commitments[i], recipient, expires, minResetPeriod);
+
+            idsAndAmounts[i][0] = AL.toId(commitments[i].lockTag, commitments[i].token);
             idsAndAmounts[i][1] = msg.value;
-            i++;
+
+            unchecked {
+                ++i;
+            }
+        } else {
+            // Handle second point
+            if (msg.value != 0) {
+                revert InvalidAmount(msg.value);
+            }
         }
+
+        // Process the rest of the commitments
         for (; i < commitments.length; i++) {
             minResetPeriod = _checkInput(commitments[i], recipient, expires, minResetPeriod);
-            idsAndAmounts[i][0] = AL.toId(commitments[i].lockTag, commitments[i].token);
+
+            address token = commitments[i].token;
+            // Safe to cast - _checkInput validated that the value fits the uint224
             uint224 amount = uint224(commitments[i].amount);
 
-            // If the amount is 0, we use the balance of the contract to deposit.
+            // If the amount is 0, we use the balance of the contract to deposit
             if (amount == 0) {
-                amount = uint224(IERC20(commitments[i].token).balanceOf(address(this)));
+                amount = uint224(IERC20(token).balanceOf(address(this)));
             }
+
+            // Store the lock in idsAndAmounts
+            idsAndAmounts[i][0] = AL.toId(commitments[i].lockTag, token);
             idsAndAmounts[i][1] = amount;
 
             // Approve the compact contract to spend the tokens.
-            if (IERC20(commitments[i].token).allowance(address(this), COMPACT_CONTRACT) < amount) {
-                SafeTransferLib.safeApproveWithRetry(commitments[i].token, COMPACT_CONTRACT, type(uint256).max);
+            if (IERC20(token).allowance(address(this), COMPACT_CONTRACT) < amount) {
+                SafeTransferLib.safeApproveWithRetry(token, COMPACT_CONTRACT, type(uint256).max);
             }
         }
-        // Ensure expiration is not bigger then the smallest reset period
+
+        // Ensure expiration is less then the smallest reset period
         if (expires >= block.timestamp + minResetPeriod) {
             revert InvalidExpiration(expires, block.timestamp + minResetPeriod);
         }
