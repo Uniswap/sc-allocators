@@ -58,6 +58,20 @@ contract MockAllocator is GaslessCrossChainOrderData, OnChainCrossChainOrderData
 }
 
 contract ERC7683Allocator_open is MockAllocator {
+    function test_revert_ShortOrderData() public {
+        // Build a valid order then truncate orderData to force decode revert
+        IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_ = _getOnChainCrossChainOrder();
+        bytes memory od = onChainCrossChainOrder_.orderData;
+        // truncate to less than 0x60
+        assembly ("memory-safe") {
+            mstore(od, 0x40)
+        }
+
+        onChainCrossChainOrder_.orderData = od;
+        vm.prank(user);
+        vm.expectRevert();
+        erc7683Allocator.open(onChainCrossChainOrder_);
+    }
     function test_revert_InvalidOrderDataType() public {
         // Order data type is invalid
         bytes32 falseOrderDataType = keccak256('false');
@@ -198,6 +212,17 @@ contract ERC7683Allocator_open is MockAllocator {
 }
 
 contract ERC7683Allocator_openFor is MockAllocator {
+    function test_revert_ShortOrderData() public {
+        IOriginSettler.GaslessCrossChainOrder memory gasless = _getGaslessCrossChainOrder();
+        bytes memory od = gasless.orderData;
+        assembly ("memory-safe") {
+            mstore(od, 0x40)
+        }
+        gasless.orderData = od;
+        vm.prank(user);
+        vm.expectRevert();
+        erc7683Allocator.openFor(gasless, '', '');
+    }
     function test_revert_InvalidOrderDataType() public {
         // Order data type is invalid
         bytes32 falseOrderDataType = keccak256('false');

@@ -145,11 +145,26 @@ library ERC7683AllocatorLib {
         // 0x40: OrderDataGasless.deposit
 
         assembly ("memory-safe") {
-            let l := sub(orderData.length, 0x20)
-            let s := calldataload(add(orderData.offset, 0x20)) // Relative offset of `orderBytes` from `orderData.offset` and the `OrderData...` struct.
-            order := add(orderData.offset, add(s, 0x20)) // Add 0x20 since the OrderStruct is within the `OrderData...` struct
-            if shr(64, or(s, or(l, orderData.offset))) { revert(l, 0x00) }
+            // Enforce minimum length of 0x60 for: selector (outer), offsets (0x20, 0x40) and the additional input at 0x40
+            // Note: Here, orderData is already the bytes payload; we require at least 0x60 bytes to safely read up to +0x40
+            if lt(orderData.length, 0x60) {
+                // Empty revert to mirror prior behavior on malformed calldata
+                revert(0x00, 0x00)
+            }
 
+            // Load relative offset of nested Order within the OrderData struct
+            let s := calldataload(add(orderData.offset, 0x20))
+
+            // Bounds check: s must be >= 0x20 (points after the first slot) and s + 0x20 within orderData.length
+            // Also ensure no overflow on add(s, 0x20)
+            if or(lt(s, 0x20), gt(add(s, 0x20), orderData.length)) {
+                revert(0x00, 0x00)
+            }
+
+            // Compute pointer to nested Order (calldata pointer)
+            order := add(orderData.offset, add(s, 0x20))
+
+            // Read additional input (expires/deposit) at fixed position 0x40 in the OrderData
             additionalInput := calldataload(add(orderData.offset, 0x40))
         }
     }
