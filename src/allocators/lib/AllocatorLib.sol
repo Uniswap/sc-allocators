@@ -6,6 +6,9 @@ import {ERC6909} from '@solady/tokens/ERC6909.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
+/// @title AllocatorLib
+/// @notice Library for Allocator contracts that interact with The Compact.
+/// @custom:security-contact security@uniswap.org
 library AllocatorLib {
     // bytes4(keccak256('prepareAllocation(address,uint256[2][],address,uint256,bytes32,bytes32,bytes)'));
     bytes4 public constant PREPARE_ALLOCATION_SELECTOR = 0x7ef6597a;

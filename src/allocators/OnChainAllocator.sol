@@ -16,6 +16,7 @@ import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 /// @notice Allocates tokens deposited into the compact.
 /// @dev The contract ensures tokens can not be double spent by a user in a fully decentralized manner.
 /// @dev Users can open orders for themselves or for others by providing a signature or the tokens directly.
+/// @custom:security-contact security@uniswap.org
 contract OnChainAllocator is IOnChainAllocator {
     address public immutable COMPACT_CONTRACT;
     bytes32 public immutable COMPACT_DOMAIN_SEPARATOR;
