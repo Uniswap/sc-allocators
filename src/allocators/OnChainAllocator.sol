@@ -308,7 +308,7 @@ contract OnChainAllocator is IOnChainAllocator {
         }
         // Ensure expiration is not bigger then the smallest reset period
         if (expires >= block.timestamp + minResetPeriod) {
-            revert InvalidExpiration(expires, block.timestamp + minResetPeriod - 1);
+            revert InvalidExpiration(expires, block.timestamp + minResetPeriod);
         }
 
         return (claimHash, nonce);

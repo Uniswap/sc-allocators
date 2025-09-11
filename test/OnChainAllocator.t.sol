@@ -133,7 +133,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         vm.prank(user);
         vm.expectRevert(
-            abi.encodeWithSelector(IOnChainAllocator.InvalidExpiration.selector, expiration, expiration - 1)
+            abi.encodeWithSelector(IOnChainAllocator.InvalidExpiration.selector, expiration, expiration)
         );
         allocator.allocate(commitments, arbiter, uint32(expiration), BATCH_COMPACT_TYPEHASH, bytes32(0));
     }
