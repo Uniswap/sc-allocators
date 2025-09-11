@@ -19,7 +19,6 @@ import {
 
 import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 
-import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 import {IERC7683Allocator} from 'src/interfaces/IERC7683Allocator.sol';
 
 /// @title ERC7683AllocatorLib
