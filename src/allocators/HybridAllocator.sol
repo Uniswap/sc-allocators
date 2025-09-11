@@ -12,6 +12,9 @@ import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 
+/// @title HybridAllocator
+/// @notice Hybrid allocator that can be used with The Compact and the Uniswap Tribunal as the destination settler.
+/// @custom:security-contact security@uniswap.org
 contract HybridAllocator is IHybridAllocator {
     uint96 public immutable ALLOCATOR_ID;
     ITheCompact internal immutable _COMPACT;
