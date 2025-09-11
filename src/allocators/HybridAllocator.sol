@@ -210,6 +210,10 @@ contract HybridAllocator is IHybridAllocator {
             if (AL.splitAllocatorId(idsAndAmounts[0][0]) != ALLOCATOR_ID) {
                 revert InvalidAllocatorId(AL.splitAllocatorId(idsAndAmounts[0][0]), ALLOCATOR_ID);
             }
+            // If first token is native and no value attached, revert early
+            if (msg.value == 0) {
+                revert InvalidValue(0, 1);
+            }
             if (idsAndAmounts[0][1] != 0 && msg.value != idsAndAmounts[0][1]) {
                 revert InvalidValue(msg.value, idsAndAmounts[0][1]);
             }
