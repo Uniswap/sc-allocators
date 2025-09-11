@@ -4,19 +4,8 @@ pragma solidity ^0.8.27;
 
 import {ERC7683AllocatorLib as ERC7683AL} from './lib/ERC7683AllocatorLib.sol';
 import {LibBytes} from '@solady/utils/LibBytes.sol';
-import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
-import {BatchCompact, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
-import {Tribunal} from '@uniswap/tribunal/Tribunal.sol';
-import {Fill, Mandate} from '@uniswap/tribunal/types/TribunalStructs.sol';
 
-import {
-    COMPACT_TYPEHASH_WITH_MANDATE,
-    COMPACT_WITH_MANDATE_TYPESTRING,
-    MANDATE_BATCH_COMPACT_TYPEHASH,
-    MANDATE_FILL_TYPEHASH,
-    MANDATE_RECIPIENT_CALLBACK_TYPEHASH,
-    MANDATE_TYPEHASH
-} from '@uniswap/tribunal/types/TribunalTypeHashes.sol';
+import {COMPACT_TYPEHASH_WITH_MANDATE, COMPACT_WITH_MANDATE_TYPESTRING} from '@uniswap/tribunal/types/TribunalTypeHashes.sol';
 import {HybridAllocator} from 'src/allocators/HybridAllocator.sol';
 import {IERC7683Allocator} from 'src/interfaces/IERC7683Allocator.sol';
 
