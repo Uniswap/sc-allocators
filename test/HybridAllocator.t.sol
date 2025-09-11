@@ -1038,13 +1038,19 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertFalse(allocator.signers(address(0)));
     }
 
-    function test_replaceSigner_success(address newSigner) public {
+    function test_replaceSigner_success_twoStep(address newSigner) public {
         vm.assume(newSigner != signer);
         vm.assume(newSigner != address(0));
         vm.prank(signer);
         allocator.replaceSigner(newSigner);
-        assertEq(allocator.signerCount(), 1);
+        // Not active until accepted by new signer
+        assertTrue(allocator.signers(signer));
+        assertFalse(allocator.signers(newSigner));
+
+        vm.prank(newSigner);
+        allocator.acceptSignerReplacement(signer);
         assertFalse(allocator.signers(signer));
         assertTrue(allocator.signers(newSigner));
+        assertEq(allocator.signerCount(), 1);
     }
 }

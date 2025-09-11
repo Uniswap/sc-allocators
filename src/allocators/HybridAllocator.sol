@@ -23,6 +23,7 @@ contract HybridAllocator is IHybridAllocator {
     uint96 public nonces;
     uint256 public signerCount;
     mapping(address => bool) public signers;
+    mapping(address => address) public pendingSignerReplacement;
 
     modifier onlySigner() {
         if (!signers[msg.sender]) {
@@ -66,7 +67,19 @@ contract HybridAllocator is IHybridAllocator {
         if (newSigner_ == address(0) || signers[newSigner_]) {
             revert InvalidSigner();
         }
-        signers[msg.sender] = false;
+        pendingSignerReplacement[msg.sender] = newSigner_;
+    }
+
+    function acceptSignerReplacement(address oldSigner_) external {
+        address newSigner_ = pendingSignerReplacement[oldSigner_];
+        if (newSigner_ == address(0) || msg.sender != newSigner_) {
+            revert InvalidSigner();
+        }
+        if (!signers[oldSigner_]) {
+            revert InvalidSigner();
+        }
+        delete pendingSignerReplacement[oldSigner_];
+        signers[oldSigner_] = false;
         signers[newSigner_] = true;
     }
 
