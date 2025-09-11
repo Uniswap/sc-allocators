@@ -51,6 +51,7 @@ library ERC7683AllocatorLib {
     error InvalidRecipientCallbackLength();
     error InvalidOrderDataType(bytes32 orderDataType, bytes32 expectedOrderDataType);
     error InvalidOriginSettler(address originSettler, address expectedOriginSettler);
+    error InvalidOriginChainId(uint256 originChainId, uint256 expectedChainId);
     error InvalidOrderData(bytes orderData);
 
     /// @notice Checks and decodes the order data for a gasless cross-chain order.
@@ -77,6 +78,10 @@ library ERC7683AllocatorLib {
         // Check if the originSettler is the allocator
         if (order.originSettler != address(this)) {
             revert InvalidOriginSettler(order.originSettler, address(this));
+        }
+        // Check that the order is intended for the current chain
+        if (order.originChainId != block.chainid) {
+            revert InvalidOriginChainId(order.originChainId, block.chainid);
         }
 
         // Decode the orderData

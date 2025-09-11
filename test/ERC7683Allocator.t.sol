@@ -198,6 +198,16 @@ contract ERC7683Allocator_open is MockAllocator {
 }
 
 contract ERC7683Allocator_openFor is MockAllocator {
+    function test_revert_InvalidOriginChainId(uint256 wrongChainId) public {
+        vm.assume(wrongChainId != block.chainid);
+        IOriginSettler.GaslessCrossChainOrder memory gasless = _getGaslessCrossChainOrder();
+        gasless.originChainId = wrongChainId;
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC7683AL.InvalidOriginChainId.selector, wrongChainId, block.chainid)
+        );
+        erc7683Allocator.openFor(gasless, '', '');
+    }
     function test_revert_InvalidOrderDataType() public {
         // Order data type is invalid
         bytes32 falseOrderDataType = keccak256('false');
