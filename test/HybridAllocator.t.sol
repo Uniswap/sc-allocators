@@ -1053,4 +1053,36 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertTrue(allocator.signers(newSigner));
         assertEq(allocator.signerCount(), 1);
     }
+
+    function test_replaceSigner_multipleProposals_lastWins(address newSigner, address newSigner2) public {
+        vm.assume(newSigner != signer);
+        vm.assume(newSigner != address(0));
+        vm.assume(newSigner2 != signer);
+        vm.assume(newSigner2 != address(0));
+        vm.assume(newSigner2 != newSigner);
+
+        vm.prank(signer);
+        allocator.replaceSigner(newSigner);
+        // can propose a second replacement; last wins
+        vm.prank(signer);
+        allocator.replaceSigner(newSigner2);
+
+        // accepting first should now fail
+        vm.prank(newSigner);
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
+        allocator.acceptSignerReplacement(signer);
+
+        // old signer can no longer propose; new signer can propose
+        vm.prank(newSigner);
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
+        allocator.replaceSigner(newSigner2);
+
+        // accept the latest replacement
+        vm.prank(newSigner2);
+        allocator.acceptSignerReplacement(signer);
+
+        assertFalse(allocator.signers(signer));
+        assertFalse(allocator.signers(newSigner));
+        assertTrue(allocator.signers(newSigner2));
+    }
 }
