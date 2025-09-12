@@ -10,6 +10,8 @@ import {ERC6909} from '@solady/tokens/ERC6909.sol';
 import {SafeTransferLib} from '@solady/utils/SafeTransferLib.sol';
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
+import {Extsload} from '@uniswap/the-compact/lib/Extsload.sol';
+import {IdLib} from '@uniswap/the-compact/lib/IdLib.sol';
 import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 /// @title OnChainAllocator
@@ -35,7 +37,32 @@ contract OnChainAllocator is IOnChainAllocator {
     constructor(address compactContract_) {
         COMPACT_CONTRACT = compactContract_;
         COMPACT_DOMAIN_SEPARATOR = ITheCompact(COMPACT_CONTRACT).DOMAIN_SEPARATOR();
-        ALLOCATOR_ID = ITheCompact(COMPACT_CONTRACT).__registerAllocator(address(this), '');
+        try ITheCompact(COMPACT_CONTRACT).__registerAllocator(address(this), '') returns (uint96 allocatorId) {
+            ALLOCATOR_ID = allocatorId;
+        } catch {
+            // The Compact does not have a getter function for retrieving the status of allocator registration,
+            // so we need to calculate it manually.
+            uint96 allocatorId = IdLib.toAllocatorId(address(this));
+            bytes32 allocatorSlot;
+            assembly ("memory-safe") {
+                // Identical to the registration logic slot calculation in The Compact:
+                // let allocatorSlot := or(_ALLOCATOR_BY_ALLOCATOR_ID_SLOT_SEED, allocatorId)
+                allocatorSlot := or(0x000044036fc77deaed2300000000000000000000000, allocatorId)
+            }
+
+            bytes32 registeredAllocator = Extsload(COMPACT_CONTRACT).extsload(allocatorSlot);
+
+            assembly ("memory-safe") {
+                if iszero(eq(registeredAllocator, address())) {
+                    // revert InvalidAllocatorRegistration(registeredAllocator)
+                    mstore(0x00, 0x161ab6ea)
+                    mstore(0x20, registeredAllocator)
+                    revert(0x1c, 0x24)
+                }
+            }
+
+            ALLOCATOR_ID = allocatorId;
+        }
     }
 
     /// @inheritdoc IOnChainAllocator
