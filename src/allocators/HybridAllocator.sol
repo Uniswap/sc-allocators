@@ -13,6 +13,8 @@ import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 
 contract HybridAllocator is IHybridAllocator {
+    event SignerReplacementProposed(address oldSigner, address newSigner);
+    event SignerReplaced(address oldSigner, address newSigner);
     uint96 public immutable ALLOCATOR_ID;
     ITheCompact internal immutable _COMPACT;
     bytes32 internal immutable _COMPACT_DOMAIN_SEPARATOR;
@@ -23,6 +25,7 @@ contract HybridAllocator is IHybridAllocator {
     uint96 public nonces;
     uint256 public signerCount;
     mapping(address => bool) public signers;
+    mapping(address => address) public pendingSignerReplacement;
 
     modifier onlySigner() {
         if (!signers[msg.sender]) {
@@ -57,6 +60,8 @@ contract HybridAllocator is IHybridAllocator {
         if (signerCount == 1 || !signers[signer_]) {
             revert LastSigner();
         }
+        // Clear any pending replacement proposed by this signer
+        delete pendingSignerReplacement[signer_];
         signers[signer_] = false;
         signerCount--;
     }
@@ -66,8 +71,22 @@ contract HybridAllocator is IHybridAllocator {
         if (newSigner_ == address(0) || signers[newSigner_]) {
             revert InvalidSigner();
         }
-        signers[msg.sender] = false;
+        pendingSignerReplacement[msg.sender] = newSigner_;
+        emit SignerReplacementProposed(msg.sender, newSigner_);
+    }
+
+    function acceptSignerReplacement(address oldSigner_) external {
+        address newSigner_ = pendingSignerReplacement[oldSigner_];
+        if (newSigner_ == address(0) || msg.sender != newSigner_) {
+            revert InvalidSigner();
+        }
+        if (!signers[oldSigner_]) {
+            revert InvalidSigner();
+        }
+        delete pendingSignerReplacement[oldSigner_];
+        signers[oldSigner_] = false;
         signers[newSigner_] = true;
+        emit SignerReplaced(oldSigner_, newSigner_);
     }
 
     /// @inheritdoc IAllocator

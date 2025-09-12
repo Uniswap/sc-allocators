@@ -1008,6 +1008,24 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertTrue(allocator.signers(newSigner));
     }
 
+    function test_removeSigner_clearsPendingReplacement(address newSigner) public {
+        vm.assume(newSigner != signer);
+        vm.assume(newSigner != address(0));
+        vm.prank(signer);
+        allocator.replaceSigner(newSigner);
+        // add a second signer so removal of proposer is permitted
+        address second = makeAddr('second');
+        vm.prank(signer);
+        allocator.addSigner(second);
+        // remove the proposer while pending exists (now allowed)
+        vm.prank(second);
+        allocator.removeSigner(signer);
+        // re-add signer, ensure old pending cannot be accepted
+        vm.prank(newSigner);
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
+        allocator.acceptSignerReplacement(signer);
+    }
+
     function test_removeSigner_success_deleteSelf(address newSigner) public {
         vm.assume(newSigner != signer);
         vm.assume(newSigner != address(0));
@@ -1038,13 +1056,51 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertFalse(allocator.signers(address(0)));
     }
 
-    function test_replaceSigner_success(address newSigner) public {
+    function test_replaceSigner_success_twoStep(address newSigner) public {
         vm.assume(newSigner != signer);
         vm.assume(newSigner != address(0));
         vm.prank(signer);
         allocator.replaceSigner(newSigner);
-        assertEq(allocator.signerCount(), 1);
+        // Not active until accepted by new signer
+        assertTrue(allocator.signers(signer));
+        assertFalse(allocator.signers(newSigner));
+
+        vm.prank(newSigner);
+        allocator.acceptSignerReplacement(signer);
         assertFalse(allocator.signers(signer));
         assertTrue(allocator.signers(newSigner));
+        assertEq(allocator.signerCount(), 1);
+    }
+
+    function test_replaceSigner_multipleProposals_lastWins(address newSigner, address newSigner2) public {
+        vm.assume(newSigner != signer);
+        vm.assume(newSigner != address(0));
+        vm.assume(newSigner2 != signer);
+        vm.assume(newSigner2 != address(0));
+        vm.assume(newSigner2 != newSigner);
+
+        vm.prank(signer);
+        allocator.replaceSigner(newSigner);
+        // can propose a second replacement; last wins
+        vm.prank(signer);
+        allocator.replaceSigner(newSigner2);
+
+        // accepting first should now fail
+        vm.prank(newSigner);
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
+        allocator.acceptSignerReplacement(signer);
+
+        // old signer can no longer propose; new signer can propose
+        vm.prank(newSigner);
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
+        allocator.replaceSigner(newSigner2);
+
+        // accept the latest replacement
+        vm.prank(newSigner2);
+        allocator.acceptSignerReplacement(signer);
+
+        assertFalse(allocator.signers(signer));
+        assertFalse(allocator.signers(newSigner));
+        assertTrue(allocator.signers(newSigner2));
     }
 }
