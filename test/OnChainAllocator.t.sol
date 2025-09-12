@@ -1128,6 +1128,46 @@ contract OnChainAllocatorTest is Test, TestHelper {
         );
     }
 
+    function test_allocateAndRegister_revert_InvalidCommitments() public {
+        Lock[] memory commitments = new Lock[](0);
+
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidCommitments.selector));
+        allocator.allocateAndRegister(
+            recipient, commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0)
+        );
+    }
+
+    function test_allocateAndRegister_revert_InvalidAmount_native() public {
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(0), 1 ether);
+
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidAmount.selector, commitments[0].amount));
+        allocator.allocateAndRegister{value: commitments[0].amount + 1}(
+            recipient, commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0)
+        );
+    }
+
+    function test_allocateAndRegister_revert_InvalidAmount_native_with_zero_deposit() public {
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(0), 0 ether);
+
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidAmount.selector, 0));
+        allocator.allocateAndRegister{value: 0}(
+            recipient, commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0)
+        );
+    }
+
+    function test_allocateAndRegister_revert_InvalidAmount_non_native_with_non_zero_native_call() public {
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(usdc), 1);
+
+        uint256 amount = 1;
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidAmount.selector, amount));
+        allocator.allocateAndRegister{value: amount}(
+            recipient, commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0)
+        );
+    }
+
     function test_allocateAndRegister_revert_InvalidAmount() public {
         Lock[] memory commitments = new Lock[](1);
         commitments[0] = _makeLock(address(usdc), uint256(type(uint224).max) + 1);
@@ -1255,6 +1295,43 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         uint256 id1 = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
         uint256 id2 = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(dai));
+
+        assertEq(registeredAmounts.length, 2);
+        assertEq(registeredAmounts[0], amount1);
+        assertEq(registeredAmounts[1], amount2);
+
+        assertEq(ERC6909(address(compact)).balanceOf(recipient, id1), amount1);
+        assertEq(ERC6909(address(compact)).balanceOf(recipient, id2), amount2);
+
+        uint256[2][] memory idsAndAmounts = new uint256[2][](2);
+        idsAndAmounts[0][0] = id1;
+        idsAndAmounts[0][1] = amount1;
+        idsAndAmounts[1][0] = id2;
+        idsAndAmounts[1][1] = amount2;
+
+        assertTrue(
+            allocator.isClaimAuthorized(claimHash, arbiter, recipient, nonce, defaultExpiration, idsAndAmounts, '')
+        );
+    }
+
+    function test_allocateAndRegister_success_multiple() public {
+        uint256 amount1 = 1 ether;
+        uint256 amount2 = 2 ether;
+
+        usdc.mint(address(allocator), amount2);
+
+        Lock[] memory commitments = new Lock[](2);
+        commitments[0] = _makeLock(address(0), amount1);
+        commitments[1] = _makeLock(address(usdc), amount2);
+
+        vm.deal(caller, amount1);
+        vm.prank(caller);
+        (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce) = allocator.allocateAndRegister{
+            value: amount1
+        }(recipient, commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0));
+
+        uint256 id1 = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0));
+        uint256 id2 = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
 
         assertEq(registeredAmounts.length, 2);
         assertEq(registeredAmounts[0], amount1);
