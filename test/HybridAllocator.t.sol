@@ -1008,6 +1008,24 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertTrue(allocator.signers(newSigner));
     }
 
+    function test_removeSigner_clearsPendingReplacement(address newSigner) public {
+        vm.assume(newSigner != signer);
+        vm.assume(newSigner != address(0));
+        vm.prank(signer);
+        allocator.replaceSigner(newSigner);
+        // add a second signer so removal of proposer is permitted
+        address second = makeAddr('second');
+        vm.prank(signer);
+        allocator.addSigner(second);
+        // remove the proposer while pending exists (now allowed)
+        vm.prank(second);
+        allocator.removeSigner(signer);
+        // re-add signer, ensure old pending cannot be accepted
+        vm.prank(newSigner);
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
+        allocator.acceptSignerReplacement(signer);
+    }
+
     function test_removeSigner_success_deleteSelf(address newSigner) public {
         vm.assume(newSigner != signer);
         vm.assume(newSigner != address(0));

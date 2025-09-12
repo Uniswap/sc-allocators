@@ -60,6 +60,8 @@ contract HybridAllocator is IHybridAllocator {
         if (signerCount == 1 || !signers[signer_]) {
             revert LastSigner();
         }
+        // Clear any pending replacement proposed by this signer
+        delete pendingSignerReplacement[signer_];
         signers[signer_] = false;
         signerCount--;
     }
