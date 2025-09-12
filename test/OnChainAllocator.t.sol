@@ -1147,6 +1147,27 @@ contract OnChainAllocatorTest is Test, TestHelper {
         );
     }
 
+    function test_allocateAndRegister_revert_InvalidAmount_native_with_zero_deposit() public {
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(0), 0 ether);
+
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidAmount.selector, 0));
+        allocator.allocateAndRegister{value: 0}(
+            recipient, commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0)
+        );
+    }
+
+    function test_allocateAndRegister_revert_InvalidAmount_non_native_with_non_zero_native_call() public {
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(usdc), 1);
+
+        uint256 amount = 1;
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidAmount.selector, amount));
+        allocator.allocateAndRegister{value: amount}(
+            recipient, commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0)
+        );
+    }
+
     function test_allocateAndRegister_revert_InvalidAmount() public {
         Lock[] memory commitments = new Lock[](1);
         commitments[0] = _makeLock(address(usdc), uint256(type(uint224).max) + 1);
