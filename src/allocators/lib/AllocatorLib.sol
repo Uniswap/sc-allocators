@@ -4,10 +4,15 @@ pragma solidity ^0.8.27;
 import {ERC6909} from '@solady/tokens/ERC6909.sol';
 
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
+import {IdLib, ResetPeriod} from '@uniswap/the-compact/lib/IdLib.sol';
 import {LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 library AllocatorLib {
+    using IdLib for bytes12;
+    using IdLib for ResetPeriod;
+
     // bytes4(keccak256('prepareAllocation(address,uint256[2][],address,uint256,bytes32,bytes32,bytes)'));
+
     bytes4 public constant PREPARE_ALLOCATION_SELECTOR = 0x7ef6597a;
 
     error InvalidBalanceChange(uint256 newBalance, uint256 oldBalance);
@@ -187,17 +192,7 @@ library AllocatorLib {
     }
 
     function toSeconds(bytes12 lockTag) internal pure returns (uint256 duration) {
-        assembly ("memory-safe") {
-            let resetPeriod := shr(253, shl(1, lockTag))
-
-            // Bitpacked durations in 24-bit segments:
-            // 278d00  094890  015180  000f3c  000258  00003c  00000f  000001
-            // 30 days 7 days  1 day   1 hour  10 min  1 min   15 sec  1 sec
-            let bitpacked := 0x278d00094890015180000f3c00025800003c00000f000001
-
-            // Shift right by period * 24 bits & mask the least significant 24 bits.
-            duration := and(shr(mul(resetPeriod, 24), bitpacked), 0xffffff)
-        }
+        return lockTag.toResetPeriod().toSeconds();
     }
 
     function _calculateBalanceChange(address compactContract, address recipient, uint256 id)
