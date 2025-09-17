@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {ERC6909} from '@solady/tokens/ERC6909.sol';
-
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
@@ -126,7 +124,7 @@ library AllocatorLib {
                 // Store the current balance in transient storage
                 let oldBalance := tload(keccak256(0x00, 0x60))
                 if iszero(gt(currentBalance, oldBalance)) {
-                    mstore(0x00, 0x9f2aec67) // InvalidBalanceChange()
+                    mstore(0x00, 0x9f2aec67) // InvalidBalanceChange(uint256,uint256)
                     mstore(0x20, currentBalance)
                     mstore(0x40, oldBalance)
                     revert(0x1c, 0x44)
@@ -141,7 +139,7 @@ library AllocatorLib {
                         add(mul(idsAndAmounts.length, 0x20 /* skip offsets */ ), mul(i, 0x60))
                     )
                 // Store the offset for the commitment in the Lock array
-                mstore(commitmentOffset, commitmentContent) // lockTag
+                mstore(commitmentOffset, commitmentContent)
                 // Store the actual Lock struct
                 mstore(add(commitmentContent, 0x00), id) // lockTag
                 mstore(add(commitmentContent, 0x20), id) // token
@@ -194,9 +192,7 @@ library AllocatorLib {
 
             for { let i := 0 } lt(i, commitments.length) { i := add(i, 1) } {
                 let commitmentOffset := add(commitments.offset, mul(i, 0x60))
-                mstore(add(memoryPointer, 0x20), calldataload(commitmentOffset)) // lockTag
-                mstore(add(memoryPointer, 0x40), calldataload(add(commitmentOffset, 0x20))) // token
-                mstore(add(memoryPointer, 0x60), calldataload(add(commitmentOffset, 0x40))) // amount
+                calldatacopy(add(memoryPointer, 0x20), commitmentOffset, 0x60) // load lockTag, token and amount (3 words from calldata)
                 let commitmentsHashPointer := add(add(commitmentsHashes, 0x20 /* skip length */ ), mul(i, 0x20))
                 mstore(commitmentsHashPointer, keccak256(memoryPointer, 0x80))
             }
