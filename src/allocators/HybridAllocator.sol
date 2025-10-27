@@ -26,7 +26,7 @@ contract HybridAllocator is IHybridAllocator {
 
     modifier onlySigner() {
         if (!signers[msg.sender]) {
-            revert InvalidSigner();
+            revert CallerNotSigner();
         }
         _;
     }
@@ -54,8 +54,11 @@ contract HybridAllocator is IHybridAllocator {
 
     /// @inheritdoc IHybridAllocator
     function removeSigner(address signer_) external onlySigner {
-        if (signerCount == 1 || !signers[signer_]) {
+        if (signerCount == 1) {
             revert LastSigner();
+        }
+        if (!signers[signer_]) {
+            revert InvalidSigner();
         }
         signers[signer_] = false;
         signerCount--;
