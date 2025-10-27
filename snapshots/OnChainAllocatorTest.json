@@ -4,6 +4,6 @@
     "allocate_erc20": "127838",
     "allocate_native": "127598",
     "allocate_second_erc20": "95850",
-    "onchain_execute_double": "343044",
-    "onchain_execute_single": "216697"
+    "onchain_execute_double": "343088",
+    "onchain_execute_single": "216741"
 }

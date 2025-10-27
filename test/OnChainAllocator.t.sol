@@ -939,6 +939,34 @@ contract OnChainAllocatorTest is Test, TestHelper {
         assertEq(allocator.nonces(caller), 0);
     }
 
+    function test_prepareAllocation_revert_InvalidExpiration() public {
+        uint256 amount = defaultAmount;
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), amount);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IOnChainAllocator.InvalidExpiration.selector, uint256(type(uint32).max) + 1, type(uint32).max
+            )
+        );
+        allocator.prepareAllocation(
+            recipient, idsAndAmounts, arbiter, uint256(type(uint32).max) + 1, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+    }
+
+    function test_executeAllocation_revert_InvalidExpiration() public {
+        uint256 amount = defaultAmount;
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), amount);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IOnChainAllocator.InvalidExpiration.selector, uint256(type(uint32).max) + 1, type(uint32).max
+            )
+        );
+        allocator.executeAllocation(
+            recipient, idsAndAmounts, arbiter, uint256(type(uint32).max) + 1, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+    }
+
     function test_executeAllocation_success_viaCaller_singleERC20() public {
         uint256 amount = defaultAmount;
         uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), amount);

@@ -156,6 +156,9 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes32 witness,
         bytes calldata /* orderData */
     ) external returns (uint256 nonce) {
+        if (expires > type(uint32).max) {
+            revert InvalidExpiration(expires, type(uint32).max);
+        }
         uint32 expiration = uint32(expires);
         nonce = _getNonce(msg.sender, recipient);
         AL.prepareAllocation(COMPACT_CONTRACT, nonce, recipient, idsAndAmounts, arbiter, expiration, typehash, witness);
@@ -172,8 +175,11 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes32 witness,
         bytes calldata /* orderData */
     ) external {
-        uint256 nonce = _getAndUpdateNonce(msg.sender, recipient);
+        if (expires > type(uint32).max) {
+            revert InvalidExpiration(expires, type(uint32).max);
+        }
         uint32 expiration = uint32(expires);
+        uint256 nonce = _getAndUpdateNonce(msg.sender, recipient);
 
         (bytes32 claimHash, Lock[] memory commitments) =
             _executeAllocation(nonce, recipient, idsAndAmounts, arbiter, expiration, typehash, witness);
