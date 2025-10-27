@@ -314,13 +314,13 @@ library ERC7683AllocatorLib {
 
     function addressToBytes32(address input) internal pure returns (bytes32 output) {
         assembly ("memory-safe") {
-            output := shr(96, shl(96, input))
+            output := and(input, 0xffffffffffffffffffffffffffffffffffffffff)
         }
     }
 
     function sanitizeUint32(uint32 value) internal pure returns (uint32) {
         assembly ("memory-safe") {
-            value := shr(224, shl(224, value))
+            value := and(value, 0xffffffff)
         }
         return value;
     }
