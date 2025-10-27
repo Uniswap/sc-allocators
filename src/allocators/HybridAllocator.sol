@@ -17,12 +17,12 @@ contract HybridAllocator is IHybridAllocator {
     ITheCompact internal immutable _COMPACT;
     bytes32 internal immutable _COMPACT_DOMAIN_SEPARATOR;
 
-    mapping(bytes32 => bool) internal claims;
+    mapping(bytes32 claimHash => bool allocated) internal claims;
 
     /// @dev The off chain allocator must use a uint256 nonce where the first 160 bits are the sponsors address to ensure no nonce collisions
     uint96 public nonces;
     uint256 public signerCount;
-    mapping(address => bool) public signers;
+    mapping(address signer => bool isSigner) public signers;
 
     modifier onlySigner() {
         if (!signers[msg.sender]) {
