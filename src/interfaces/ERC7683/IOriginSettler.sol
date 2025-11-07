@@ -14,7 +14,8 @@ interface IOriginSettler {
         /// @dev The address of the user who is initiating the swap,
         /// whose input tokens will be taken and escrowed
         address user;
-        /// @dev Nonce to be used as replay protection for the order
+        /// @dev Nonce to be used as replay protection for the order.
+        ///      If the order includes a deposit, the allocator will assign the next free nonce and ignore the GaslessCrossChainOrder.nonce.
         uint256 nonce;
         /// @dev The chainId of the origin chain
         uint256 originChainId;
@@ -57,6 +58,8 @@ interface IOriginSettler {
         /// @dev The timestamp by which the order must be filled on the destination chain(s)
         uint32 fillDeadline;
         /// @dev The unique identifier for this order within this settlement system
+        /// @dev Might end up different from the GaslessCrossChainOrder.nonce:
+        ///      If the order includes a deposit, the allocator will assign the next free nonce and ignore the GaslessCrossChainOrder.nonce.
         bytes32 orderId;
         /// @dev The max outputs that the filler will send. It's possible the actual amount depends on the state of the destination
         ///      chain (destination dutch auction, for instance), so these outputs should be considered a cap on filler liabilities.
