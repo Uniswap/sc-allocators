@@ -248,6 +248,11 @@ library AllocatorLib {
             return address(0);
         }
 
+        // The s value must lie in the lower half-order of the secp256k1 curve
+        if (uint256(s) > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0) {
+            return address(0);
+        }
+
         return ecrecover(digest, v, r, s);
     }
 
