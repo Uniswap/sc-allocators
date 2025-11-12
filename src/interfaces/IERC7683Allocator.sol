@@ -7,6 +7,9 @@ import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 import {Adjustment, Fill, Mandate, RecipientCallback} from '@uniswap/tribunal/types/TribunalStructs.sol';
 
+/// @title IERC7683Allocator
+/// @notice Interface for ERC-7683 cross-chain order allocators integrating with The Compact protocol
+/// @dev Extends IOriginSettler for cross-chain intent settlement and IAllocator for token allocation authorization
 interface IERC7683Allocator is IOriginSettler, IAllocator {
     struct OrderDataOnChain {
         Order order; // The remaining BatchCompact and Mandate data

@@ -6,8 +6,12 @@ import {ERC6909} from '@solady/tokens/ERC6909.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
+/// @title AllocatorLib
+/// @notice Library providing core functionality for atomic token allocation verification using transient storage
+/// @dev Implements prepare-execute pattern for ensuring token balance changes match expected allocations
 library AllocatorLib {
-    // bytes4(keccak256('prepareAllocation(address,uint256[2][],address,uint256,bytes32,bytes32,bytes)'));
+    /// @notice Function selector for the prepareAllocation function, used as part of transient storage key derivation
+    /// @dev bytes4(keccak256('prepareAllocation(address,uint256[2][],address,uint256,bytes32,bytes32,bytes)'))
     bytes4 public constant PREPARE_ALLOCATION_SELECTOR = 0x7ef6597a;
 
     error InvalidBalanceChange(uint256 newBalance, uint256 oldBalance);

@@ -9,10 +9,15 @@ import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 
 import {AllocatorLib as AL} from './lib/AllocatorLib.sol';
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
+import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAllocation.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 
+/// @title HybridAllocator
+/// @notice Hybrid allocator supporting both on-chain and off-chain allocation authorization mechanisms
+/// @dev Combines direct deposit functionality with signature-based off-chain authorization through multiple authorized signers
 contract HybridAllocator is IHybridAllocator {
+    /// @notice The unique identifier for this allocator within The Compact protocol
     uint96 public immutable ALLOCATOR_ID;
     ITheCompact internal immutable _COMPACT;
     bytes32 internal immutable _COMPACT_DOMAIN_SEPARATOR;
@@ -21,7 +26,9 @@ contract HybridAllocator is IHybridAllocator {
 
     /// @dev The off chain allocator must use a uint256 nonce where the first 160 bits are the sponsors address to ensure no nonce collisions
     uint96 public nonces;
+    /// @notice The total number of authorized signers for off-chain allocations
     uint256 public signerCount;
+    /// @notice Mapping tracking which addresses are authorized signers for off-chain allocations
     mapping(address signer => bool isSigner) public signers;
 
     modifier onlySigner() {
@@ -114,6 +121,7 @@ contract HybridAllocator is IHybridAllocator {
         return (claimHash, registeredAmounts, nonces);
     }
 
+    /// @inheritdoc IOnChainAllocation
     function prepareAllocation(
         address recipient,
         uint256[2][] calldata idsAndAmounts,
@@ -127,6 +135,7 @@ contract HybridAllocator is IHybridAllocator {
         AL.prepareAllocation(address(_COMPACT), nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
     }
 
+    /// @inheritdoc IOnChainAllocation
     function executeAllocation(
         address recipient,
         uint256[2][] calldata idsAndAmounts,

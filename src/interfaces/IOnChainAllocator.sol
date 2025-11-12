@@ -5,6 +5,8 @@ pragma solidity ^0.8.27;
 import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAllocation.sol';
 import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
+/// @title IOnChainAllocator
+/// @notice Interface for the on-chain token allocator that prevents double-spending in a fully decentralized manner
 interface IOnChainAllocator is IOnChainAllocation {
     struct Allocation {
         uint32 expires;
