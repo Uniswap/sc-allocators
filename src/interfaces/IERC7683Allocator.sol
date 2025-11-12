@@ -34,13 +34,18 @@ interface IERC7683Allocator is IOriginSettler, IAllocator {
     error InvalidRecipientCallbackLength();
 
     /// @notice Returns the type string of the compact including the witness
+    /// @return The type string used as the compact witness
     function getCompactWitnessTypeString() external pure returns (string memory);
 
     /// @notice Returns the nonce for a given order and caller
     /// @dev The nonce is the most significant 96 bits. The least significant 160 bits must be the sponsor address
+    /// @param order_ The gasless cross-chain order
+    /// @param caller The address of the caller, potentially impacting the nonce in a deposit scenario
+    /// @return nonce The nonce for the given order and caller
     function getNonce(GaslessCrossChainOrder calldata order_, address caller) external view returns (uint256 nonce);
 
     /// @notice Creates the filler data for the open event to be used on the IDestinationSettler
     /// @param claimant_ The address claiming the origin tokens after a successful fill (typically the address of the filler)
+    /// @return fillerData The encoded filler data
     function createFillerData(address claimant_) external pure returns (bytes memory fillerData);
 }

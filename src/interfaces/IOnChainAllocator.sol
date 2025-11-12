@@ -45,6 +45,8 @@ interface IOnChainAllocator is IOnChainAllocation {
     /// @param expires The expiration of the allocation
     /// @param typehash The typehash of the allocation
     /// @param witness The witness of the allocation
+    /// @return claimHash The hash of the claim
+    /// @return claimNonce The nonce of the claim
     function allocate(Lock[] memory commitments, address arbiter, uint32 expires, bytes32 typehash, bytes32 witness)
         external
         returns (bytes32 claimHash, uint256 claimNonce);
@@ -57,6 +59,8 @@ interface IOnChainAllocator is IOnChainAllocation {
     /// @param typehash The typehash of the allocation
     /// @param witness The witness of the allocation
     /// @param signature The signature of the allocation
+    /// @return claimHash The hash of the claim
+    /// @return claimNonce The nonce of the claim
     function allocateFor(
         address sponsor,
         Lock[] memory commitments,
@@ -75,6 +79,9 @@ interface IOnChainAllocator is IOnChainAllocation {
     /// @param expires The expiration of the allocation
     /// @param typehash The typehash of the allocation
     /// @param witness The witness of the allocation
+    /// @return claimHash The hash of the claim
+    /// @return registeredAmounts The actual amounts registered for each commitment
+    /// @return nonce The nonce of the allocation
     function allocateAndRegister(
         address recipient,
         Lock[] calldata commitments,
