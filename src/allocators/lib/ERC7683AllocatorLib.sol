@@ -216,7 +216,7 @@ library ERC7683AllocatorLib {
         maxSpent[0] = spent;
         resolvedOrder.maxSpent = maxSpent;
 
-        resolvedOrder.minReceived = createMinimumReceived(orderData.commitments);
+        resolvedOrder.minReceived = createMinimumReceived(orderData.commitments, mainFill.scalingFactor);
 
         return resolvedOrder;
     }
@@ -224,14 +224,21 @@ library ERC7683AllocatorLib {
     /// @notice Creates the minimum received Output array for an order.
     /// @param commitments The sponsor's commitments of the order.
     /// @return minReceived The minimum received Output array for the order.
-    function createMinimumReceived(Lock[] calldata commitments)
+    function createMinimumReceived(Lock[] calldata commitments, uint256 scalingFactor)
         internal
         view
         returns (IOriginSettler.Output[] memory)
     {
         IOriginSettler.Output[] memory minReceived = new IOriginSettler.Output[](commitments.length);
 
+        bool useExactIn = scalingFactor > 1e18;
+
         for (uint256 i = 0; i < commitments.length; i++) {
+            uint256 amount = 0;
+            if (useExactIn) {
+                amount = commitments[i].amount;
+            }
+
             IOriginSettler.Output memory received = IOriginSettler.Output({
                 token: addressToBytes32(commitments[i].token),
                 amount: commitments[i].amount,

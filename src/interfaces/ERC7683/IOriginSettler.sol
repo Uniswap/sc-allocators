@@ -107,6 +107,7 @@ interface IOriginSettler {
     /// @dev To be called by the filler.
     /// @dev This method must emit the Open event
     /// @dev Native token deposits are not supported to align with the ERC7683 standard
+    /// @dev fee-on-transfer tokens are not supported
     /// @param order The GaslessCrossChainOrder definition
     /// @param signature The user's signature over the order
     /// @param originFillerData Any filler-defined data required by the settler
@@ -117,6 +118,7 @@ interface IOriginSettler {
     /// @dev To be called by the user
     /// @dev This method must emit the Open event
     /// @dev Native token deposits are not supported to align with the ERC7683 standard
+    /// @dev fee-on-transfer tokens are not supported
     /// @param order The OnchainCrossChainOrder definition
     function open(OnchainCrossChainOrder calldata order) external;
 
