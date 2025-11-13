@@ -15,10 +15,18 @@ library AllocatorLib {
     /// @dev bytes4(keccak256('prepareAllocation(address,uint256[2][],address,uint256,bytes32,bytes32,bytes)'))
     bytes4 public constant PREPARE_ALLOCATION_SELECTOR = 0x7ef6597a;
 
+    /// @notice Function selector for the exttload function that gets called on the compact
+    /// @dev bytes4(keccak256('exttload(bytes32)'))
+    uint256 private constant EXTTLOAD_SELECTOR = 0xf135baaa;
+
+    /// @notice Transient storage slot for the reentrancy guard within the compact
+    uint256 private constant REENTRANCY_GUARD_SLOT = 0x929eee149b4bd21268;
+
     error InvalidBalanceChange(uint256 newBalance, uint256 oldBalance);
     error InvalidPreparation();
     error InvalidAllocatorId(uint96 providedId, uint96 allocatorId);
     error InvalidRegistration(address recipient, bytes32 claimHash, bytes32 typehash);
+    error CompactReentrancyGuardActive();
 
     function prepareAllocation(
         address compactContract,
@@ -31,6 +39,9 @@ library AllocatorLib {
         bytes32 witness,
         uint96 allocatorId
     ) internal {
+        // Before preparing the allocation, check if the compact's reentrancy guard is active
+        checkCompactReentrancyGuardAndRevert(compactContract);
+
         assembly ("memory-safe") {
             // identifier = keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));
             let memoryPointer := mload(0x40)
@@ -101,6 +112,9 @@ library AllocatorLib {
         Lock[] memory commitments = new Lock[](idsAndAmounts.length);
         bytes32 commitmentsHash;
         uint256 storedNonce;
+
+        // Before executing the allocation, check if the compact's reentrancy guard is active
+        checkCompactReentrancyGuardAndRevert(compactContract);
 
         assembly ("memory-safe") {
             // identifier = keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));
@@ -194,6 +208,32 @@ library AllocatorLib {
             revert InvalidRegistration(recipient, claimHash, typehash);
         }
         return (claimHash, commitments);
+    }
+
+    function checkCompactReentrancyGuardAndRevert(address compactContract) internal view {
+        assembly ("memory-safe") {
+            mstore(0x00, EXTTLOAD_SELECTOR)
+            mstore(0x20, REENTRANCY_GUARD_SLOT)
+            if gt(
+                or( // The arguments of `or` are evaluated from right to left.
+                    mload(0x20),
+                    mul(
+                        2, // will end up as zero if the call is successful, else the 2 will trigger the revert.
+                        iszero(
+                            and(
+                                gt(returndatasize(), 0x1f), // At least 32 bytes returned.
+                                staticcall(gas(), compactContract, 0x1c, 0x24, 0x20, 0x20)
+                            )
+                        )
+                    )
+                ),
+                1 // A failing call or a successful call with a value of 1 will trigger the revert.
+            ) {
+                // revert CompactReentrancyGuardActive()
+                mstore(0, 0x87621186)
+                revert(0x1c, 0x04)
+            }
+        }
     }
 
     function getCommitmentsHash(Lock[] calldata commitments, bytes32 typehash)

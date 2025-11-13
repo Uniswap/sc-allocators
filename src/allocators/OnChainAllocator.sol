@@ -8,19 +8,21 @@ import {AllocatorLib as AL} from './lib/AllocatorLib.sol';
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import {ERC6909} from '@solady/tokens/ERC6909.sol';
 import {SafeTransferLib} from '@solady/utils/SafeTransferLib.sol';
+
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAllocation.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {Extsload} from '@uniswap/the-compact/lib/Extsload.sol';
 import {IdLib} from '@uniswap/the-compact/lib/IdLib.sol';
 import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
+import {Utility} from '@uniswap/the-compact/utility/Utility.sol';
 
 /// @title OnChainAllocator
 /// @notice Allocates tokens deposited into the compact.
 /// @dev The contract ensures tokens can not be double spent by a user in a fully decentralized manner.
 /// @dev Users can open orders for themselves or for others by providing a signature or the tokens directly.
 /// @custom:security-contact security@uniswap.org
-contract OnChainAllocator is IOnChainAllocator {
+contract OnChainAllocator is IOnChainAllocator, Utility {
     /// @notice The chain id at the time of deployment
     uint256 private immutable _INITIAL_CHAIN_ID;
     /// @notice The address of The Compact protocol contract for token management and claim registration
@@ -321,6 +323,8 @@ contract OnChainAllocator is IOnChainAllocator {
     /// @inheritdoc IAllocator
     function attest(address, address from_, address, uint256 id_, uint256 amount_) external returns (bytes4) {
         // Can be called by anyone, as this will only clean up expired allocations.
+
+        // do not use the settled balance, since this will be called within the _beforeTokenTransfer hook of the compact.
         uint256 balance = ERC6909(COMPACT_CONTRACT).balanceOf(from_, id_);
 
         // Check unlocked balance
@@ -460,7 +464,7 @@ contract OnChainAllocator is IOnChainAllocator {
     function _checkBalance(address sponsor, Lock calldata commitment) private returns (bytes32 tokenHash) {
         // Check the balance of the recipient is sufficient
         tokenHash = _getTokenHash(commitment.lockTag, commitment.token, sponsor);
-        uint256 balance = ERC6909(COMPACT_CONTRACT).balanceOf(sponsor, AL.toId(commitment.lockTag, commitment.token));
+        uint256 balance = settledBalanceOf(sponsor, AL.toId(commitment.lockTag, commitment.token));
         uint256 allocatedBalance = _allocatedBalance(tokenHash);
         uint256 requiredBalance = allocatedBalance + commitment.amount;
         if (requiredBalance > balance) {
