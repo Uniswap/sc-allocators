@@ -75,6 +75,7 @@ contract ERC7683Allocator_open is MockAllocator {
         vm.expectRevert();
         erc7683Allocator.open(onChainCrossChainOrder_);
     }
+
     function test_revert_InvalidOrderDataType() public {
         // Order data type is invalid
         bytes32 falseOrderDataType = keccak256('false');
@@ -232,11 +233,10 @@ contract ERC7683Allocator_openFor is MockAllocator {
         IOriginSettler.GaslessCrossChainOrder memory gasless = _getGaslessCrossChainOrder();
         gasless.originChainId = wrongChainId;
         vm.prank(user);
-        vm.expectRevert(
-            abi.encodeWithSelector(ERC7683AL.InvalidOriginChainId.selector, wrongChainId, block.chainid)
-        );
+        vm.expectRevert(abi.encodeWithSelector(ERC7683AL.InvalidOriginChainId.selector, wrongChainId, block.chainid));
         erc7683Allocator.openFor(gasless, '', '');
     }
+
     function test_revert_InvalidOrderDataType() public {
         // Order data type is invalid
         bytes32 falseOrderDataType = keccak256('false');
