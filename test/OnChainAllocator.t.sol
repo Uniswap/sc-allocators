@@ -73,7 +73,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         arbiter = makeAddr('arbiter');
         (user, userPK) = makeAddrAndKey('user');
-        allocator = new OnChainAllocator(address(compact));
+        allocator = new OnChainAllocator();
 
         usdc = new ERC20Mock('USDC', 'USDC');
         dai = new ERC20Mock('DAI', 'DAI');

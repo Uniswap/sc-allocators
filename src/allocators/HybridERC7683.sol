@@ -18,7 +18,7 @@ import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
     error OnlyDepositsAllowed();
 
-    constructor(address compact, address signer) HybridAllocator(compact, signer) {}
+    constructor(address signer) HybridAllocator(signer) {}
 
     /// @inheritdoc IOriginSettler
     function openFor(GaslessCrossChainOrder calldata order, bytes calldata sponsorSignature, bytes calldata) external {

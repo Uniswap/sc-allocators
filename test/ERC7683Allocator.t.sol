@@ -54,7 +54,7 @@ contract MockAllocator is GaslessCrossChainOrderData, OnChainCrossChainOrderData
         TheCompact compactContract_ = DeployTheCompact(new DeployTheCompact()).deployTheCompact();
         assertEq(address(compactContract_), address(0x00000000000000171ede64904551eeDF3C6C9788));
 
-        erc7683Allocator = new ERC7683Allocator(address(compactContract_));
+        erc7683Allocator = new ERC7683Allocator();
         _setUp(address(erc7683Allocator), compactContract_, _composeNonceUint(user, 1));
         super.setUp();
     }

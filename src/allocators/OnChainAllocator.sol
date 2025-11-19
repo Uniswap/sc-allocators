@@ -25,8 +25,6 @@ import {Utility} from '@uniswap/the-compact/utility/Utility.sol';
 contract OnChainAllocator is IOnChainAllocator, Utility {
     /// @notice The chain id at the time of deployment
     uint256 private immutable _INITIAL_CHAIN_ID;
-    /// @notice The address of The Compact protocol contract for token management and claim registration
-    address public immutable COMPACT_CONTRACT;
     /// @notice The EIP-712 domain separator for The Compact protocol, used for signature verification
     bytes32 public immutable COMPACT_DOMAIN_SEPARATOR;
     /// @notice The unique identifier for this allocator within The Compact protocol
@@ -39,17 +37,16 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
     mapping(address user => uint96 nonce) public nonces;
 
     modifier onlyCompact() {
-        if (msg.sender != COMPACT_CONTRACT) {
-            revert InvalidCaller(msg.sender, COMPACT_CONTRACT);
+        if (msg.sender != AL.THE_COMPACT) {
+            revert InvalidCaller(msg.sender, AL.THE_COMPACT);
         }
         _;
     }
 
-    constructor(address compactContract_) {
+    constructor() {
         _INITIAL_CHAIN_ID = block.chainid;
-        COMPACT_CONTRACT = compactContract_;
-        COMPACT_DOMAIN_SEPARATOR = ITheCompact(COMPACT_CONTRACT).DOMAIN_SEPARATOR();
-        try ITheCompact(COMPACT_CONTRACT).__registerAllocator(address(this), '') returns (uint96 allocatorId) {
+        COMPACT_DOMAIN_SEPARATOR = ITheCompact(AL.THE_COMPACT).DOMAIN_SEPARATOR();
+        try ITheCompact(AL.THE_COMPACT).__registerAllocator(address(this), '') returns (uint96 allocatorId) {
             ALLOCATOR_ID = allocatorId;
         } catch {
             // The Compact does not have a getter function for retrieving the status of allocator registration,
@@ -62,7 +59,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
                 allocatorSlot := or(0x000044036fc77deaed2300000000000000000000000, allocatorId)
             }
 
-            bytes32 registeredAllocator = Extsload(COMPACT_CONTRACT).extsload(allocatorSlot);
+            bytes32 registeredAllocator = Extsload(AL.THE_COMPACT).extsload(allocatorSlot);
 
             assembly ("memory-safe") {
                 if iszero(eq(registeredAllocator, address())) {
@@ -106,7 +103,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
             bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), COMPACT_DOMAIN_SEPARATOR, claimHash));
             if (block.chainid != _INITIAL_CHAIN_ID) {
                 digest = keccak256(
-                    abi.encodePacked(bytes2(0x1901), ITheCompact(COMPACT_CONTRACT).DOMAIN_SEPARATOR(), claimHash)
+                    abi.encodePacked(bytes2(0x1901), ITheCompact(AL.THE_COMPACT).DOMAIN_SEPARATOR(), claimHash)
                 );
             }
             address signer_ = AL.recoverSigner(digest, signature);
@@ -115,7 +112,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
             }
         } else {
             // confirm the claim hash is registered on the compact
-            if (!ITheCompact(COMPACT_CONTRACT).isRegistered(sponsor, claimHash, typehash)) {
+            if (!ITheCompact(AL.THE_COMPACT).isRegistered(sponsor, claimHash, typehash)) {
                 revert InvalidRegistration(sponsor, claimHash);
             }
         }
@@ -200,8 +197,8 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
             idsAndAmounts[i][1] = amount;
 
             // Approve the compact contract to spend the tokens.
-            if (IERC20(token).allowance(address(this), COMPACT_CONTRACT) < amount) {
-                SafeTransferLib.safeApproveWithRetry(token, COMPACT_CONTRACT, type(uint256).max);
+            if (IERC20(token).allowance(address(this), AL.THE_COMPACT) < amount) {
+                SafeTransferLib.safeApproveWithRetry(token, AL.THE_COMPACT, type(uint256).max);
             }
         }
 
@@ -211,7 +208,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         }
 
         // Deposit the tokens and register the claim in the compact
-        (claimHash, registeredAmounts) = ITheCompact(COMPACT_CONTRACT).batchDepositAndRegisterFor{value: msg.value}(
+        (claimHash, registeredAmounts) = ITheCompact(AL.THE_COMPACT).batchDepositAndRegisterFor{value: msg.value}(
             recipient, idsAndAmounts, arbiter, nonce, expires, typehash, witness
         );
 
@@ -259,9 +256,8 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         }
         uint32 expiration = uint32(expires);
         nonce = _getNonce(msg.sender, recipient);
-        AL.prepareAllocation(
-            COMPACT_CONTRACT, nonce, recipient, idsAndAmounts, arbiter, expiration, typehash, witness, ALLOCATOR_ID
-        );
+
+        AL.prepareAllocation(nonce, recipient, idsAndAmounts, arbiter, expiration, typehash, witness, ALLOCATOR_ID);
 
         return nonce;
     }
@@ -298,7 +294,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         bytes32 witness
     ) private returns (bytes32, Lock[] memory) {
         (bytes32 claimHash, Lock[] memory commitments) =
-            AL.executeAllocation(COMPACT_CONTRACT, nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
+            AL.executeAllocation(nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
 
         // Allocate the claim
         for (uint256 i = 0; i < commitments.length; i++) {
@@ -325,7 +321,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         // Can be called by anyone, as this will only clean up expired allocations.
 
         // do not use the settled balance, since this will be called within the _beforeTokenTransfer hook of the compact.
-        uint256 balance = ERC6909(COMPACT_CONTRACT).balanceOf(from_, id_);
+        uint256 balance = ERC6909(AL.THE_COMPACT).balanceOf(from_, id_);
 
         // Check unlocked balance
         bytes32 tokenHash = _getTokenHash(id_, from_);
@@ -451,7 +447,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         }
 
         // Ensure no forcedWithdrawal is active for the token id
-        (, uint256 forcedWithdrawal) = ITheCompact(COMPACT_CONTRACT).getForcedWithdrawalStatus(
+        (, uint256 forcedWithdrawal) = ITheCompact(AL.THE_COMPACT).getForcedWithdrawalStatus(
             sponsor, AL.toId(commitment.lockTag, commitment.token)
         );
         if (forcedWithdrawal != 0 && forcedWithdrawal <= expires) {

@@ -11,6 +11,8 @@ import {LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 /// @dev Implements prepare-execute pattern for ensuring token balance changes match expected allocations
 /// @custom:security-contact security@uniswap.org
 library AllocatorLib {
+    address internal constant THE_COMPACT = 0x00000000000000171ede64904551eeDF3C6C9788;
+
     /// @notice Function selector for the prepareAllocation function, used as part of transient storage key derivation
     /// @dev bytes4(keccak256('prepareAllocation(address,uint256[2][],address,uint256,bytes32,bytes32,bytes)'))
     bytes4 public constant PREPARE_ALLOCATION_SELECTOR = 0x7ef6597a;
@@ -29,7 +31,6 @@ library AllocatorLib {
     error CompactReentrancyGuardActive();
 
     function prepareAllocation(
-        address compactContract,
         uint256 nonce,
         address recipient,
         uint256[2][] calldata idsAndAmounts,
@@ -40,7 +41,7 @@ library AllocatorLib {
         uint96 allocatorId
     ) internal {
         // Before preparing the allocation, check if the compact's reentrancy guard is active
-        checkCompactReentrancyGuardAndRevert(compactContract);
+        checkCompactReentrancyGuardAndRevert();
 
         assembly ("memory-safe") {
             // identifier = keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));
@@ -75,7 +76,7 @@ library AllocatorLib {
                         mload(0x20),
                         and( // The arguments of `and` are evaluated from right to left.
                             gt(returndatasize(), 0x1f), // At least 32 bytes returned.
-                            staticcall(gas(), compactContract, 0x10, 0x44, 0x20, 0x20)
+                            staticcall(gas(), THE_COMPACT, 0x10, 0x44, 0x20, 0x20)
                         )
                     )
                 mstore(0x00, PREPARE_ALLOCATION_SELECTOR)
@@ -99,7 +100,6 @@ library AllocatorLib {
     }
 
     function executeAllocation(
-        address compactContract,
         uint256 nonce,
         address recipient,
         uint256[2][] calldata idsAndAmounts,
@@ -114,7 +114,7 @@ library AllocatorLib {
         uint256 storedNonce;
 
         // Before executing the allocation, check if the compact's reentrancy guard is active
-        checkCompactReentrancyGuardAndRevert(compactContract);
+        checkCompactReentrancyGuardAndRevert();
 
         assembly ("memory-safe") {
             // identifier = keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));
@@ -146,7 +146,7 @@ library AllocatorLib {
                         mload(0x20),
                         and( // The arguments of `and` are evaluated from right to left.
                             gt(returndatasize(), 0x1f), // At least 32 bytes returned.
-                            staticcall(gas(), compactContract, 0x10, 0x44, 0x20, 0x20)
+                            staticcall(gas(), THE_COMPACT, 0x10, 0x44, 0x20, 0x20)
                         )
                     )
                 mstore(0x00, PREPARE_ALLOCATION_SELECTOR)
@@ -204,13 +204,13 @@ library AllocatorLib {
 
         // Check for a valid registration with the actual data
         claimHash = getClaimHash(arbiter, recipient, storedNonce, expires, commitmentsHash, witness, typehash);
-        if (!ITheCompact(compactContract).isRegistered(recipient, claimHash, typehash)) {
+        if (!ITheCompact(THE_COMPACT).isRegistered(recipient, claimHash, typehash)) {
             revert InvalidRegistration(recipient, claimHash, typehash);
         }
         return (claimHash, commitments);
     }
 
-    function checkCompactReentrancyGuardAndRevert(address compactContract) internal view {
+    function checkCompactReentrancyGuardAndRevert() internal view {
         assembly ("memory-safe") {
             mstore(0x00, EXTTLOAD_SELECTOR)
             mstore(0x20, REENTRANCY_GUARD_SLOT)
@@ -222,7 +222,7 @@ library AllocatorLib {
                         iszero(
                             and(
                                 gt(returndatasize(), 0x1f), // At least 32 bytes returned.
-                                staticcall(gas(), compactContract, 0x1c, 0x24, 0x20, 0x20)
+                                staticcall(gas(), THE_COMPACT, 0x1c, 0x24, 0x20, 0x20)
                             )
                         )
                     )

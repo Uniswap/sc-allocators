@@ -30,7 +30,6 @@ contract HybridAllocator is IHybridAllocator {
     /// @notice The unique identifier for this allocator within The Compact protocol
     uint96 public immutable ALLOCATOR_ID;
     uint256 private immutable _INITIAL_CHAIN_ID;
-    ITheCompact internal immutable _COMPACT;
     bytes32 internal immutable _COMPACT_DOMAIN_SEPARATOR;
 
     mapping(bytes32 claimHash => bool allocated) internal claims;
@@ -50,14 +49,13 @@ contract HybridAllocator is IHybridAllocator {
         _;
     }
 
-    constructor(address compact_, address signer_) {
+    constructor(address signer_) {
         if (signer_ == address(0)) {
             revert InvalidSigner();
         }
         _INITIAL_CHAIN_ID = block.chainid;
-        _COMPACT = ITheCompact(compact_);
-        _COMPACT_DOMAIN_SEPARATOR = _COMPACT.DOMAIN_SEPARATOR();
-        try _COMPACT.__registerAllocator(address(this), '') returns (uint96 allocatorId) {
+        _COMPACT_DOMAIN_SEPARATOR = ITheCompact(AL.THE_COMPACT).DOMAIN_SEPARATOR();
+        try ITheCompact(AL.THE_COMPACT).__registerAllocator(address(this), '') returns (uint96 allocatorId) {
             ALLOCATOR_ID = allocatorId;
         } catch {
             // The Compact does not have a getter function for retrieving the status of allocator registration,
@@ -70,7 +68,7 @@ contract HybridAllocator is IHybridAllocator {
                 allocatorSlot := or(0x000044036fc77deaed2300000000000000000000000, allocatorId)
             }
 
-            bytes32 registeredAllocator = Extsload(compact_).extsload(allocatorSlot);
+            bytes32 registeredAllocator = Extsload(AL.THE_COMPACT).extsload(allocatorSlot);
 
             assembly ("memory-safe") {
                 if iszero(eq(registeredAllocator, address())) {
@@ -87,7 +85,7 @@ contract HybridAllocator is IHybridAllocator {
         signers[signer_] = true;
         signerCount++;
 
-        emit AllocatorInitialized(compact_, signer_, ALLOCATOR_ID);
+        emit AllocatorInitialized(AL.THE_COMPACT, signer_, ALLOCATOR_ID);
         emit SignerAdded(signer_);
     }
 
@@ -162,9 +160,9 @@ contract HybridAllocator is IHybridAllocator {
         recipient = AL.getRecipient(recipient);
         idsAndAmounts = _actualIdsAndAmounts(idsAndAmounts);
 
-        (bytes32 claimHash, uint256[] memory registeredAmounts) = _COMPACT.batchDepositAndRegisterFor{value: msg.value}(
-            recipient, idsAndAmounts, arbiter, ++nonces, expires, typehash, witness
-        );
+        (bytes32 claimHash, uint256[] memory registeredAmounts) = ITheCompact(AL.THE_COMPACT).batchDepositAndRegisterFor{
+            value: msg.value
+        }(recipient, idsAndAmounts, arbiter, ++nonces, expires, typehash, witness);
 
         Lock[] memory commitments = new Lock[](idsAndAmounts.length);
         for (uint256 i = 0; i < idsAndAmounts.length; i++) {
@@ -194,9 +192,7 @@ contract HybridAllocator is IHybridAllocator {
         bytes calldata /* orderData */
     ) external returns (uint256 nonce) {
         nonce = nonces + 1;
-        AL.prepareAllocation(
-            address(_COMPACT), nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness, ALLOCATOR_ID
-        );
+        AL.prepareAllocation(nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness, ALLOCATOR_ID);
     }
 
     /// @inheritdoc IOnChainAllocation
@@ -211,9 +207,8 @@ contract HybridAllocator is IHybridAllocator {
     ) external {
         uint256 nonce = ++nonces;
 
-        (bytes32 claimHash, Lock[] memory commitments) = AL.executeAllocation(
-            address(_COMPACT), nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness
-        );
+        (bytes32 claimHash, Lock[] memory commitments) =
+            AL.executeAllocation(nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
 
         // Allocate the claim
         claims[claimHash] = true;
@@ -231,8 +226,8 @@ contract HybridAllocator is IHybridAllocator {
         uint256[2][] calldata, /*idsAndAmounts*/
         bytes calldata allocatorData_
     ) external virtual returns (bytes4) {
-        if (msg.sender != address(_COMPACT)) {
-            revert InvalidCaller(msg.sender, address(_COMPACT));
+        if (msg.sender != AL.THE_COMPACT) {
+            revert InvalidCaller(msg.sender, AL.THE_COMPACT);
         }
         // The compact will check the validity of the nonce and expiration
 
@@ -248,7 +243,7 @@ contract HybridAllocator is IHybridAllocator {
         bytes32 digest = _deriveDigest(claimHash, _COMPACT_DOMAIN_SEPARATOR);
         if (block.chainid != _INITIAL_CHAIN_ID) {
             // If the chain was forked, we can not use the cached domain separator
-            digest = _deriveDigest(claimHash, _COMPACT.DOMAIN_SEPARATOR());
+            digest = _deriveDigest(claimHash, ITheCompact(AL.THE_COMPACT).DOMAIN_SEPARATOR());
         }
         if (!_checkSignature(digest, allocatorData_)) {
             revert InvalidSignature();
@@ -276,7 +271,7 @@ contract HybridAllocator is IHybridAllocator {
         bytes32 digest = _deriveDigest(claimHash, _COMPACT_DOMAIN_SEPARATOR);
         if (block.chainid != _INITIAL_CHAIN_ID) {
             // If the chain was forked, we can not use the cached domain separator
-            digest = _deriveDigest(claimHash, _COMPACT.DOMAIN_SEPARATOR());
+            digest = _deriveDigest(claimHash, ITheCompact(AL.THE_COMPACT).DOMAIN_SEPARATOR());
         }
         return _checkSignature(digest, allocatorData);
     }
@@ -319,8 +314,8 @@ contract HybridAllocator is IHybridAllocator {
                 idsAndAmounts[idIndex][1] = IERC20(token).balanceOf(address(this));
             }
 
-            if (IERC20(token).allowance(address(this), address(_COMPACT)) < idsAndAmounts[idIndex][1]) {
-                SafeTransferLib.safeApproveWithRetry(token, address(_COMPACT), type(uint256).max);
+            if (IERC20(token).allowance(address(this), AL.THE_COMPACT) < idsAndAmounts[idIndex][1]) {
+                SafeTransferLib.safeApproveWithRetry(token, AL.THE_COMPACT, type(uint256).max);
             }
         }
 
