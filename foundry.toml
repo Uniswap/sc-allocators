@@ -9,6 +9,7 @@ solc = "0.8.30"
 verbosity = 2
 ffi = true
 evm_version = "cancun"
+bytecode_hash = "none"
 fs_permissions = [
   { access = "read-write", path = ".forge-snapshots"},
   { access = "read", path = "script/" }

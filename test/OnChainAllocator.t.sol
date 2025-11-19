@@ -20,9 +20,17 @@ import {ERC6909} from '@solady/tokens/ERC6909.sol';
 import {ResetPeriod} from '@uniswap/the-compact/types/ResetPeriod.sol';
 import {Scope} from '@uniswap/the-compact/types/Scope.sol';
 
+import {IERC1271} from '@uniswap/the-compact/../lib/permit2/src/interfaces/IERC1271.sol';
 import {IdLib} from '@uniswap/the-compact/lib/IdLib.sol';
+import {AlwaysOKAllocator} from '@uniswap/the-compact/test/AlwaysOKAllocator.sol';
+
+import {BatchClaim} from '@uniswap/the-compact/types/BatchClaims.sol';
+import {Claim} from '@uniswap/the-compact/types/Claims.sol';
+import {BatchClaimComponent, Component} from '@uniswap/the-compact/types/Components.sol';
 import {AllocatorLib} from 'src/allocators/lib/AllocatorLib.sol';
 import {OnChainAllocationCaller} from 'src/test/OnChainAllocationCaller.sol';
+
+import {DeployTheCompact} from 'test/util/DeployTheCompact.sol';
 import {TestHelper} from 'test/util/TestHelper.sol';
 
 contract OnChainAllocatorFactory {
@@ -53,8 +61,16 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
     uint256 defaultNonce;
 
+    // For reentrancy testing
+    MaliciousRecipient internal maliciousRecipient;
+
     function setUp() public {
-        compact = new TheCompact();
+        // Deploy TheCompact at the hardcoded address used by Utility.sol
+        // This is necessary because OnChainAllocator now inherits from Utility
+        // which requires THE_COMPACT (0x00000000000000171ede64904551eeDF3C6C9788) to exist
+        compact = DeployTheCompact(new DeployTheCompact()).deployTheCompact();
+        assertEq(address(compact), address(0x00000000000000171ede64904551eeDF3C6C9788));
+
         arbiter = makeAddr('arbiter');
         (user, userPK) = makeAddrAndKey('user');
         allocator = new OnChainAllocator(address(compact));
@@ -71,6 +87,9 @@ contract OnChainAllocatorTest is Test, TestHelper {
         defaultAmount = 1 ether;
         defaultExpiration = uint32(block.timestamp + 300); // 5 minutes fits 10-minute reset period
         defaultNonce = _composeNonceUint(user, 1);
+
+        // Setup malicious recipient for reentrancy tests
+        maliciousRecipient = new MaliciousRecipient(address(allocator), address(compact), address(allocationCaller));
     }
 
     /* --------------------------------------------------------------------- */
@@ -114,6 +133,76 @@ contract OnChainAllocatorTest is Test, TestHelper {
                 )
             );
         }
+    }
+
+    /* --------------------------------------------------------------------- */
+    /*                     Helpers for Reentrancy Tests                     */
+    /* --------------------------------------------------------------------- */
+
+    /**
+     * @notice Creates a helper function for testing native token reentrancy.
+     * @dev Flow using ERC1271 + OnChainAllocator:
+     *      1. MaliciousRecipient deposits native tokens using OnChainAllocator's lockTag
+     *      2. MaliciousRecipient calls allocate() to register with OnChainAllocator
+     *      3. Returns id, claimHash, and nonce
+     *      4. The claim uses OnChainAllocator for validation (checks stored claimHash)
+     *      5. During withdrawal, receive() tries to call allocate() again → should fail
+     */
+    function _setupNativeTokenReentrancyTest() internal returns (uint256 id, bytes32 claimHash, uint256 nonce) {
+        // MaliciousRecipient deposits native tokens using OnChainAllocator's lockTag
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({
+            lockTag: _toLockTag(address(allocator), Scope.Multichain, ResetPeriod.TenMinutes),
+            token: address(0), // native token
+            amount: defaultAmount
+        });
+
+        bytes12 lockTag = commitments[0].lockTag;
+        deal(address(maliciousRecipient), defaultAmount);
+        vm.prank(address(maliciousRecipient));
+        id = compact.depositNative{value: defaultAmount}(lockTag, address(maliciousRecipient));
+
+        // MaliciousRecipient calls allocate() to store claimHash in OnChainAllocator
+        vm.prank(address(maliciousRecipient));
+        (claimHash, nonce) = allocator.allocate(
+            commitments, address(maliciousRecipient), defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0)
+        );
+    }
+
+    /**
+     * @notice Creates a withdrawal BatchClaim struct for maliciousRecipient.
+     * @dev Creates a simple withdrawal batch claim that uses OnChainAllocator:
+     *      - Empty sponsorSignature triggers ERC1271 validation
+     *      - MaliciousRecipient.isValidSignature() always returns success (0x1626ba7e)
+     *      - lockTag = 0 in portions indicates withdrawal (native tokens sent)
+     *      - allocatorData is empty (OnChainAllocator validates via stored claimHash)
+     *      - sponsor = maliciousRecipient
+     *      - arbiter = maliciousRecipient (when sponsor calls, arbiter must match)
+     */
+    function _createClaimForMaliciousRecipient(uint256 id, uint256 nonce, uint256 amount)
+        internal
+        view
+        returns (BatchClaim memory)
+    {
+        // Create withdrawal portion (lockTag = 0 means withdrawal to native tokens)
+        uint256 claimant = uint256(bytes32(abi.encodePacked(bytes12(0), address(maliciousRecipient))));
+        Component[] memory portions = new Component[](1);
+        portions[0] = Component({claimant: claimant, amount: amount});
+
+        // Create BatchClaimComponent for this token
+        BatchClaimComponent[] memory claims = new BatchClaimComponent[](1);
+        claims[0] = BatchClaimComponent({id: id, allocatedAmount: amount, portions: portions});
+
+        return BatchClaim({
+            allocatorData: bytes(''), // Empty - OnChainAllocator validates via stored claimHash
+            sponsorSignature: bytes(''), // Empty - triggers ERC1271 validation
+            sponsor: address(maliciousRecipient), // MaliciousRecipient is the sponsor
+            nonce: nonce,
+            expires: defaultExpiration,
+            witness: bytes32(0),
+            witnessTypestring: '',
+            claims: claims
+        });
     }
 
     /* --------------------------------------------------------------------- */
@@ -1760,5 +1849,471 @@ contract OnChainAllocatorTest is Test, TestHelper {
         bytes32 claimHashRecreated =
             _createClaimHash(caller, arbiter, nonce, defaultExpiration, commitments, bytes32(0));
         assertEq(claimHashRecreated, claimHash);
+    }
+
+    /* --------------------------------------------------------------------- */
+    /*                  Reentrancy Protection Tests                         */
+    /* --------------------------------------------------------------------- */
+
+    /**
+     * @notice Tests that allocate() reverts when called during active reentrancy guard.
+     * @dev This simulates an attack where a malicious recipient tries to call allocate()
+     *      from within its receive() function when receiving native tokens during a claim.
+     *      The settledBalanceOf() check should detect the active reentrancy guard and
+     *      revert with BalanceNotSettled().
+     */
+    function test_allocate_revert_BalanceNotSettled_duringReentrancy() public {
+        // Step 1: Setup - maliciousRecipient deposits and allocates native tokens using OnChainAllocator
+        (uint256 id, bytes32 claimHash, uint256 nonce) = _setupNativeTokenReentrancyTest();
+
+        // Step 2: Configure maliciousRecipient to attempt reentrant allocate() on the second allocation
+        Lock[] memory reentrantCommitments = new Lock[](1);
+        reentrantCommitments[0] = Lock({
+            lockTag: _toLockTag(address(allocator), Scope.Multichain, ResetPeriod.TenMinutes),
+            token: address(0), // native token
+            amount: defaultAmount
+        });
+        maliciousRecipient.setReentrantCommitments(reentrantCommitments);
+        maliciousRecipient.setAttemptReentrancy(true);
+        maliciousRecipient.setAttackType(MaliciousRecipient.AttackType.ALLOCATE);
+
+        // Step 3: Create withdrawal batch claim for the deposit (using OnChainAllocator)
+        BatchClaim memory claim = _createClaimForMaliciousRecipient(id, nonce, defaultAmount);
+
+        assertEq(address(compact).balance, defaultAmount, 'TheCompact should have the deposited balance');
+        assertEq(
+            compact.balanceOf(address(maliciousRecipient), id),
+            defaultAmount,
+            'Malicious recipient should have a balance in TheCompact'
+        );
+
+        // Step 5: Execute batch claim
+        // Flow:
+        // 1. MaliciousRecipient calls compact.batchClaim() to withdraw first deposit
+        // 2. TheCompact validates via ERC1271 or registration (isValidSignature returns success)
+        // 3. TheCompact validates via OnChainAllocator (checks stored claimHash)
+        // 4. TheCompact sends native tokens to maliciousRecipient (withdrawal)
+        // 5. MaliciousRecipient's receive() is called with reentrancy guard ACTIVE
+        // 6. receive() tries to call allocator.allocate() to allocate the deposited tokens again in flight
+        // 7. allocate() calls _checkBalance() -> settledBalanceOf()
+        // 8. settledBalanceOf() detects active reentrancy guard → reverts with BalanceNotSettled()
+        // 9. receive() reverts the ETH transaction, will transfer the ERC6909 as a backup (which remains the same balance)
+        // Result: Claim succeeds, withdrawal completes, but reentrancy attack was prevented!
+        vm.prank(address(maliciousRecipient));
+        vm.expectEmit(true, true, true, true, address(compact));
+        emit ITheCompact.Claim(
+            address(maliciousRecipient), address(allocator), address(maliciousRecipient), claimHash, nonce
+        );
+        compact.batchClaim(claim);
+
+        // Verify: The reentrant allocation did NOT happen (balance unchanged in compact)
+        // If the attack succeeded, MaliciousRecipient would have allocated half of the second deposit
+        assertEq(
+            compact.balanceOf(address(maliciousRecipient), id),
+            defaultAmount,
+            'Malicious recipient should still have his balance in TheCompact'
+        );
+
+        // Verify: The withdrawal DID succeed to wrapped format
+        // This is because allocate() reverts and blocks the receive() function.
+        // The compact will continue to just send the ERC6909 tokens instaed
+        assertEq(address(maliciousRecipient).balance, 0, 'Withdrawal should have completed, but in wrapped format');
+        assertEq(address(compact).balance, defaultAmount, 'TheCompact should have the deposited balance');
+        assertEq(
+            ERC6909(address(compact)).balanceOf(address(maliciousRecipient), id),
+            defaultAmount,
+            'Malicious recipient should still have his balance in TheCompact'
+        );
+    }
+
+    /**
+     * @notice Tests that allocate() succeeds when reentrancy is not attempted.
+     * @dev This is the control test showing normal operation works correctly.
+     */
+    function test_allocate_succeeds_withoutReentrancy() public {
+        // Setup - maliciousRecipient deposits and allocates native tokens
+        (uint256 id, bytes32 claimHash, uint256 nonce) = _setupNativeTokenReentrancyTest();
+
+        // Do NOT enable reentrancy attempt
+        maliciousRecipient.setAttemptReentrancy(false);
+
+        // Create and execute withdrawal batch claim
+        BatchClaim memory claim = _createClaimForMaliciousRecipient(id, nonce, defaultAmount);
+
+        assertEq(address(compact).balance, defaultAmount, 'TheCompact should have the deposited balance');
+        assertEq(
+            compact.balanceOf(address(maliciousRecipient), id),
+            defaultAmount,
+            'Malicious recipient should have a balance in TheCompact'
+        );
+
+        // MaliciousRecipient calls batchClaim() to withdraw its own tokens
+        // ERC1271 validation passes, allocator validation passes, withdrawal succeeds
+        vm.prank(address(maliciousRecipient));
+        vm.expectEmit(true, true, true, true, address(compact));
+        emit ITheCompact.Claim(
+            address(maliciousRecipient), address(allocator), address(maliciousRecipient), claimHash, nonce
+        );
+        compact.batchClaim(claim);
+
+        // Verify native tokens were withdrawn to maliciousRecipient (successful withdrawal without reentrancy)
+        assertEq(address(maliciousRecipient).balance, defaultAmount, 'Should have withdrawn to native ETH');
+        assertEq(address(compact).balance, 0, 'TheCompact should have sent the balance');
+        assertEq(
+            compact.balanceOf(address(maliciousRecipient), id), 0, 'Balance should have been withdrawn from TheCompact'
+        );
+    }
+
+    /**
+     * @notice Tests that attest() succeeds during ERC6909 token transfer when no allocation exists.
+     * @dev When a user performs a direct ERC6909 transfer(), the _beforeTokenTransfer hook is called
+     *      which sets the reentrancy guard and calls _ensureAttested(), which in turn calls
+     *      allocator.attest(). The attest() function uses raw balanceOf() (not settledBalanceOf()),
+     *      so it should succeed even with the reentrancy guard active.
+     *
+     *      Test flow:
+     *      1. User deposits tokens via TheCompact (no allocation)
+     *      2. User performs direct ERC6909 transfer to recipient
+     *      3. _beforeTokenTransfer() sets reentrancy guard and calls _ensureAttested()
+     *      4. _ensureAttested() calls allocator.attest()
+     *      5. Expected: attest() succeeds because tokens are not allocated
+     */
+    function test_attest_succeeds_duringTokenTransfer() public {
+        // Setup: User deposits tokens WITHOUT allocating
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(usdc), defaultAmount);
+
+        bytes12 lockTag = commitments[0].lockTag;
+        vm.prank(user);
+        usdc.approve(address(compact), defaultAmount);
+        vm.prank(user);
+        uint256 id = compact.depositERC20(address(usdc), lockTag, defaultAmount, user);
+
+        // Verify initial balances
+        assertEq(compact.balanceOf(user, id), defaultAmount, 'User should have deposited tokens');
+        assertEq(compact.balanceOf(recipient, id), 0, 'Recipient should have no tokens');
+
+        // User performs a direct ERC6909 transfer (not a claim, just a transfer)
+        // This triggers _beforeTokenTransfer → _setReentrancyGuard() → _ensureAttested() → allocator.attest()
+        vm.prank(user);
+        compact.transfer(recipient, id, defaultAmount);
+
+        // Verify transfer succeeded
+        assertEq(compact.balanceOf(user, id), 0, 'User should have transferred all tokens');
+        assertEq(compact.balanceOf(recipient, id), defaultAmount, 'Recipient should have received tokens');
+    }
+
+    /**
+     * @notice Tests that ERC6909 token transfer fails when tokens are allocated.
+     * @dev After allocation, tokens cannot be transferred directly via ERC6909 transfer()
+     *      because attest() will detect the allocation and revert.
+     *
+     *      Test flow:
+     *      1. User deposits tokens and allocates them
+     *      2. User attempts direct ERC6909 transfer to recipient
+     *      3. _beforeTokenTransfer() calls _ensureAttested() → allocator.attest()
+     *      4. Expected: attest() reverts because tokens are allocated
+     */
+    function test_attest_revert_duringTokenTransfer_afterAllocation() public {
+        // Setup: User deposits and allocates tokens
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(usdc), defaultAmount);
+
+        bytes12 lockTag = commitments[0].lockTag;
+        vm.prank(user);
+        usdc.approve(address(compact), defaultAmount);
+        vm.prank(user);
+        uint256 id = compact.depositERC20(address(usdc), lockTag, defaultAmount, user);
+
+        // User allocates the tokens
+        vm.prank(user);
+        allocator.allocate(commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0));
+
+        // Verify initial balances
+        assertEq(compact.balanceOf(user, id), defaultAmount, 'User should have deposited tokens');
+        assertEq(compact.balanceOf(recipient, id), 0, 'Recipient should have no tokens');
+
+        // User attempts to perform a direct ERC6909 transfer of allocated tokens
+        // This should fail because attest() will detect insufficient unlocked balance
+        // Available balance = total balance - allocated balance = defaultAmount - defaultAmount = 0
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(IOnChainAllocator.InsufficientBalance.selector, user, id, 0, defaultAmount)
+        );
+        compact.transfer(recipient, id, defaultAmount);
+
+        // Verify transfer failed - balances unchanged
+        assertEq(compact.balanceOf(user, id), defaultAmount, 'User should still have all tokens');
+        assertEq(compact.balanceOf(recipient, id), 0, 'Recipient should still have no tokens');
+    }
+
+    /**
+     * @notice Tests that prepareAllocation() reverts when called during active reentrancy guard.
+     * @dev This tests the checkCompactReentrancyGuardAndRevert() protection in AllocatorLib.
+     *      prepareAllocation() explicitly checks the compact's reentrancy guard and reverts
+     *      with CompactReentrancyGuardActive() error (selector 0x87621186).
+     *
+     *      Test flow:
+     *      1. User deposits native tokens and allocates to maliciousRecipient
+     *      2. Configure maliciousRecipient to attempt reentrant prepareAllocation()
+     *      3. Arbiter claims → TheCompact sends native to maliciousRecipient
+     *      4. MaliciousRecipient's receive() triggered (guard ACTIVE)
+     *      5. Inside receive(), attempts prepareAllocation()
+     *      6. Expected: checkCompactReentrancyGuardAndRevert() reverts with CompactReentrancyGuardActive()
+     */
+    function test_prepareAllocation_revert_CompactReentrancyGuardActive() public {
+        // Setup - maliciousRecipient deposits and allocates native tokens
+        (uint256 id, bytes32 claimHash, uint256 nonce) = _setupNativeTokenReentrancyTest();
+
+        // Configure maliciousRecipient to attempt reentrant prepareAllocation()
+        uint256[2][] memory reentrantIdsAndAmounts = new uint256[2][](1);
+        reentrantIdsAndAmounts[0][0] = id;
+        reentrantIdsAndAmounts[0][1] = defaultAmount;
+        maliciousRecipient.setReentrantPrepareData(
+            reentrantIdsAndAmounts,
+            address(maliciousRecipient),
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0)
+        );
+        maliciousRecipient.setAttemptReentrancy(true);
+        maliciousRecipient.setAttackType(MaliciousRecipient.AttackType.PREPARE);
+
+        // Create withdrawal claim
+        BatchClaim memory claim = _createClaimForMaliciousRecipient(id, nonce, defaultAmount);
+        assertEq(address(maliciousRecipient).balance, 0, 'Malicious recipient should not have a balance');
+        assertEq(
+            ERC6909(address(compact)).balanceOf(address(maliciousRecipient), id),
+            defaultAmount,
+            'Malicious recipient should have a balance in TheCompact'
+        );
+
+        // Execute batch claim
+        // prepareAllocation() calls checkCompactReentrancyGuardAndRevert() in AllocatorLib
+        // which detects the active guard and reverts with CompactReentrancyGuardActive()
+        // But TheCompact catches the revert and continues (withdrawal still completes)
+        vm.prank(address(maliciousRecipient));
+        vm.expectEmit(true, true, true, true, address(compact));
+        emit ITheCompact.Claim(
+            address(maliciousRecipient), address(allocator), address(maliciousRecipient), claimHash, nonce
+        );
+        compact.batchClaim(claim);
+
+        // Verify: The withdrawal did succeed, but only in 6909 wrapped form (which means no change in balance)
+        assertEq(address(maliciousRecipient).balance, 0, 'Malicious recipient should still not have a balance');
+        assertEq(
+            ERC6909(address(compact)).balanceOf(address(maliciousRecipient), id),
+            defaultAmount,
+            'Malicious recipient should still have his balance in TheCompact'
+        );
+    }
+
+    /**
+     * @notice Tests that executeAllocation() reverts when called during active reentrancy guard.
+     * @dev This tests the checkCompactReentrancyGuardAndRevert() protection in AllocatorLib.
+     *      executeAllocation() explicitly checks the compact's reentrancy guard and reverts
+     *      with CompactReentrancyGuardActive() error (selector 0x87621186).
+     *
+     *      Test flow:
+     *      1. User deposits native tokens and allocates to maliciousRecipient
+     *      2. Configure maliciousRecipient to attempt reentrant executeAllocation()
+     *      3. Arbiter claims → TheCompact sends native to maliciousRecipient
+     *      4. MaliciousRecipient's receive() triggered (guard ACTIVE)
+     *      5. Inside receive(), attempts executeAllocation()
+     *      6. Expected: checkCompactReentrancyGuardAndRevert() reverts with CompactReentrancyGuardActive()
+     */
+    function test_executeAllocation_revert_CompactReentrancyGuardActive() public {
+        // Setup - maliciousRecipient deposits and allocates native tokens
+        (uint256 id, bytes32 claimHash, uint256 nonce) = _setupNativeTokenReentrancyTest();
+
+        // Configure maliciousRecipient to attempt reentrant executeAllocation()
+        uint256[2][] memory reentrantIdsAndAmounts = new uint256[2][](1);
+        reentrantIdsAndAmounts[0][0] = id;
+        reentrantIdsAndAmounts[0][1] = defaultAmount;
+        maliciousRecipient.setReentrantPrepareData(
+            reentrantIdsAndAmounts,
+            address(maliciousRecipient),
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0)
+        );
+        maliciousRecipient.setAttemptReentrancy(true);
+        maliciousRecipient.setAttackType(MaliciousRecipient.AttackType.EXECUTE);
+
+        // Create withdrawal claim
+        BatchClaim memory claim = _createClaimForMaliciousRecipient(id, nonce, defaultAmount);
+        assertEq(address(maliciousRecipient).balance, 0, 'Malicious recipient should not have a balance');
+        assertEq(
+            ERC6909(address(compact)).balanceOf(address(maliciousRecipient), id),
+            defaultAmount,
+            'Malicious recipient should have a balance in TheCompact'
+        );
+
+        // Execute batch claim
+        // executeAllocation() calls checkCompactReentrancyGuardAndRevert() in AllocatorLib
+        // which detects the active guard and reverts with CompactReentrancyGuardActive()
+        // But TheCompact catches the revert and continues (withdrawal still completes)
+        vm.prank(address(maliciousRecipient));
+        vm.expectEmit(true, true, true, true, address(compact));
+        emit ITheCompact.Claim(
+            address(maliciousRecipient), address(allocator), address(maliciousRecipient), claimHash, nonce
+        );
+        compact.batchClaim(claim);
+
+        // Verify: The withdrawal did succeed, but only in 6909 wrapped form (which means no change in balance)
+        assertEq(address(maliciousRecipient).balance, 0, 'Malicious recipient should still not have a balance');
+        assertEq(
+            ERC6909(address(compact)).balanceOf(address(maliciousRecipient), id),
+            defaultAmount,
+            'Malicious recipient should still have his balance in TheCompact'
+        );
+    }
+}
+
+/* ============================================================================
+   Malicious Contract for Reentrancy Testing
+   ============================================================================ */
+
+/**
+ * @notice Malicious recipient that attempts reentrant allocations during claim/withdrawal.
+ * @dev This contract simulates an attacker trying to exploit reentrancy vulnerabilities
+ *      by calling allocate(), prepareAllocation(), or executeAllocation() from within
+ *      the receive() function which is triggered when TheCompact sends native tokens
+ *      during a claim (before the balance is reduced in TheCompact's ERC6909 accounting).
+ *
+ *      Also implements ERC1271 to allow signature-less claims (always returns valid signature).
+ *
+ *      Attack flow:
+ *      1. MaliciousRecipient deposits native tokens to TheCompact
+ *      2. MaliciousRecipient calls allocate() to register allocation with OnChainAllocator
+ *      3. MaliciousRecipient creates claim and calls compact.claim()
+ *      4. TheCompact validates via ERC1271 (always returns success)
+ *      5. TheCompact sends native tokens → receive() triggered (reentrancy guard ACTIVE)
+ *      6. MaliciousRecipient attempts reentrant allocation
+ *      7. Should revert with appropriate error (BalanceNotSettled or CompactReentrancyGuardActive)
+ *
+ *      Pattern inspired by CheckBalanceDuringTransfer in the-compact/test/utility/Utility.t.sol
+ */
+contract MaliciousRecipient is IERC1271 {
+    IOnChainAllocation public immutable ALLOCATOR;
+    TheCompact public immutable COMPACT;
+
+    bool public attemptReentrancy;
+
+    // Configuration for different attack types
+    enum AttackType {
+        ALLOCATE,
+        PREPARE,
+        EXECUTE
+    }
+
+    AttackType public attackType;
+
+    // Data for reentrant calls
+    Lock[] public reentrantCommitments;
+    uint256[2][] public reentrantIdsAndAmounts;
+    address public reentrantRecipient;
+    address public reentrantArbiter;
+    uint256 public reentrantExpires;
+    bytes32 public reentrantTypehash;
+    bytes32 public reentrantWitness;
+
+    constructor(address allocator, address compact, address /* allocationCaller */ ) {
+        ALLOCATOR = IOnChainAllocation(allocator);
+        COMPACT = TheCompact(compact);
+        attackType = AttackType.ALLOCATE;
+    }
+
+    /**
+     * @notice Triggered when receiving native tokens during claim.
+     * @dev This is where we attempt the reentrant call to test reentrancy protection.
+     *      TheCompact's reentrancy guard is ACTIVE at this point (value > 1).
+     */
+    receive() external payable {
+        if (attemptReentrancy) {
+            if (attackType == AttackType.ALLOCATE && reentrantCommitments.length > 0) {
+                // Attempt reentrant allocation - should fail with BalanceNotSettled()
+                // This calls _checkBalance() which uses settledBalanceOf()
+                OnChainAllocator(address(ALLOCATOR)).allocate(
+                    reentrantCommitments, address(0), uint32(block.timestamp + 100), bytes32(0), bytes32(0)
+                );
+            } else if (attackType == AttackType.PREPARE && reentrantIdsAndAmounts.length > 0) {
+                // Attempt reentrant prepareAllocation - should fail with CompactReentrancyGuardActive()
+                // This calls checkCompactReentrancyGuardAndRevert() in AllocatorLib
+                ALLOCATOR.prepareAllocation(
+                    reentrantRecipient,
+                    reentrantIdsAndAmounts,
+                    reentrantArbiter,
+                    reentrantExpires,
+                    reentrantTypehash,
+                    reentrantWitness,
+                    bytes('')
+                );
+            } else if (attackType == AttackType.EXECUTE && reentrantIdsAndAmounts.length > 0) {
+                // Attempt reentrant executeAllocation - should fail with CompactReentrancyGuardActive()
+                // This calls checkCompactReentrancyGuardAndRevert() in AllocatorLib
+                ALLOCATOR.executeAllocation(
+                    reentrantRecipient,
+                    reentrantIdsAndAmounts,
+                    reentrantArbiter,
+                    reentrantExpires,
+                    reentrantTypehash,
+                    reentrantWitness,
+                    bytes('')
+                );
+            }
+        }
+    }
+
+    /**
+     * @notice ERC1271 signature validation - always returns valid.
+     * @dev This allows TheCompact to validate claims without requiring actual signatures.
+     *      TheCompact will call this when sponsorSignature is empty and no pre-registration exists.
+     *      Returns the ERC1271 magic value 0x1626ba7e to indicate signature is valid.
+     */
+    function isValidSignature(bytes32, /* hash */ bytes memory /* signature */ )
+        external
+        pure
+        override
+        returns (bytes4)
+    {
+        return 0x1626ba7e; // ERC1271 magic value
+    }
+
+    // Control functions for testing
+    function setAttemptReentrancy(bool attempt) external {
+        attemptReentrancy = attempt;
+    }
+
+    function setAttackType(AttackType _attackType) external {
+        attackType = _attackType;
+    }
+
+    function setReentrantCommitments(Lock[] calldata commitments) external {
+        delete reentrantCommitments;
+        for (uint256 i = 0; i < commitments.length; i++) {
+            reentrantCommitments.push(commitments[i]);
+        }
+    }
+
+    function setReentrantPrepareData(
+        uint256[2][] calldata idsAndAmounts,
+        address recipient,
+        address arbiter,
+        uint256 expires,
+        bytes32 typehash,
+        bytes32 witness
+    ) external {
+        delete reentrantIdsAndAmounts;
+        for (uint256 i = 0; i < idsAndAmounts.length; i++) {
+            reentrantIdsAndAmounts.push(idsAndAmounts[i]);
+        }
+        reentrantRecipient = recipient;
+        reentrantArbiter = arbiter;
+        reentrantExpires = expires;
+        reentrantTypehash = typehash;
+        reentrantWitness = witness;
     }
 }
