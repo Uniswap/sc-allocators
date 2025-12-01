@@ -21,14 +21,22 @@ library AllocatorLib {
     /// @dev bytes4(keccak256('exttload(bytes32)'))
     uint256 private constant EXTTLOAD_SELECTOR = 0xf135baaa;
 
+    /// @notice Function selector for the extsload function that gets a value in transient storage
+    /// @dev bytes4(keccak256('extsload(bytes32)'))
+    uint256 private constant EXTSLOAD_SELECTOR = 0x1e2eaeaf;
+
     /// @notice Transient storage slot for the reentrancy guard within the compact
     uint256 private constant REENTRANCY_GUARD_SLOT = 0x929eee149b4bd21268;
+
+    /// @notice Storage slot seed on the compact for mapping allocator IDs to allocator addresses.
+    uint256 private constant ALLOCATOR_BY_ALLOCATOR_ID_SLOT_SEED = 0x000044036fc77deaed2300000000000000000000000;
 
     error InvalidBalanceChange(uint256 newBalance, uint256 oldBalance);
     error InvalidPreparation();
     error InvalidAllocatorId(uint96 providedId, uint96 allocatorId);
     error InvalidRegistration(address recipient, bytes32 claimHash, bytes32 typehash);
     error CompactReentrancyGuardActive();
+    error InvalidAllocator();
 
     function prepareAllocation(
         uint256 nonce,
@@ -236,6 +244,29 @@ library AllocatorLib {
         }
     }
 
+    function getRegisteredAllocator(uint96 allocatorId) internal view returns (address allocator) {
+        assembly ("memory-safe") {
+            mstore(0x00, EXTSLOAD_SELECTOR)
+            mstore(0x20, or(ALLOCATOR_BY_ALLOCATOR_ID_SLOT_SEED, allocatorId))
+
+            if iszero(
+                mul(
+                    mload(0x20),
+                    and(
+                        gt(returndatasize(), 0x1f), // At least 32 bytes returned.
+                        staticcall(gas(), THE_COMPACT, 0x1c, 0x24, 0x20, 0x20)
+                    )
+                )
+            ) {
+                // revert InvalidAllocator()
+                mstore(0x00, 0x59dad761)
+                revert(0x1c, 0x04)
+            }
+
+            allocator := mload(0x20)
+        }
+    }
+
     function getCommitmentsHash(Lock[] calldata commitments, bytes32 typehash)
         internal
         pure
@@ -350,6 +381,39 @@ library AllocatorLib {
 
     function toLock(uint256 id, uint256 amount) internal pure returns (Lock memory) {
         return Lock({lockTag: bytes12(bytes32(id)), token: splitToken(id), amount: amount});
+    }
+
+    /// @dev copied from the-compact/src/lib/IdLib.sol
+    function toAllocatorId(address allocator) internal pure returns (uint96 allocatorId) {
+        uint8 compactFlag;
+        assembly ("memory-safe") {
+            // Extract the uppermost 72 bits of the address.
+            let x := shr(184, shl(96, allocator))
+
+            // Propagate the highest set bit.
+            x := or(x, shr(1, x))
+            x := or(x, shr(2, x))
+            x := or(x, shr(4, x))
+            x := or(x, shr(8, x))
+            x := or(x, shr(16, x))
+            x := or(x, shr(32, x))
+            x := or(x, shr(64, x))
+
+            // Count set bits to derive most significant bit in the last byte.
+            let y := sub(x, and(shr(1, x), 0x5555555555555555))
+            y := add(and(y, 0x3333333333333333), and(shr(2, y), 0x3333333333333333))
+            y := and(add(y, shr(4, y)), 0x0f0f0f0f0f0f0f0f)
+            y := add(y, shr(8, y))
+            y := add(y, shr(16, y))
+            y := add(y, shr(32, y))
+
+            // Look up final value in the sequence.
+            compactFlag := and(shr(and(sub(72, and(y, 127)), not(3)), 0xfedcba9876543210000), 15)
+        }
+
+        assembly ("memory-safe") {
+            allocatorId := or(shl(88, compactFlag), shr(168, shl(168, allocator)))
+        }
     }
 
     function toSeconds(bytes12 lockTag) internal pure returns (uint256 duration) {
