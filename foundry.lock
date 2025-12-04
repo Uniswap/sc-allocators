@@ -1,0 +1,26 @@
+{
+  "lib/forge-chronicles": {
+    "rev": "d1fb566915f23a01f08747264c56f8925f15751a"
+  },
+  "lib/forge-gas-snapshot": {
+    "rev": "cf34ad1ed0a1f323e77557b9bce420f3385f7400"
+  },
+  "lib/forge-std": {
+    "rev": "c7be2a3481f9e51230880bb0949072c7e3a4da82"
+  },
+  "lib/openzeppelin-contracts": {
+    "rev": "99eda2225c0246c265c902475c47ec0c6321f119"
+  },
+  "lib/solady": {
+    "rev": "834bbc4fd366ca8bce8c532a0e3b34eca6be709c"
+  },
+  "lib/the-compact": {
+    "branch": {
+      "name": "utility-lib",
+      "rev": "2506f439573138c64421a6a6d822318d3e9bca52"
+    }
+  },
+  "lib/tribunal": {
+    "rev": "21b6e8096d8d940789eeb63c5d281e490fd63025"
+  }
+}

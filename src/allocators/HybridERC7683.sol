@@ -105,7 +105,7 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
         }
 
         // We ignore the order.nonce and use the one assigned by the hybrid allocator
-        resolvedOrder.orderId = bytes32(uint256(nonces) + 1);
+        resolvedOrder.orderId = bytes32(AL.getNonceWithCommand(AL.ON_CHAIN_NONCE, uint248(nonces) + 1));
 
         return resolvedOrder;
     }
@@ -115,7 +115,14 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
         (IERC7683Allocator.Order calldata orderData, uint32 expires,, bytes32[] memory fillHashes) =
             ERC7683AL.openPreparation(order);
 
-        return ERC7683AL.resolveOrder(msg.sender, nonces + 1, expires, fillHashes, orderData, LibBytes.emptyCalldata());
+        return ERC7683AL.resolveOrder(
+            msg.sender,
+            AL.getNonceWithCommand(AL.ON_CHAIN_NONCE, uint248(nonces) + 1),
+            expires,
+            fillHashes,
+            orderData,
+            LibBytes.emptyCalldata()
+        );
     }
 
     /// @inheritdoc IERC7683Allocator
@@ -133,7 +140,7 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
             revert OnlyDepositsAllowed();
         }
 
-        return nonces + 1;
+        return AL.getNonceWithCommand(AL.ON_CHAIN_NONCE, uint248(nonces) + 1);
     }
 
     /// @inheritdoc IERC7683Allocator

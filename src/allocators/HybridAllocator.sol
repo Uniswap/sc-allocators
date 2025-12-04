@@ -14,6 +14,8 @@ import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 
 import {Extsload} from '@uniswap/the-compact/lib/Extsload.sol';
 import {IdLib} from '@uniswap/the-compact/lib/IdLib.sol';
+import {DepositDetails} from '@uniswap/the-compact/types/DepositDetails.sol';
+import {ISignatureTransfer} from 'permit2/src/interfaces/ISignatureTransfer.sol';
 import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 
 /// @title HybridAllocator
@@ -34,8 +36,10 @@ contract HybridAllocator is IHybridAllocator {
 
     mapping(bytes32 claimHash => bool allocated) internal claims;
 
-    /// @dev The off chain allocator must use a uint256 nonce where the first 160 bits are the sponsors address to ensure no nonce collisions
-    uint96 public nonces;
+    /// @dev The off chain allocator must use a uint256 nonce where the first byte is the off chain nonce command (0xfc).
+    ///      The next 20 bytes are the sponsors address, followed by the freely chosen nonce within the next 11 bytes.
+    ///      This will prevent nonce collisions.
+    uint88 public nonces;
     /// @notice The total number of authorized signers for off-chain allocations
     uint256 public signerCount;
     /// @notice Mapping tracking which addresses are authorized signers for off-chain allocations
@@ -160,9 +164,10 @@ contract HybridAllocator is IHybridAllocator {
         recipient = AL.getRecipient(recipient);
         idsAndAmounts = _actualIdsAndAmounts(idsAndAmounts);
 
+        uint256 nonce = AL.getNonceWithCommand(AL.ON_CHAIN_NONCE, ++nonces);
         (bytes32 claimHash, uint256[] memory registeredAmounts) = ITheCompact(AL.THE_COMPACT).batchDepositAndRegisterFor{
             value: msg.value
-        }(recipient, idsAndAmounts, arbiter, ++nonces, expires, typehash, witness);
+        }(recipient, idsAndAmounts, arbiter, nonce, expires, typehash, witness);
 
         Lock[] memory commitments = new Lock[](idsAndAmounts.length);
         for (uint256 i = 0; i < idsAndAmounts.length; i++) {
@@ -176,9 +181,25 @@ contract HybridAllocator is IHybridAllocator {
         // Allocate the claim
         claims[claimHash] = true;
 
-        emit Allocated(recipient, commitments, nonces, expires, claimHash);
+        emit Allocated(recipient, commitments, nonce, expires, claimHash);
 
-        return (claimHash, registeredAmounts, nonces);
+        return (claimHash, registeredAmounts, nonce);
+    }
+
+    function permit2Allocation(
+        address depositor,
+        ISignatureTransfer.TokenPermissions[] calldata permitted,
+        DepositDetails calldata details,
+        bytes32 claimHash,
+        string calldata witness,
+        bytes calldata signature
+    ) external returns (Lock[] memory commitments) {
+        commitments = AL.permit2Allocation(depositor, permitted, details, claimHash, witness, signature);
+
+        // Allocate the claim
+        claims[claimHash] = true;
+
+        emit Allocated(depositor, commitments, details.nonce, details.deadline, claimHash);
     }
 
     /// @inheritdoc IOnChainAllocation
@@ -191,8 +212,10 @@ contract HybridAllocator is IHybridAllocator {
         bytes32 witness,
         bytes calldata /* orderData */
     ) external returns (uint256 nonce) {
-        nonce = nonces + 1;
-        AL.prepareAllocation(nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness, ALLOCATOR_ID);
+        uint88 nonce88 = nonces + 1;
+
+        nonce =
+            AL.prepareAllocation(nonce88, recipient, idsAndAmounts, arbiter, expires, typehash, witness, ALLOCATOR_ID);
     }
 
     /// @inheritdoc IOnChainAllocation
@@ -205,10 +228,10 @@ contract HybridAllocator is IHybridAllocator {
         bytes32 witness,
         bytes calldata /* orderData */
     ) external {
-        uint256 nonce = ++nonces;
+        uint88 nonce88 = ++nonces;
 
-        (bytes32 claimHash, Lock[] memory commitments) =
-            AL.executeAllocation(nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
+        (bytes32 claimHash, Lock[] memory commitments, uint256 nonce) =
+            AL.executeAllocation(nonce88, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
 
         // Allocate the claim
         claims[claimHash] = true;
@@ -220,8 +243,8 @@ contract HybridAllocator is IHybridAllocator {
     function authorizeClaim(
         bytes32 claimHash,
         address, /*arbiter*/
-        address, /*sponsor*/
-        uint256, /*nonce*/
+        address sponsor,
+        uint256 nonce,
         uint256, /*expires*/
         uint256[2][] calldata, /*idsAndAmounts*/
         bytes calldata allocatorData_
@@ -235,9 +258,14 @@ contract HybridAllocator is IHybridAllocator {
         if (claims[claimHash]) {
             delete claims[claimHash];
 
+            // If the claim hash is matching, the nonce must be either an on chain nonce, or a permit2 scoped nonce
+
             // Authorize the claim
             return IAllocator.authorizeClaim.selector;
         }
+
+        // Verify the nonce is scoped to an off chain allocation and to the sponsor
+        AL.verifyNonce(nonce, AL.OFF_CHAIN_NONCE, sponsor);
 
         // Check the allocator data for a valid signature by an authorized signer
         bytes32 digest = _deriveDigest(claimHash, _COMPACT_DOMAIN_SEPARATOR);
