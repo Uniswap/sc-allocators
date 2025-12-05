@@ -1616,7 +1616,8 @@ contract HybridAllocatorTest is Test, TestHelper {
         bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPrivateKey);
 
         // Execute
-        Lock[] memory commitments = allocator.permit2Allocation(user, permitted, details, claimHash, '', signature);
+        Lock[] memory commitments =
+            allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
         vm.snapshotGasLastCall('hybrid_permit2Allocation_singleERC20');
 
         // Verify commitments
@@ -1654,7 +1655,7 @@ contract HybridAllocatorTest is Test, TestHelper {
 
         // Create a witness value - using a simple Mandate(uint256 witness) struct
         // The witness is the hash of the witness struct: keccak256(abi.encode(WITNESS_TYPEHASH, witnessValue))
-        uint256 witnessValue = 12345;
+        uint256 witnessValue = 12_345;
         bytes32 witness = keccak256(abi.encode(WITNESS_TYPEHASH, witnessValue));
 
         // Compute claimHash WITH witness using BATCH_COMPACT_TYPEHASH_WITH_WITNESS
@@ -1677,8 +1678,9 @@ contract HybridAllocatorTest is Test, TestHelper {
         // Execute with witness typestring
         // Note: The witness parameter should be just the inner content (e.g., "uint256 witness"),
         // not the full struct definition, as TheCompact wraps it in "Mandate(...)"
-        Lock[] memory commitments =
-            allocator.permit2Allocation(user, permitted, details, claimHash, WITNESS_STRING, signature);
+        Lock[] memory commitments = allocator.permit2Allocation(
+            arbiter, user, permitted, details, claimHash, WITNESS_STRING, witness, signature
+        );
         vm.snapshotGasLastCall('hybrid_permit2Allocation_singleERC20_withWitness');
 
         // Verify commitments
@@ -1740,7 +1742,8 @@ contract HybridAllocatorTest is Test, TestHelper {
         bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPrivateKey);
 
         // Execute
-        Lock[] memory commitments = allocator.permit2Allocation(user, permitted, details, claimHash, '', signature);
+        Lock[] memory commitments =
+            allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
         vm.snapshotGasLastCall('hybrid_permit2Allocation_multipleERC20');
 
         // Verify commitments
@@ -1786,7 +1789,7 @@ contract HybridAllocatorTest is Test, TestHelper {
 
         // Should revert with UnauthorizedNonce because command is not PERMIT2_NONCE
         vm.expectRevert(abi.encodeWithSelector(AllocatorLib.UnauthorizedNonce.selector, bytes1(0x01), user));
-        allocator.permit2Allocation(user, permitted, details, claimHash, '', signature);
+        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
     }
 
     function test_permit2Allocation_revert_invalidNonceSponsor() public {
@@ -1808,7 +1811,7 @@ contract HybridAllocatorTest is Test, TestHelper {
 
         // Should revert because sponsor in nonce doesn't match depositor
         vm.expectRevert(abi.encodeWithSelector(AllocatorLib.UnauthorizedNonce.selector, bytes1(0x03), wrongSponsor));
-        allocator.permit2Allocation(user, permitted, details, claimHash, '', signature);
+        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
     }
 
     function test_permit2Allocation_emitsAllocatedEvent() public {
@@ -1848,7 +1851,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         vm.expectEmit(true, true, true, true);
         emit IOnChainAllocation.Allocated(user, expectedCommitments, nonce, defaultExpiration, claimHash);
 
-        allocator.permit2Allocation(user, permitted, details, claimHash, '', signature);
+        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
     }
 
     function test_permit2Allocation_fullClaimFlow() public {
@@ -1883,7 +1886,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPrivateKey);
 
         // Execute permit2Allocation
-        allocator.permit2Allocation(user, permitted, details, claimHash, '', signature);
+        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
 
         // Verify claim is authorized
         assertTrue(allocator.isClaimAuthorized(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));

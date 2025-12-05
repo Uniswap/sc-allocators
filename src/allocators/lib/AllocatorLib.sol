@@ -4,7 +4,17 @@ pragma solidity ^0.8.27;
 import {ERC6909} from '@solady/tokens/ERC6909.sol';
 
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
-import {LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
+import {
+    BATCH_COMPACT_TYPEHASH,
+    BATCH_COMPACT_TYPESTRING_FRAGMENT_FIVE,
+    BATCH_COMPACT_TYPESTRING_FRAGMENT_FOUR,
+    BATCH_COMPACT_TYPESTRING_FRAGMENT_ONE,
+    BATCH_COMPACT_TYPESTRING_FRAGMENT_SIX,
+    BATCH_COMPACT_TYPESTRING_FRAGMENT_THREE,
+    BATCH_COMPACT_TYPESTRING_FRAGMENT_TWO,
+    LOCK_TYPEHASH,
+    Lock
+} from '@uniswap/the-compact/types/EIP712Types.sol';
 import {ISignatureTransfer} from 'permit2/src/interfaces/ISignatureTransfer.sol';
 
 import {CompactCategory} from 'the-compact/src/types/CompactCategory.sol';
@@ -54,13 +64,16 @@ library AllocatorLib {
     error InvalidAllocator();
     error UnauthorizedNonce(bytes1 command, address sponsor);
     error InvalidCompactCall(address theCompact);
+    error InvalidClaim(bytes32 claimHash);
 
     function permit2Allocation(
+        address arbiter,
         address depositor,
         ISignatureTransfer.TokenPermissions[] calldata permitted,
         DepositDetails calldata details,
         bytes32 claimHash, // This claim hash is connected to the allocation. This does not guarantee, that the allocated tokens are connected to the claim hash.
         string calldata witness,
+        bytes32 witnessHash,
         bytes calldata signature
     ) internal returns (Lock[] memory commitments) {
         // Verifying the nonce is scoped to a permit2 allocation and to the sponsor
@@ -174,6 +187,22 @@ library AllocatorLib {
             }
 
             mstore(0x40, m) // Restore the memory pointer
+        }
+
+        // Verify the claim hash includes the permit2 deadline as expiration
+        if (
+            claimHash
+                != getClaimHash(
+                    arbiter,
+                    depositor,
+                    details.nonce,
+                    details.deadline,
+                    getCommitmentsHashMemory(commitments),
+                    witnessHash,
+                    computeBatchCompactTypehash(witness)
+                )
+        ) {
+            revert InvalidClaim(claimHash);
         }
 
         return commitments;
@@ -440,6 +469,22 @@ library AllocatorLib {
         return getCommitmentsHash(commitments, LOCK_TYPEHASH);
     }
 
+    function getCommitmentsHashMemory(Lock[] memory commitments) internal pure returns (bytes32 commitmentsHash) {
+        assembly ("memory-safe") {
+            let memoryPointer := mload(0x40)
+            let commitmentsLength := mload(commitments)
+            let commitmentsContent := add(commitments, 0x20)
+            let commitmentHashes := add(memoryPointer, 0x80) // leave space for typehash, lockTag, token and amount
+            mstore(memoryPointer, LOCK_TYPEHASH)
+            for { let i := 0 } lt(i, commitmentsLength) { i := add(i, 1) } {
+                let commitmentOffset := mload(add(commitmentsContent, mul(i, 0x20)))
+                mcopy(add(memoryPointer, 0x20), commitmentOffset, 0x60) // copy lockTag, token and amount to different memory
+                mstore(add(commitmentHashes, mul(i, 0x20)), keccak256(memoryPointer, 0x80))
+            }
+            commitmentsHash := keccak256(commitmentHashes, mul(commitmentsLength, 0x20))
+        }
+    }
+
     function getClaimHash(
         address arbiter,
         address sponsor,
@@ -459,6 +504,25 @@ library AllocatorLib {
             mstore(add(m, 0xa0), commitmentsHash)
             mstore(add(m, 0xc0), witness)
             claimHash := keccak256(m, sub(0xe0, mul(iszero(witness), 0x20)))
+        }
+    }
+
+    function computeBatchCompactTypehash(string calldata witness) internal pure returns (bytes32 typeHash) {
+        assembly ("memory-safe") {
+            typeHash := BATCH_COMPACT_TYPEHASH
+            if witness.length {
+                let m := mload(0x40)
+                mstore(m, BATCH_COMPACT_TYPESTRING_FRAGMENT_ONE)
+                mstore(add(m, 0x20), BATCH_COMPACT_TYPESTRING_FRAGMENT_TWO)
+                mstore(add(m, 0x40), BATCH_COMPACT_TYPESTRING_FRAGMENT_THREE)
+                mstore(add(m, 0x60), BATCH_COMPACT_TYPESTRING_FRAGMENT_FOUR)
+                mstore(add(m, 0x88), BATCH_COMPACT_TYPESTRING_FRAGMENT_SIX)
+                mstore(add(m, 0x80), BATCH_COMPACT_TYPESTRING_FRAGMENT_FIVE)
+                let witnessStart := add(m, 0xa8)
+                calldatacopy(witnessStart, witness.offset, witness.length)
+                mstore8(add(witnessStart, witness.length), 0x29) // Closing parenthesis
+                typeHash := keccak256(m, add(0xa9, witness.length))
+            }
         }
     }
 

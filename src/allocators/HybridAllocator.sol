@@ -186,15 +186,19 @@ contract HybridAllocator is IHybridAllocator {
         return (claimHash, registeredAmounts, nonce);
     }
 
+    /// @inheritdoc IHybridAllocator
     function permit2Allocation(
+        address arbiter,
         address depositor,
         ISignatureTransfer.TokenPermissions[] calldata permitted,
         DepositDetails calldata details,
         bytes32 claimHash,
         string calldata witness,
+        bytes32 witnessHash,
         bytes calldata signature
     ) external returns (Lock[] memory commitments) {
-        commitments = AL.permit2Allocation(depositor, permitted, details, claimHash, witness, signature);
+        commitments =
+            AL.permit2Allocation(arbiter, depositor, permitted, details, claimHash, witness, witnessHash, signature);
 
         // Allocate the claim
         claims[claimHash] = true;

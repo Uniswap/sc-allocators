@@ -2404,7 +2404,8 @@ contract OnChainAllocatorTest is Test, TestHelper {
         bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPK);
 
         // Execute
-        Lock[] memory commitments = allocator.permit2Allocation(user, permitted, details, claimHash, '', signature);
+        Lock[] memory commitments =
+            allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
         vm.snapshotGasLastCall('onchain_permit2Allocation_singleERC20');
 
         // Verify commitments
@@ -2469,7 +2470,8 @@ contract OnChainAllocatorTest is Test, TestHelper {
         bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPK);
 
         // Execute
-        Lock[] memory commitments = allocator.permit2Allocation(user, permitted, details, claimHash, '', signature);
+        Lock[] memory commitments =
+            allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
         vm.snapshotGasLastCall('onchain_permit2Allocation_multipleERC20');
 
         // Verify commitments
@@ -2520,7 +2522,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         // Should revert with UnauthorizedNonce because command is not PERMIT2_NONCE
         vm.expectRevert(abi.encodeWithSelector(AllocatorLib.UnauthorizedNonce.selector, bytes1(0x01), user));
-        allocator.permit2Allocation(user, permitted, details, claimHash, '', signature);
+        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
     }
 
     function test_permit2Allocation_revert_invalidExpiration() public {
@@ -2542,7 +2544,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         vm.expectRevert(
             abi.encodeWithSelector(IOnChainAllocator.InvalidExpiration.selector, invalidDeadline, type(uint32).max)
         );
-        allocator.permit2Allocation(user, permitted, details, claimHash, '', signature);
+        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
     }
 
     function test_permit2Allocation_revert_invalidAmount() public {
@@ -2582,7 +2584,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         // Should revert because amount exceeds uint224 max
         vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidAmount.selector, largeAmount));
-        allocator.permit2Allocation(user, permitted, details, claimHash, '', signature);
+        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
     }
 
     function test_permit2Allocation_fullClaimFlow() public {
@@ -2617,7 +2619,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPK);
 
         // Execute permit2Allocation
-        allocator.permit2Allocation(user, permitted, details, claimHash, '', signature);
+        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
 
         // Verify claim is authorized
         uint256[2][] memory idsAndAmounts = new uint256[2][](1);
@@ -2688,7 +2690,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPK);
 
         // Execute permit2Allocation
-        allocator.permit2Allocation(user, permitted, details, claimHash, '', signature);
+        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
 
         // Verify claim is authorized before expiration
         uint256[2][] memory idsAndAmounts = new uint256[2][](1);
@@ -2733,7 +2735,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPK);
 
         // Execute permit2Allocation
-        allocator.permit2Allocation(user, permitted, details, claimHash, '', signature);
+        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
 
         // Try to transfer - should fail because tokens are allocated
         vm.prank(user);

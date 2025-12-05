@@ -243,19 +243,23 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         return commitments;
     }
 
+    /// @inheritdoc IOnChainAllocator
     function permit2Allocation(
+        address arbiter,
         address depositor,
         ISignatureTransfer.TokenPermissions[] calldata permitted,
         DepositDetails calldata details,
         bytes32 claimHash,
         string calldata witness,
+        bytes32 witnessHash,
         bytes calldata signature
     ) external returns (Lock[] memory commitments) {
         if (details.deadline > type(uint32).max) {
             revert InvalidExpiration(details.deadline, type(uint32).max);
         }
 
-        commitments = AL.permit2Allocation(depositor, permitted, details, claimHash, witness, signature);
+        commitments =
+            AL.permit2Allocation(arbiter, depositor, permitted, details, claimHash, witness, witnessHash, signature);
 
         // Allocate the claim
         for (uint256 i = 0; i < commitments.length; i++) {
@@ -269,7 +273,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
                 commitments[i].token,
                 uint224(commitments[i].amount),
                 depositor,
-                uint32(details.deadline),
+                uint32(details.deadline), // deadline is verified in the AllocatorLib.permit2Allocation function
                 claimHash
             );
         }
