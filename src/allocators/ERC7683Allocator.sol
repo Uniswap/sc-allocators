@@ -5,7 +5,6 @@ pragma solidity ^0.8.27;
 import {IOriginSettler} from '../interfaces/ERC7683/IOriginSettler.sol';
 import {IERC7683Allocator} from '../interfaces/IERC7683Allocator.sol';
 import {OnChainAllocator} from './OnChainAllocator.sol';
-import {AllocatorLib as AL} from './lib/AllocatorLib.sol';
 import {ERC7683AllocatorLib as ERC7683AL} from './lib/ERC7683AllocatorLib.sol';
 
 import {Tribunal} from '@uniswap/tribunal/Tribunal.sol';
