@@ -18,8 +18,11 @@ import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 /// @dev Combines direct deposit functionality with signature-based off-chain authorization through multiple authorized signers
 /// @custom:security-contact security@uniswap.org
 contract HybridAllocator is IHybridAllocator {
+    event SignerAdded(address signer);
+    event SignerRemoved(address signer);
     event SignerReplacementProposed(address oldSigner, address newSigner);
     event SignerReplaced(address oldSigner, address newSigner);
+    event AllocatorInitialized(address compact, address initialSigner, uint96 allocatorId);
 
     /// @notice The unique identifier for this allocator within The Compact protocol
     uint96 public immutable ALLOCATOR_ID;
@@ -53,6 +56,9 @@ contract HybridAllocator is IHybridAllocator {
 
         signers[signer_] = true;
         signerCount++;
+
+        emit AllocatorInitialized(compact_, signer_, ALLOCATOR_ID);
+        emit SignerAdded(signer_);
     }
 
     /// @inheritdoc IHybridAllocator
@@ -62,6 +68,7 @@ contract HybridAllocator is IHybridAllocator {
         }
         signers[signer_] = true;
         signerCount++;
+        emit SignerAdded(signer_);
     }
 
     /// @inheritdoc IHybridAllocator
@@ -77,6 +84,7 @@ contract HybridAllocator is IHybridAllocator {
 
         signers[signer_] = false;
         signerCount--;
+        emit SignerRemoved(signer_);
     }
 
     /// @inheritdoc IHybridAllocator
@@ -84,8 +92,9 @@ contract HybridAllocator is IHybridAllocator {
         if (newSigner_ == address(0) || signers[newSigner_]) {
             revert InvalidSigner();
         }
-        pendingSignerReplacement[msg.sender] = newSigner_;
-        emit SignerReplacementProposed(msg.sender, newSigner_);
+        address oldSigner = msg.sender
+        pendingSignerReplacement[oldSigner] = newSigner_;
+        emit SignerReplacementProposed(oldSigner, newSigner_);
     }
 
     function acceptSignerReplacement(address oldSigner_) external {

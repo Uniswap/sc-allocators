@@ -140,7 +140,7 @@ contract OnChainAllocator is IOnChainAllocator {
         Lock[] memory commitments,
         uint32 expires,
         bytes32 claimHash
-    ) internal returns (Lock[] memory) {
+    ) private returns (Lock[] memory) {
         // Store the allocation
         for (uint256 i = 0; i < registeredAmounts.length; i++) {
             // Update the allocations with the actual registered amounts
@@ -204,7 +204,7 @@ contract OnChainAllocator is IOnChainAllocator {
         uint32 expires,
         bytes32 typehash,
         bytes32 witness
-    ) internal returns (bytes32, Lock[] memory) {
+    ) private returns (bytes32, Lock[] memory) {
         (bytes32 claimHash, Lock[] memory commitments) =
             AL.executeAllocation(COMPACT_CONTRACT, nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
 
@@ -254,7 +254,7 @@ contract OnChainAllocator is IOnChainAllocator {
         uint256, /*expires*/ // The time at which the claim expires.
         uint256[2][] calldata idsAndAmounts, // The allocated token IDs and amounts.
         bytes calldata /*allocatorData*/ // Arbitrary data provided by the arbiter.
-    ) public virtual onlyCompact returns (bytes4) {
+    ) external virtual onlyCompact returns (bytes4) {
         for (uint256 i = 0; i < idsAndAmounts.length; i++) {
             bytes32 tokenHash = _getTokenHash(idsAndAmounts[i][0], sponsor);
 
@@ -279,12 +279,15 @@ contract OnChainAllocator is IOnChainAllocator {
         uint256 expires, // The time at which the claim expires.
         uint256[2][] calldata idsAndAmounts, // The allocated token IDs and amounts.
         bytes calldata /*allocatorData*/ // Arbitrary data provided by the arbiter.
-    ) public view virtual returns (bool) {
+    ) external view virtual returns (bool) {
         if (expires < block.timestamp) {
             return false;
         }
 
         // We only need to check the first id to confirm or deny the claim.
+        if (idsAndAmounts.length == 0) {
+            return false;
+        }
         bytes32 tokenHash = _getTokenHash(idsAndAmounts[0][0], sponsor);
         Allocation[] memory allocations = _allocations[tokenHash];
         for (uint256 j = 0; j < allocations.length; j++) {
@@ -303,7 +306,7 @@ contract OnChainAllocator is IOnChainAllocator {
         uint32 expires,
         bytes32 typehash,
         bytes32 witness
-    ) internal returns (bytes32 claimHash, uint256 nonce) {
+    ) private returns (bytes32 claimHash, uint256 nonce) {
         if (commitments.length == 0) {
             revert InvalidCommitments();
         }
@@ -364,7 +367,7 @@ contract OnChainAllocator is IOnChainAllocator {
         return minResetPeriod;
     }
 
-    function _checkBalance(address sponsor, Lock calldata commitment) internal returns (bytes32 tokenHash) {
+    function _checkBalance(address sponsor, Lock calldata commitment) private returns (bytes32 tokenHash) {
         // Check the balance of the recipient is sufficient
         tokenHash = _getTokenHash(commitment.lockTag, commitment.token, sponsor);
         uint256 balance = ERC6909(COMPACT_CONTRACT).balanceOf(sponsor, AL.toId(commitment.lockTag, commitment.token));
@@ -384,17 +387,17 @@ contract OnChainAllocator is IOnChainAllocator {
         address recipient,
         uint32 expires,
         bytes32 claimHash
-    ) internal {
+    ) private {
         bytes32 tokenHash = _getTokenHash(lockTag, token, recipient);
         _storeAllocation(tokenHash, amount, expires, claimHash);
     }
 
-    function _storeAllocation(bytes32 tokenHash, uint224 amount, uint32 expires, bytes32 claimHash) internal {
+    function _storeAllocation(bytes32 tokenHash, uint224 amount, uint32 expires, bytes32 claimHash) private {
         Allocation memory allocation = Allocation({expires: expires, amount: amount, claimHash: claimHash});
         _allocations[tokenHash].push(allocation);
     }
 
-    function _allocatedBalance(bytes32 tokenHash) internal returns (uint256 allocatedBalance) {
+    function _allocatedBalance(bytes32 tokenHash) private returns (uint256 allocatedBalance) {
         // using assembly to only read the allocated balance + expiration slot and skipping the claimHash slot
         assembly ("memory-safe") {
             // no previous cached balance, calculate the allocated balance
@@ -444,7 +447,7 @@ contract OnChainAllocator is IOnChainAllocator {
         }
     }
 
-    function _verifyClaim(bytes32 tokenHash, bytes32 claimHash) internal returns (bool verified) {
+    function _verifyClaim(bytes32 tokenHash, bytes32 claimHash) private returns (bool verified) {
         // using assembly to only read the claimHash slot and skip the expires/amount slot
         assembly ("memory-safe") {
             mstore(0x00, tokenHash)
@@ -508,7 +511,7 @@ contract OnChainAllocator is IOnChainAllocator {
         }
     }
 
-    function _getTokenHash(bytes12 lockTag, address token, address sponsor) internal pure returns (bytes32 tokenHash) {
+    function _getTokenHash(bytes12 lockTag, address token, address sponsor) private pure returns (bytes32 tokenHash) {
         assembly ("memory-safe") {
             mstore(0x00, lockTag)
             mstore(0x0c, shl(96, token))
@@ -517,7 +520,7 @@ contract OnChainAllocator is IOnChainAllocator {
         }
     }
 
-    function _getTokenHash(uint256 id, address sponsor) internal pure returns (bytes32 tokenHash) {
+    function _getTokenHash(uint256 id, address sponsor) private pure returns (bytes32 tokenHash) {
         assembly ("memory-safe") {
             mstore(0x00, id)
             mstore(0x20, sponsor)
