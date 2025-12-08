@@ -950,11 +950,11 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertFalse(allocator.isClaimAuthorized(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
     }
 
-    function test_addSigner_revert_InvalidSigner(address attacker) public {
+    function test_addSigner_revert_CallerNotSigner(address attacker) public {
         vm.assume(attacker != address(0));
         vm.assume(attacker != signer);
         vm.prank(attacker);
-        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.CallerNotSigner.selector));
         allocator.addSigner(attacker);
         assertEq(allocator.signerCount(), 1);
         assertFalse(allocator.signers(attacker));
@@ -978,10 +978,10 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertTrue(allocator.signers(signer));
     }
 
-    function test_removeSigner_revert_InvalidSigner(address attacker) public {
+    function test_removeSigner_revert_CallerNotSigner(address attacker) public {
         vm.assume(attacker != signer);
         vm.prank(attacker);
-        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.CallerNotSigner.selector));
         allocator.removeSigner(signer);
         assertEq(allocator.signerCount(), 1);
         assertTrue(allocator.signers(signer));
@@ -992,6 +992,20 @@ contract HybridAllocatorTest is Test, TestHelper {
         vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.LastSigner.selector));
         allocator.removeSigner(signer);
         assertEq(allocator.signerCount(), 1);
+        assertTrue(allocator.signers(signer));
+    }
+
+    function test_removeSigner_revert_InvalidSigner(address attacker) public {
+        vm.assume(attacker != signer);
+        vm.assume(attacker != address(this));
+        vm.prank(signer);
+        allocator.addSigner(address(this));
+        assertEq(allocator.signerCount(), 2);
+        vm.prank(address(this));
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
+        allocator.removeSigner(attacker);
+        assertEq(allocator.signerCount(), 2);
+        assertTrue(allocator.signers(address(this)));
         assertTrue(allocator.signers(signer));
     }
 
@@ -1021,10 +1035,10 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertFalse(allocator.signers(newSigner));
     }
 
-    function test_replaceSigner_revert_InvalidSigner(address attacker) public {
+    function test_replaceSigner_revert_CallerNotSigner(address attacker) public {
         vm.assume(attacker != signer);
         vm.prank(attacker);
-        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.CallerNotSigner.selector));
         allocator.replaceSigner(attacker);
         assertEq(allocator.signerCount(), 1);
         assertFalse(allocator.signers(attacker));
