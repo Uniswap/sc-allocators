@@ -9,27 +9,32 @@ import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 
 import {AllocatorLib as AL} from './lib/AllocatorLib.sol';
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
+import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAllocation.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 
 /// @title HybridAllocator
-/// @notice Hybrid allocator that can be used with The Compact and the Uniswap Tribunal as the destination settler.
+/// @notice Hybrid allocator for The Compact supporting both on-chain and off-chain allocation authorization mechanisms
+/// @dev Combines direct deposit functionality with signature-based off-chain authorization through multiple authorized signers
 /// @custom:security-contact security@uniswap.org
 contract HybridAllocator is IHybridAllocator {
+    /// @notice The unique identifier for this allocator within The Compact protocol
     uint96 public immutable ALLOCATOR_ID;
     ITheCompact internal immutable _COMPACT;
     bytes32 internal immutable _COMPACT_DOMAIN_SEPARATOR;
 
-    mapping(bytes32 => bool) internal claims;
+    mapping(bytes32 claimHash => bool allocated) internal claims;
 
     /// @dev The off chain allocator must use a uint256 nonce where the first 160 bits are the sponsors address to ensure no nonce collisions
     uint96 public nonces;
+    /// @notice The total number of authorized signers for off-chain allocations
     uint256 public signerCount;
-    mapping(address => bool) public signers;
+    /// @notice Mapping tracking which addresses are authorized signers for off-chain allocations
+    mapping(address signer => bool isSigner) public signers;
 
     modifier onlySigner() {
         if (!signers[msg.sender]) {
-            revert InvalidSigner();
+            revert CallerNotSigner();
         }
         _;
     }
@@ -57,8 +62,11 @@ contract HybridAllocator is IHybridAllocator {
 
     /// @inheritdoc IHybridAllocator
     function removeSigner(address signer_) external onlySigner {
-        if (signerCount == 1 || !signers[signer_]) {
+        if (signerCount == 1) {
             revert LastSigner();
+        }
+        if (!signers[signer_]) {
+            revert InvalidSigner();
         }
         signers[signer_] = false;
         signerCount--;
@@ -114,6 +122,7 @@ contract HybridAllocator is IHybridAllocator {
         return (claimHash, registeredAmounts, nonces);
     }
 
+    /// @inheritdoc IOnChainAllocation
     function prepareAllocation(
         address recipient,
         uint256[2][] calldata idsAndAmounts,
@@ -127,6 +136,7 @@ contract HybridAllocator is IHybridAllocator {
         AL.prepareAllocation(address(_COMPACT), nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
     }
 
+    /// @inheritdoc IOnChainAllocation
     function executeAllocation(
         address recipient,
         uint256[2][] calldata idsAndAmounts,
@@ -172,7 +182,7 @@ contract HybridAllocator is IHybridAllocator {
         }
 
         // Check the allocator data for a valid signature by an authorized signer
-        bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), _COMPACT_DOMAIN_SEPARATOR, claimHash));
+        bytes32 digest = _deriveDigest(claimHash, _COMPACT_DOMAIN_SEPARATOR);
         if (!_checkSignature(digest, allocatorData_)) {
             revert InvalidSignature();
         }
@@ -196,7 +206,7 @@ contract HybridAllocator is IHybridAllocator {
         }
 
         // Check the allocator data for a valid signature by an authorized allocator address
-        bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), _COMPACT_DOMAIN_SEPARATOR, claimHash));
+        bytes32 digest = _deriveDigest(claimHash, _COMPACT_DOMAIN_SEPARATOR);
         return _checkSignature(digest, allocatorData);
     }
 
@@ -246,5 +256,15 @@ contract HybridAllocator is IHybridAllocator {
         // Check if the signer is an authorized allocator address
         address signer = AL.recoverSigner(digest, signature);
         return signers[signer] && signer != address(0);
+    }
+
+    function _deriveDigest(bytes32 claimHash, bytes32 domainSeparator) internal pure returns (bytes32 digest) {
+        assembly ("memory-safe") {
+            let m := mload(0x40)
+            mstore(m, 0x1901)
+            mstore(add(m, 0x20), domainSeparator)
+            mstore(add(m, 0x40), claimHash)
+            digest := keccak256(add(m, 0x1e), 0x42)
+        }
     }
 }

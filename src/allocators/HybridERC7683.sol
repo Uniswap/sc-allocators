@@ -65,9 +65,9 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
             resolvedOrder.orderId = bytes32(nonce);
 
             // Update the resolved order with the registered amounts
-            for (uint256 i = 0; i < orderData.commitments.length; i++) {
-                resolvedOrder.minReceived[i].amount = registeredAmounts[i];
-            }
+            resolvedOrder = ERC7683AL.updateMinimumReceived(
+                resolvedOrder, registeredAmounts, orderData.mandate.fills[0].scalingFactor
+            );
 
             // Emit an open event
             emit Open(bytes32(nonce), resolvedOrder);
@@ -94,9 +94,8 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
             ERC7683AL.resolveOrder(msg.sender, nonce, expires, fillHashes, orderData, LibBytes.emptyCalldata());
 
         // Update the resolved order with the registered amounts
-        for (uint256 i = 0; i < orderData.commitments.length; i++) {
-            resolvedOrder.minReceived[i].amount = registeredAmounts[i];
-        }
+        resolvedOrder =
+            ERC7683AL.updateMinimumReceived(resolvedOrder, registeredAmounts, orderData.mandate.fills[0].scalingFactor);
 
         // Emit an open event
         emit Open(bytes32(nonce), resolvedOrder);

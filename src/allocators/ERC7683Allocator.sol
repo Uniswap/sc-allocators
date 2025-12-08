@@ -75,9 +75,9 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
             resolvedOrder.orderId = bytes32(nonce);
 
             // Update the resolved order with the registered amounts
-            for (uint256 i = 0; i < orderData.commitments.length; i++) {
-                resolvedOrder.minReceived[i].amount = registeredAmounts[i];
-            }
+            resolvedOrder = ERC7683AL.updateMinimumReceived(
+                resolvedOrder, registeredAmounts, orderData.mandate.fills[0].scalingFactor
+            );
         }
         // Emit an open event
         emit Open(bytes32(nonce), resolvedOrder);
@@ -146,7 +146,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
 
         caller = address(uint160(deposit * uint160(caller))); // for a deposit, the nonce will be scoped to the caller + user
 
-        return _getNonce(address(caller), order.user);
+        return _getNonce(caller, order.user);
     }
 
     /// @inheritdoc IERC7683Allocator
