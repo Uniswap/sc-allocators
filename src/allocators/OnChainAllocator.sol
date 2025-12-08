@@ -9,6 +9,7 @@ import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 import {ERC6909} from '@solady/tokens/ERC6909.sol';
 import {SafeTransferLib} from '@solady/utils/SafeTransferLib.sol';
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
+import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAllocation.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
@@ -16,13 +17,19 @@ import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 /// @notice Allocates tokens deposited into the compact.
 /// @dev The contract ensures tokens can not be double spent by a user in a fully decentralized manner.
 /// @dev Users can open orders for themselves or for others by providing a signature or the tokens directly.
+/// @custom:security-contact security@uniswap.org
 contract OnChainAllocator is IOnChainAllocator {
+    /// @notice The address of The Compact protocol contract for token management and claim registration
     address public immutable COMPACT_CONTRACT;
+    /// @notice The EIP-712 domain separator for The Compact protocol, used for signature verification
     bytes32 public immutable COMPACT_DOMAIN_SEPARATOR;
+    /// @notice The unique identifier for this allocator within The Compact protocol
     uint96 public immutable ALLOCATOR_ID;
 
     mapping(bytes32 tokenHash => Allocation[] allocations) internal _allocations;
 
+    /// @notice Mapping of user addresses to their current nonce for replay protection.
+    /// @dev The actual nonce will be a combination of the next free nonce and the user address.
     mapping(address user => uint96 nonce) public nonces;
 
     modifier onlyCompact() {
@@ -147,6 +154,7 @@ contract OnChainAllocator is IOnChainAllocator {
         return commitments;
     }
 
+    /// @inheritdoc IOnChainAllocation
     function prepareAllocation(
         address recipient,
         uint256[2][] calldata idsAndAmounts,
@@ -156,6 +164,9 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes32 witness,
         bytes calldata /* orderData */
     ) external returns (uint256 nonce) {
+        if (expires > type(uint32).max) {
+            revert InvalidExpiration(expires, type(uint32).max);
+        }
         uint32 expiration = uint32(expires);
         nonce = _getNonce(msg.sender, recipient);
         AL.prepareAllocation(COMPACT_CONTRACT, nonce, recipient, idsAndAmounts, arbiter, expiration, typehash, witness);
@@ -163,6 +174,7 @@ contract OnChainAllocator is IOnChainAllocator {
         return nonce;
     }
 
+    /// @inheritdoc IOnChainAllocation
     function executeAllocation(
         address recipient,
         uint256[2][] calldata idsAndAmounts,
@@ -172,8 +184,11 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes32 witness,
         bytes calldata /* orderData */
     ) external {
-        uint256 nonce = _getAndUpdateNonce(msg.sender, recipient);
+        if (expires > type(uint32).max) {
+            revert InvalidExpiration(expires, type(uint32).max);
+        }
         uint32 expiration = uint32(expires);
+        uint256 nonce = _getAndUpdateNonce(msg.sender, recipient);
 
         (bytes32 claimHash, Lock[] memory commitments) =
             _executeAllocation(nonce, recipient, idsAndAmounts, arbiter, expiration, typehash, witness);
@@ -292,6 +307,9 @@ contract OnChainAllocator is IOnChainAllocator {
         bytes32 typehash,
         bytes32 witness
     ) private returns (bytes32 claimHash, uint256 nonce) {
+        if (commitments.length == 0) {
+            revert InvalidCommitments();
+        }
         if (expires < block.timestamp) {
             revert InvalidExpiration(expires, block.timestamp);
         }
@@ -503,6 +521,10 @@ contract OnChainAllocator is IOnChainAllocator {
     }
 
     function _getTokenHash(uint256 id, address sponsor) private pure returns (bytes32 tokenHash) {
-        tokenHash = keccak256(abi.encode(id, sponsor));
+        assembly ("memory-safe") {
+            mstore(0x00, id)
+            mstore(0x20, sponsor)
+            tokenHash := keccak256(0x00, 0x40)
+        }
     }
 }
