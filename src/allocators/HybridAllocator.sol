@@ -14,8 +14,9 @@ import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 
 /// @title HybridAllocator
-/// @notice Hybrid allocator supporting both on-chain and off-chain allocation authorization mechanisms
+/// @notice Hybrid allocator for The Compact supporting both on-chain and off-chain allocation authorization mechanisms
 /// @dev Combines direct deposit functionality with signature-based off-chain authorization through multiple authorized signers
+/// @custom:security-contact security@uniswap.org
 contract HybridAllocator is IHybridAllocator {
     /// @notice The unique identifier for this allocator within The Compact protocol
     uint96 public immutable ALLOCATOR_ID;

@@ -9,6 +9,7 @@ import {LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 /// @title AllocatorLib
 /// @notice Library providing core functionality for atomic token allocation verification using transient storage
 /// @dev Implements prepare-execute pattern for ensuring token balance changes match expected allocations
+/// @custom:security-contact security@uniswap.org
 library AllocatorLib {
     /// @notice Function selector for the prepareAllocation function, used as part of transient storage key derivation
     /// @dev bytes4(keccak256('prepareAllocation(address,uint256[2][],address,uint256,bytes32,bytes32,bytes)'))
