@@ -18,6 +18,9 @@ import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 /// @dev Combines direct deposit functionality with signature-based off-chain authorization through multiple authorized signers
 /// @custom:security-contact security@uniswap.org
 contract HybridAllocator is IHybridAllocator {
+    event SignerReplacementProposed(address oldSigner, address newSigner);
+    event SignerReplaced(address oldSigner, address newSigner);
+
     /// @notice The unique identifier for this allocator within The Compact protocol
     uint96 public immutable ALLOCATOR_ID;
     ITheCompact internal immutable _COMPACT;
@@ -31,6 +34,7 @@ contract HybridAllocator is IHybridAllocator {
     uint256 public signerCount;
     /// @notice Mapping tracking which addresses are authorized signers for off-chain allocations
     mapping(address signer => bool isSigner) public signers;
+    mapping(address => address) public pendingSignerReplacement;
 
     modifier onlySigner() {
         if (!signers[msg.sender]) {
@@ -68,6 +72,9 @@ contract HybridAllocator is IHybridAllocator {
         if (!signers[signer_]) {
             revert InvalidSigner();
         }
+        // Clear any pending replacement proposed by this signer
+        delete pendingSignerReplacement[signer_];
+
         signers[signer_] = false;
         signerCount--;
     }
@@ -77,8 +84,22 @@ contract HybridAllocator is IHybridAllocator {
         if (newSigner_ == address(0) || signers[newSigner_]) {
             revert InvalidSigner();
         }
-        signers[msg.sender] = false;
+        pendingSignerReplacement[msg.sender] = newSigner_;
+        emit SignerReplacementProposed(msg.sender, newSigner_);
+    }
+
+    function acceptSignerReplacement(address oldSigner_) external {
+        address newSigner_ = pendingSignerReplacement[oldSigner_];
+        if (newSigner_ == address(0) || msg.sender != newSigner_) {
+            revert InvalidSigner();
+        }
+        if (!signers[oldSigner_]) {
+            revert InvalidSigner();
+        }
+        delete pendingSignerReplacement[oldSigner_];
+        signers[oldSigner_] = false;
         signers[newSigner_] = true;
+        emit SignerReplaced(oldSigner_, newSigner_);
     }
 
     /// @inheritdoc IAllocator
