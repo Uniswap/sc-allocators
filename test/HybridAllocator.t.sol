@@ -997,6 +997,7 @@ contract HybridAllocatorTest is Test, TestHelper {
 
     function test_removeSigner_revert_InvalidSigner(address attacker) public {
         vm.assume(attacker != signer);
+        vm.assume(attacker != address(this));
         vm.prank(signer);
         allocator.addSigner(address(this));
         assertEq(allocator.signerCount(), 2);

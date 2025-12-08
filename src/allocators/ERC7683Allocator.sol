@@ -75,9 +75,9 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
             resolvedOrder.orderId = bytes32(nonce);
 
             // Update the resolved order with the registered amounts
-            for (uint256 i = 0; i < orderData.commitments.length; i++) {
-                resolvedOrder.minReceived[i].amount = registeredAmounts[i];
-            }
+            resolvedOrder = ERC7683AL.updateMinimumReceived(
+                resolvedOrder, registeredAmounts, orderData.mandate.fills[0].scalingFactor
+            );
         }
         // Emit an open event
         emit Open(bytes32(nonce), resolvedOrder);

@@ -206,19 +206,37 @@ library ERC7683AllocatorLib {
         });
         resolvedOrder.fillInstructions = fillInstructions;
 
+        resolvedOrder.maxSpent = createMaximumSpent(mainFill, mainFill.scalingFactor);
+
+        resolvedOrder.minReceived = createMinimumReceived(orderData.commitments, mainFill.scalingFactor);
+
+        return resolvedOrder;
+    }
+
+    /// @notice Creates the maximum spent Output array for an order.
+    /// @param mainFill The main fill of the order.
+    /// @param scalingFactor The scaling factor of the order.
+    /// @return maxSpent The maximum spent Output array for the order.
+    function createMaximumSpent(Fill memory mainFill, uint256 scalingFactor)
+        internal
+        view
+        returns (IOriginSettler.Output[] memory)
+    {
+        uint256 amount = type(uint256).max;
+        if (scalingFactor < 1e18) {
+            // For exact out, the maximum spent is the minimum fill amount
+            amount = mainFill.minimumFillAmount;
+        }
+
         IOriginSettler.Output memory spent = IOriginSettler.Output({
             token: addressToBytes32(mainFill.fillToken),
-            amount: type(uint256).max,
+            amount: amount,
             recipient: addressToBytes32(mainFill.recipient),
             chainId: mainFill.chainId
         });
         IOriginSettler.Output[] memory maxSpent = new IOriginSettler.Output[](1);
         maxSpent[0] = spent;
-        resolvedOrder.maxSpent = maxSpent;
-
-        resolvedOrder.minReceived = createMinimumReceived(orderData.commitments, mainFill.scalingFactor);
-
-        return resolvedOrder;
+        return maxSpent;
     }
 
     /// @notice Creates the minimum received Output array for an order.
@@ -241,13 +259,27 @@ library ERC7683AllocatorLib {
 
             IOriginSettler.Output memory received = IOriginSettler.Output({
                 token: addressToBytes32(commitments[i].token),
-                amount: commitments[i].amount,
+                amount: amount,
                 recipient: bytes32(0), // Leave empty since these tokens will be received by the filler
                 chainId: block.chainid
             });
             minReceived[i] = received;
         }
         return minReceived;
+    }
+
+    function updateMinimumReceived(
+        IOriginSettler.ResolvedCrossChainOrder memory resolvedOrder,
+        uint256[] memory registeredAmounts,
+        uint256 scalingFactor
+    ) internal pure returns (IOriginSettler.ResolvedCrossChainOrder memory) {
+        if (scalingFactor > 1e18) {
+            // For exact in, the minimum received is the commitments amounts
+            for (uint256 i = 0; i < registeredAmounts.length; i++) {
+                resolvedOrder.minReceived[i].amount = registeredAmounts[i];
+            }
+        }
+        return resolvedOrder;
     }
 
     /// @notice Hashes the mandate of the order.
