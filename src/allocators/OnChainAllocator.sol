@@ -133,6 +133,7 @@ contract OnChainAllocator is IOnChainAllocator {
             revert InvalidExpiration(expires, block.timestamp);
         }
 
+        recipient = AL.getRecipient(recipient);
         nonce = _getAndUpdateNonce(msg.sender, recipient);
 
         uint256[2][] memory idsAndAmounts = new uint256[2][](commitments.length);
