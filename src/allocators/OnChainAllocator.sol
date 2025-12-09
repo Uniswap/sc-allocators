@@ -19,6 +19,8 @@ import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 /// @dev Users can open orders for themselves or for others by providing a signature or the tokens directly.
 /// @custom:security-contact security@uniswap.org
 contract OnChainAllocator is IOnChainAllocator {
+    /// @notice The chain id at the time of deployment
+    uint256 private immutable _INITIAL_CHAIN_ID;
     /// @notice The address of The Compact protocol contract for token management and claim registration
     address public immutable COMPACT_CONTRACT;
     /// @notice The EIP-712 domain separator for The Compact protocol, used for signature verification
@@ -40,6 +42,7 @@ contract OnChainAllocator is IOnChainAllocator {
     }
 
     constructor(address compactContract_) {
+        _INITIAL_CHAIN_ID = block.chainid;
         COMPACT_CONTRACT = compactContract_;
         COMPACT_DOMAIN_SEPARATOR = ITheCompact(COMPACT_CONTRACT).DOMAIN_SEPARATOR();
         ALLOCATOR_ID = ITheCompact(COMPACT_CONTRACT).__registerAllocator(address(this), '');
@@ -72,6 +75,11 @@ contract OnChainAllocator is IOnChainAllocator {
         if (signature.length > 0) {
             // confirm the provided signature is valid
             bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), COMPACT_DOMAIN_SEPARATOR, claimHash));
+            if (block.chainid != _INITIAL_CHAIN_ID) {
+                digest = keccak256(
+                    abi.encodePacked(bytes2(0x1901), ITheCompact(COMPACT_CONTRACT).DOMAIN_SEPARATOR(), claimHash)
+                );
+            }
             address signer_ = AL.recoverSigner(digest, signature);
             if (sponsor != signer_ || signer_ == address(0)) {
                 revert InvalidSignature(signer_, sponsor);
