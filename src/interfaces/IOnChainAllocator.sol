@@ -94,5 +94,5 @@ interface IOnChainAllocator is IOnChainAllocation {
         uint32 expires,
         bytes32 typehash,
         bytes32 witness
-    ) external returns (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce);
+    ) external payable returns (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce);
 }
