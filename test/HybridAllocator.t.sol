@@ -275,7 +275,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         uint256[2][] memory idsAndAmounts = new uint256[2][](1);
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0));
         idsAndAmounts[0][1] = 0;
-        vm.expectRevert(abi.encodeWithSelector(ITheCompact.InvalidBatchDepositStructure.selector));
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidValue.selector, 0, 1));
         allocator.allocateAndRegister(user, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, '');
     }
 
