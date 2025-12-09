@@ -1264,7 +1264,7 @@ contract ERC7683Allocator_openForDeposit is MockAllocator {
 
         assertEq(ERC6909(address(compactContract)).balanceOf(user, usdcId), defaultAmount);
 
-        compact_.nonce = _composeNonceUint(relayer, 1);
+        compact_.nonce = _composeNonceUint(address(0), 1);
         compact_.commitments[0].amount = defaultAmount;
 
         (bytes32 mandateHash,) = _hashMandate(mandate_);
@@ -1281,7 +1281,7 @@ contract ERC7683Allocator_openForDeposit is MockAllocator {
         usdc.mint(address(erc7683Allocator), amount);
 
         BatchCompact memory compact_ = _getCompact();
-        compact_.nonce = _composeNonceUint(relayer, 1);
+        compact_.nonce = _composeNonceUint(address(0), 1);
 
         Mandate memory mandate_ = _getMandate();
         IOriginSettler.GaslessCrossChainOrder memory order_ = _getGaslessCrossChainOrder(compact_, mandate_, true);
