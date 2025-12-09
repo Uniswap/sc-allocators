@@ -7,6 +7,7 @@ import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAlloca
 /// @notice Interface for hybrid allocators supporting both on-chain and off-chain authorization mechanisms
 /// @dev Combines direct token deposit functionality with signature-based off-chain allocation authorization
 interface IHybridAllocator is IOnChainAllocation {
+    error InvalidAllocatorRegistration(address alreadyRegisteredAllocator);
     error Unsupported();
     error InvalidIds();
     error InvalidAllocatorId(uint96 allocatorId, uint96 expectedAllocatorId);
