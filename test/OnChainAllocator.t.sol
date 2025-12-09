@@ -15,7 +15,6 @@ import {ERC20Mock} from 'src/test/ERC20Mock.sol';
 import {TheCompact} from '@uniswap/the-compact/TheCompact.sol';
 
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
-import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 
 import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAllocation.sol';
 import {OnChainAllocator} from 'src/allocators/OnChainAllocator.sol';
@@ -27,9 +26,16 @@ import {ERC6909} from '@solady/tokens/ERC6909.sol';
 import {ResetPeriod} from '@uniswap/the-compact/types/ResetPeriod.sol';
 import {Scope} from '@uniswap/the-compact/types/Scope.sol';
 
+import {IdLib} from '@uniswap/the-compact/lib/IdLib.sol';
 import {AllocatorLib} from 'src/allocators/lib/AllocatorLib.sol';
 import {OnChainAllocationCaller} from 'src/test/OnChainAllocationCaller.sol';
 import {TestHelper} from 'test/util/TestHelper.sol';
+
+contract OnChainAllocatorFactory {
+    function deploy(bytes32 salt, address compact) external returns (address) {
+        return address(new OnChainAllocator{salt: salt}(compact));
+    }
+}
 
 contract OnChainAllocatorTest is Test, TestHelper {
     TheCompact internal compact;
@@ -1492,6 +1498,59 @@ contract OnChainAllocatorTest is Test, TestHelper {
             allocator.isClaimAuthorized(claimHash, arbiter, recipient, nonce, defaultExpiration, idsAndAmounts, '')
         );
     }
+    
+    function test_constructor_allowsPreRegisteredAllocator_create2() public {
+        OnChainAllocatorFactory factory = new OnChainAllocatorFactory();
+
+        bytes32 salt = keccak256('onchain-allocator-pre-registered');
+        bytes memory initCode = abi.encodePacked(type(OnChainAllocator).creationCode, abi.encode(address(compact)));
+        bytes32 initCodeHash = keccak256(initCode);
+
+        address expected = vm.computeCreate2Address(salt, initCodeHash, address(factory));
+
+        bytes memory proof = abi.encodePacked(bytes1(0xff), address(factory), salt, initCodeHash);
+
+        uint96 preId = compact.__registerAllocator(expected, proof);
+        assertEq(_toAllocatorId(expected), preId);
+
+        address deployed = OnChainAllocatorFactory(address(factory)).deploy(salt, address(compact));
+        assertEq(deployed, expected);
+
+        OnChainAllocator newAllocator = OnChainAllocator(deployed);
+        assertEq(newAllocator.ALLOCATOR_ID(), _toAllocatorId(deployed));
+    }
+
+    function test_constructor_reverts_with_already_registered_allocator_in_case_of_address_collision() public {
+        // Deploy Create2 factory
+        OnChainAllocatorFactory factory = new OnChainAllocatorFactory();
+
+        // Precalculate the allocator's address
+        bytes32 salt = keccak256('onchain-allocator-pre-registered');
+        bytes memory initCode = abi.encodePacked(type(OnChainAllocator).creationCode, abi.encode(address(compact)));
+        bytes32 initCodeHash = keccak256(initCode);
+
+        address expected = vm.computeCreate2Address(salt, initCodeHash, address(factory));
+
+        // Store a different registered allocator address (simulate an address collision)
+        address differentRegisteredAllocator = address(1);
+
+        uint96 allocatorId = IdLib.toAllocatorId(expected);
+        bytes32 allocatorSlot;
+        assembly ("memory-safe") {
+            allocatorSlot := or(0x000044036fc77deaed2300000000000000000000000, allocatorId)
+        }
+
+        vm.store(address(compact), allocatorSlot, bytes32(uint256(uint160(differentRegisteredAllocator))));
+
+        // Try to deploy the allocator
+        // Should revert with the InvalidAllocatorRegistration error, since The Compact has a different address stored in the allocator's slot
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IOnChainAllocator.InvalidAllocatorRegistration.selector, differentRegisteredAllocator
+            )
+        );
+        OnChainAllocatorFactory(address(factory)).deploy(salt, address(compact));
+    }
 
     function test_allocateAndRegister_tokensImmediatelyAllocated() public {
         uint256 amount1 = 1 ether;
@@ -1522,5 +1581,37 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InsufficientBalance.selector, recipient, id2, 0, 1));
         allocator.attest(address(this), recipient, address(this), id2, 1);
+    }
+
+    function test_allocateAndRegister_emptyRecipientBecomesCaller() public {
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(usdc), defaultAmount);
+
+        usdc.mint(address(allocator), defaultAmount);
+
+        vm.prank(caller);
+        (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce) = allocator.allocateAndRegister(
+            address(0), /* allocate for an empty recipient */
+            commitments,
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0)
+        );
+
+        uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+        idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
+        idsAndAmounts[0][1] = defaultAmount;
+
+        assertEq(nonce, _composeNonceUint(caller, 1));
+        assertEq(registeredAmounts.length, 1);
+        assertEq(registeredAmounts[0], defaultAmount);
+        // Ensure the allocation happened for the caller, not address(0)
+        assertEq(ERC6909(address(compact)).balanceOf(caller, idsAndAmounts[0][0]), defaultAmount);
+        assertTrue(allocator.isClaimAuthorized(claimHash, arbiter, caller, nonce, defaultExpiration, idsAndAmounts, ''));
+        assertTrue(compact.isRegistered(caller, claimHash, BATCH_COMPACT_TYPEHASH));
+        bytes32 claimHashRecreated =
+            _createClaimHash(caller, arbiter, nonce, defaultExpiration, commitments, bytes32(0));
+        assertEq(claimHashRecreated, claimHash);
     }
 }

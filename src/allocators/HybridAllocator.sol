@@ -11,6 +11,9 @@ import {AllocatorLib as AL} from './lib/AllocatorLib.sol';
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAllocation.sol';
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
+
+import {Extsload} from '@uniswap/the-compact/lib/Extsload.sol';
+import {IdLib} from '@uniswap/the-compact/lib/IdLib.sol';
 import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 
 /// @title HybridAllocator
@@ -53,8 +56,33 @@ contract HybridAllocator is IHybridAllocator {
         }
         _INITIAL_CHAIN_ID = block.chainid;
         _COMPACT = ITheCompact(compact_);
-        ALLOCATOR_ID = _COMPACT.__registerAllocator(address(this), '');
         _COMPACT_DOMAIN_SEPARATOR = _COMPACT.DOMAIN_SEPARATOR();
+        try _COMPACT.__registerAllocator(address(this), '') returns (uint96 allocatorId) {
+            ALLOCATOR_ID = allocatorId;
+        } catch {
+            // The Compact does not have a getter function for retrieving the status of allocator registration,
+            // so we need to calculate it manually.
+            uint96 allocatorId = IdLib.toAllocatorId(address(this));
+            bytes32 allocatorSlot;
+            assembly ("memory-safe") {
+                // Identical to the registration logic slot calculation in The Compact:
+                // let allocatorSlot := or(_ALLOCATOR_BY_ALLOCATOR_ID_SLOT_SEED, allocatorId)
+                allocatorSlot := or(0x000044036fc77deaed2300000000000000000000000, allocatorId)
+            }
+
+            bytes32 registeredAllocator = Extsload(compact_).extsload(allocatorSlot);
+
+            assembly ("memory-safe") {
+                if iszero(eq(registeredAllocator, address())) {
+                    // revert InvalidAllocatorRegistration(registeredAllocator)
+                    mstore(0x00, 0x161ab6ea)
+                    mstore(0x20, registeredAllocator)
+                    revert(0x1c, 0x24)
+                }
+            }
+
+            ALLOCATOR_ID = allocatorId;
+        }
 
         signers[signer_] = true;
         signerCount++;
@@ -131,6 +159,7 @@ contract HybridAllocator is IHybridAllocator {
         bytes32 typehash,
         bytes32 witness
     ) public payable returns (bytes32, uint256[] memory, uint256) {
+        recipient = AL.getRecipient(recipient);
         idsAndAmounts = _actualIdsAndAmounts(idsAndAmounts);
 
         (bytes32 claimHash, uint256[] memory registeredAmounts) = _COMPACT.batchDepositAndRegisterFor{value: msg.value}(

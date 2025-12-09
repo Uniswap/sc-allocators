@@ -14,6 +14,9 @@ interface IOnChainAllocator is IOnChainAllocation {
         bytes32 claimHash;
     }
 
+    /// @notice Thrown if the allocator is not successfully registered
+    error InvalidAllocatorRegistration(address alreadyRegisteredAllocator);
+
     /// @notice Thrown if the caller is invalid
     error InvalidCaller(address caller, address expected);
 

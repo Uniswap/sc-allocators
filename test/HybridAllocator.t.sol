@@ -21,6 +21,12 @@ import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 import {ERC20Mock} from 'src/test/ERC20Mock.sol';
 import {OnChainAllocationCaller} from 'src/test/OnChainAllocationCaller.sol';
 
+contract HybridAllocatorFactory {
+    function deploy(bytes32 salt, address compact, address signer) external returns (address) {
+        return address(new HybridAllocator{salt: salt}(compact, signer));
+    }
+}
+
 contract HybridAllocatorTest is Test, TestHelper {
     TheCompact compact;
     address arbiter;
@@ -518,6 +524,35 @@ contract HybridAllocatorTest is Test, TestHelper {
         bytes32 createdHash = _toBatchCompactHashWithWitness(BATCH_COMPACT_TYPEHASH_WITH_WITNESS, batch, witness);
         assertEq(createdHash, claimHash);
         assertTrue(allocator.isClaimAuthorized(createdHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
+    }
+
+    function test_allocateAndRegister_success_emptyRecipientBecomesCaller() public {
+        uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+        idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
+        idsAndAmounts[0][1] = defaultAmount;
+
+        // Provide tokens
+        vm.prank(user);
+        usdc.transfer(address(allocator), defaultAmount);
+        assertEq(usdc.balanceOf(address(allocator)), defaultAmount);
+
+        vm.prank(user);
+        (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce) = allocator.allocateAndRegister(
+            address(0), /* allocate for an empty recipient */
+            idsAndAmounts,
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            ''
+        );
+
+        // Ensure the allocation happened for the caller (user), not address(0)
+        assertTrue(compact.isRegistered(user, claimHash, BATCH_COMPACT_TYPEHASH));
+        assertTrue(allocator.isClaimAuthorized(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
+        assertEq(registeredAmounts[0], defaultAmount);
+        assertEq(usdc.balanceOf(address(compact)), defaultAmount);
+        assertEq(compact.balanceOf(address(user), idsAndAmounts[0][0]), defaultAmount);
+        assertEq(nonce, 1);
     }
 
     function test_allocateAndRegister_slot() public {
@@ -1198,5 +1233,28 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertFalse(allocator.signers(signer));
         assertFalse(allocator.signers(newSigner));
         assertTrue(allocator.signers(newSigner2));
+    }
+
+    function test_constructor_allowsPreRegisteredAllocator_create2() public {
+        HybridAllocatorFactory factory = new HybridAllocatorFactory();
+
+        bytes32 salt = keccak256('hybrid-allocator-pre-registered');
+        bytes memory initCode =
+            abi.encodePacked(type(HybridAllocator).creationCode, abi.encode(address(compact), signer));
+        bytes32 initCodeHash = keccak256(initCode);
+
+        address expected =
+            address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(factory), salt, initCodeHash)))));
+
+        bytes memory proof = abi.encodePacked(bytes1(0xff), address(factory), salt, initCodeHash);
+
+        uint96 preId = compact.__registerAllocator(expected, proof);
+        assertEq(_toAllocatorId(expected), preId);
+
+        address deployed = HybridAllocatorFactory(address(factory)).deploy(salt, address(compact), signer);
+        assertEq(deployed, expected);
+
+        HybridAllocator newAllocator = HybridAllocator(deployed);
+        assertEq(newAllocator.ALLOCATOR_ID(), _toAllocatorId(deployed));
     }
 }
