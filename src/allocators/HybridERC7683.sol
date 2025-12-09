@@ -4,19 +4,8 @@ pragma solidity ^0.8.27;
 
 import {ERC7683AllocatorLib as ERC7683AL} from './lib/ERC7683AllocatorLib.sol';
 import {LibBytes} from '@solady/utils/LibBytes.sol';
-import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
-import {BatchCompact, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
-import {Tribunal} from '@uniswap/tribunal/Tribunal.sol';
-import {Fill, Mandate} from '@uniswap/tribunal/types/TribunalStructs.sol';
 
-import {
-    COMPACT_TYPEHASH_WITH_MANDATE,
-    COMPACT_WITH_MANDATE_TYPESTRING,
-    MANDATE_BATCH_COMPACT_TYPEHASH,
-    MANDATE_FILL_TYPEHASH,
-    MANDATE_RECIPIENT_CALLBACK_TYPEHASH,
-    MANDATE_TYPEHASH
-} from '@uniswap/tribunal/types/TribunalTypeHashes.sol';
+import {COMPACT_TYPEHASH_WITH_MANDATE, COMPACT_WITH_MANDATE_TYPESTRING} from '@uniswap/tribunal/types/TribunalTypeHashes.sol';
 import {HybridAllocator} from 'src/allocators/HybridAllocator.sol';
 import {IERC7683Allocator} from 'src/interfaces/IERC7683Allocator.sol';
 
@@ -65,9 +54,9 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
             resolvedOrder.orderId = bytes32(nonce);
 
             // Update the resolved order with the registered amounts
-            for (uint256 i = 0; i < orderData.commitments.length; i++) {
-                resolvedOrder.minReceived[i].amount = registeredAmounts[i];
-            }
+            resolvedOrder = ERC7683AL.updateMinimumReceived(
+                resolvedOrder, registeredAmounts, orderData.mandate.fills[0].scalingFactor
+            );
 
             // Emit an open event
             emit Open(bytes32(nonce), resolvedOrder);
@@ -94,9 +83,8 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
             ERC7683AL.resolveOrder(msg.sender, nonce, expires, fillHashes, orderData, LibBytes.emptyCalldata());
 
         // Update the resolved order with the registered amounts
-        for (uint256 i = 0; i < orderData.commitments.length; i++) {
-            resolvedOrder.minReceived[i].amount = registeredAmounts[i];
-        }
+        resolvedOrder =
+            ERC7683AL.updateMinimumReceived(resolvedOrder, registeredAmounts, orderData.mandate.fills[0].scalingFactor);
 
         // Emit an open event
         emit Open(bytes32(nonce), resolvedOrder);
