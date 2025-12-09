@@ -126,6 +126,12 @@ contract OnChainAllocatorTest is Test, TestHelper {
     /*                               allocate()                              */
     /* --------------------------------------------------------------------- */
 
+    function test_allocate_revert_InvalidCommitments() public {
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidCommitments.selector));
+        allocator.allocate(new Lock[](0), arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0));
+    }
+
     function test_allocate_revert_InvalidExpiration() public {
         Lock[] memory commitments = new Lock[](1);
         commitments[0] = _makeLock(address(0), defaultAmount);
@@ -139,7 +145,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         vm.prank(user);
         vm.expectRevert(
-            abi.encodeWithSelector(IOnChainAllocator.InvalidExpiration.selector, expiration, expiration - 1)
+            abi.encodeWithSelector(IOnChainAllocator.InvalidExpiration.selector, expiration, expiration)
         );
         allocator.allocate(commitments, arbiter, uint32(expiration), BATCH_COMPACT_TYPEHASH, bytes32(0));
     }
@@ -415,7 +421,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         vm.prank(user);
         compact.depositNative{value: defaultAmount}(commitments[0].lockTag, user);
 
-        vm.warp(defaultExpiration + 1);
+        vm.warp(defaultExpiration);
 
         vm.prank(relayer);
         vm.expectRevert(
@@ -505,6 +511,40 @@ contract OnChainAllocatorTest is Test, TestHelper {
         commitments[0] = _makeLock(address(0), defaultAmount);
         vm.prank(user);
         compact.depositNative{value: defaultAmount}(commitments[0].lockTag, user);
+
+        // build digest exactly like allocator expects
+        uint256 expectedNonce = _composeNonceUint(user, allocator.nonces(user) + 1);
+        bytes32 commitmentsHash = _commitmentsHash(commitments);
+        bytes32 claimHash = keccak256(
+            abi.encode(BATCH_COMPACT_TYPEHASH, arbiter, user, expectedNonce, defaultExpiration, commitmentsHash)
+        );
+        bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), compact.DOMAIN_SEPARATOR(), claimHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPK, digest);
+        bytes memory sig = abi.encodePacked(r, s, v);
+
+        vm.prank(relayer);
+        (bytes32 returnedHash, uint256 nonce) =
+            allocator.allocateFor(user, commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, 0x0, sig);
+
+        uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+        idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0));
+        idsAndAmounts[0][1] = defaultAmount;
+
+        assertEq(returnedHash, claimHash);
+        assertEq(nonce, expectedNonce);
+        assertTrue(allocator.isClaimAuthorized(claimHash, arbiter, user, nonce, defaultExpiration, idsAndAmounts, ''));
+    }
+
+    function test_allocateFor_success_withSignature_multipleCommitments(address relayer) public {
+        Lock[] memory commitments = new Lock[](2);
+        commitments[0] = _makeLock(address(0), defaultAmount);
+        commitments[1] = _makeLock(address(usdc), defaultAmount);
+        vm.startPrank(user);
+        compact.depositNative{value: defaultAmount}(commitments[0].lockTag, user);
+        usdc.mint(user, defaultAmount);
+        usdc.approve(address(compact), defaultAmount);
+        compact.depositERC20(address(usdc), commitments[1].lockTag, defaultAmount, user);
+        vm.stopPrank();
 
         // build digest exactly like allocator expects
         uint256 expectedNonce = _composeNonceUint(user, allocator.nonces(user) + 1);
@@ -905,6 +945,34 @@ contract OnChainAllocatorTest is Test, TestHelper {
         assertEq(allocator.nonces(caller), 0);
     }
 
+    function test_prepareAllocation_revert_InvalidExpiration() public {
+        uint256 amount = defaultAmount;
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), amount);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IOnChainAllocator.InvalidExpiration.selector, uint256(type(uint32).max) + 1, type(uint32).max
+            )
+        );
+        allocator.prepareAllocation(
+            recipient, idsAndAmounts, arbiter, uint256(type(uint32).max) + 1, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+    }
+
+    function test_executeAllocation_revert_InvalidExpiration() public {
+        uint256 amount = defaultAmount;
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), amount);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IOnChainAllocator.InvalidExpiration.selector, uint256(type(uint32).max) + 1, type(uint32).max
+            )
+        );
+        allocator.executeAllocation(
+            recipient, idsAndAmounts, arbiter, uint256(type(uint32).max) + 1, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+    }
+
     function test_executeAllocation_success_viaCaller_singleERC20() public {
         uint256 amount = defaultAmount;
         uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), amount);
@@ -1134,12 +1202,42 @@ contract OnChainAllocatorTest is Test, TestHelper {
         );
     }
 
+    function test_allocateAndRegister_revert_invalidExpiration() public {
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(usdc), defaultAmount);
+
+        usdc.mint(address(allocator), defaultAmount);
+
+        vm.warp(defaultExpiration);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IOnChainAllocator.InvalidExpiration.selector, defaultExpiration, block.timestamp)
+        );
+        allocator.allocateAndRegister(
+            recipient, commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0)
+        );
+    }
+
     function test_allocateAndRegister_revert_InvalidAmount() public {
         Lock[] memory commitments = new Lock[](1);
         commitments[0] = _makeLock(address(usdc), uint256(type(uint224).max) + 1);
 
         vm.prank(caller);
         vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidAmount.selector, commitments[0].amount));
+        allocator.allocateAndRegister(
+            recipient, commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0)
+        );
+    }
+
+    function test_allocateAndRegister_revert_InvalidAmount_balance() public {
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(usdc), 0);
+        usdc.mint(address(allocator), uint256(type(uint224).max) + 1);
+
+        vm.prank(caller);
+        vm.expectRevert(
+            abi.encodeWithSelector(IOnChainAllocator.InvalidAmount.selector, uint256(type(uint224).max) + 1)
+        );
         allocator.allocateAndRegister(
             recipient, commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0)
         );

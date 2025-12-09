@@ -5,6 +5,8 @@ pragma solidity ^0.8.27;
 import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAllocation.sol';
 import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
+/// @title IOnChainAllocator
+/// @notice Interface for the on-chain token allocator that prevents double-spending in a fully decentralized manner
 interface IOnChainAllocator is IOnChainAllocation {
     struct Allocation {
         uint32 expires;
@@ -15,14 +17,8 @@ interface IOnChainAllocator is IOnChainAllocation {
     /// @notice Thrown if the allocator is not successfully registered
     error InvalidAllocatorRegistration(address alreadyRegisteredAllocator);
 
-    /// @notice Thrown if a claim is already active
-    error ClaimActive(address sponsor);
-
     /// @notice Thrown if the caller is invalid
     error InvalidCaller(address caller, address expected);
-
-    /// @notice Thrown if the nonce has already been consumed on the compact contract
-    error NonceAlreadyInUse(uint256 nonce);
 
     /// @notice Thrown if the sponsor does not have enough balance to lock the amount
     error InsufficientBalance(address sponsor, uint256 id, uint256 availableBalance, uint256 expectedBalance);
@@ -39,15 +35,14 @@ interface IOnChainAllocator is IOnChainAllocation {
     /// @notice Thrown if the provided lock is not available or expired
     error InvalidClaim(bytes32 claimHash);
 
-    /// @notice Thrown if the current allocation is bigger then uint224
-    /// @dev Allocations above uint224 do not support attestations
-    error ExtensiveAllocationActive(address sponsor, uint256 id);
-
     /// @notice Thrown if the provided amount is not valid
     error InvalidAmount(uint256 amount);
 
     /// @notice Thrown if the provided signature is invalid
     error InvalidSignature(address signer, address expectedSigner);
+
+    /// @notice Thrown if the provided commitments are empty
+    error InvalidCommitments();
 
     /// @notice Registers an allocation for a set of tokens
     /// @param commitments The commitments of the allocations
@@ -55,6 +50,8 @@ interface IOnChainAllocator is IOnChainAllocation {
     /// @param expires The expiration of the allocation
     /// @param typehash The typehash of the allocation
     /// @param witness The witness of the allocation
+    /// @return claimHash The hash of the claim
+    /// @return claimNonce The nonce of the claim
     function allocate(Lock[] memory commitments, address arbiter, uint32 expires, bytes32 typehash, bytes32 witness)
         external
         returns (bytes32 claimHash, uint256 claimNonce);
@@ -67,6 +64,8 @@ interface IOnChainAllocator is IOnChainAllocation {
     /// @param typehash The typehash of the allocation
     /// @param witness The witness of the allocation
     /// @param signature The signature of the allocation
+    /// @return claimHash The hash of the claim
+    /// @return claimNonce The nonce of the claim
     function allocateFor(
         address sponsor,
         Lock[] memory commitments,
@@ -85,6 +84,9 @@ interface IOnChainAllocator is IOnChainAllocation {
     /// @param expires The expiration of the allocation
     /// @param typehash The typehash of the allocation
     /// @param witness The witness of the allocation
+    /// @return claimHash The hash of the claim
+    /// @return registeredAmounts The actual amounts registered for each commitment
+    /// @return nonce The nonce of the allocation
     function allocateAndRegister(
         address recipient,
         Lock[] calldata commitments,

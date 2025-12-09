@@ -3,6 +3,9 @@ pragma solidity ^0.8.27;
 
 import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAllocation.sol';
 
+/// @title IHybridAllocator
+/// @notice Interface for hybrid allocators supporting both on-chain and off-chain authorization mechanisms
+/// @dev Combines direct token deposit functionality with signature-based off-chain allocation authorization
 interface IHybridAllocator is IOnChainAllocation {
     error InvalidAllocatorRegistration(address alreadyRegisteredAllocator);
     error Unsupported();
@@ -11,6 +14,7 @@ interface IHybridAllocator is IOnChainAllocation {
     error InvalidCaller(address sender, address expectedSender);
     error InvalidSignature();
     error InvalidSigner();
+    error CallerNotSigner();
     error LastSigner();
     error InvalidValue(uint256 value, uint256 expectedValue);
 
