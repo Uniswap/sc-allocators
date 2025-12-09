@@ -19,7 +19,6 @@ import {
 
 import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 
-import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 import {IERC7683Allocator} from 'src/interfaces/IERC7683Allocator.sol';
 
 /// @title ERC7683AllocatorLib
@@ -51,6 +50,7 @@ library ERC7683AllocatorLib {
     error InvalidRecipientCallbackLength();
     error InvalidOrderDataType(bytes32 orderDataType, bytes32 expectedOrderDataType);
     error InvalidOriginSettler(address originSettler, address expectedOriginSettler);
+    error InvalidOriginChainId(uint256 originChainId, uint256 expectedChainId);
     error InvalidOrderData(bytes orderData);
 
     /// @notice Checks and decodes the order data for a gasless cross-chain order.
@@ -77,6 +77,10 @@ library ERC7683AllocatorLib {
         // Check if the originSettler is the allocator
         if (order.originSettler != address(this)) {
             revert InvalidOriginSettler(order.originSettler, address(this));
+        }
+        // Check that the order is intended for the current chain
+        if (order.originChainId != block.chainid) {
+            revert InvalidOriginChainId(order.originChainId, block.chainid);
         }
 
         // Decode the orderData
@@ -145,11 +149,26 @@ library ERC7683AllocatorLib {
         // 0x40: OrderDataGasless.deposit
 
         assembly ("memory-safe") {
-            let l := sub(orderData.length, 0x20)
-            let s := calldataload(add(orderData.offset, 0x20)) // Relative offset of `orderBytes` from `orderData.offset` and the `OrderData...` struct.
-            order := add(orderData.offset, add(s, 0x20)) // Add 0x20 since the OrderStruct is within the `OrderData...` struct
-            if shr(64, or(s, or(l, orderData.offset))) { revert(l, 0x00) }
+            // Enforce minimum length of 0x60 for: selector (outer), offsets (0x20, 0x40) and the additional input at 0x40
+            // Note: Here, orderData is already the bytes payload; we require at least 0x60 bytes to safely read up to +0x40
+            if lt(orderData.length, 0x60) {
+                // Empty revert to mirror prior behavior on malformed calldata
+                revert(0x00, 0x00)
+            }
 
+            // Load relative offset of nested Order within the OrderData struct
+            let s := calldataload(add(orderData.offset, 0x20))
+
+            // Bounds check: s must be >= 0x20 (points after the first slot) and s + 0x20 within orderData.length
+            // Also ensure no overflow on add(s, 0x20)
+            if or(lt(s, 0x20), gt(add(s, 0x20), orderData.length)) {
+                revert(0x00, 0x00)
+            }
+
+            // Compute pointer to nested Order (calldata pointer)
+            order := add(orderData.offset, add(s, 0x20))
+
+            // Read additional input (expires/deposit) at fixed position 0x40 in the OrderData
             additionalInput := calldataload(add(orderData.offset, 0x40))
         }
     }
@@ -206,41 +225,80 @@ library ERC7683AllocatorLib {
         });
         resolvedOrder.fillInstructions = fillInstructions;
 
+        resolvedOrder.maxSpent = createMaximumSpent(mainFill, mainFill.scalingFactor);
+
+        resolvedOrder.minReceived = createMinimumReceived(orderData.commitments, mainFill.scalingFactor);
+
+        return resolvedOrder;
+    }
+
+    /// @notice Creates the maximum spent Output array for an order.
+    /// @param mainFill The main fill of the order.
+    /// @param scalingFactor The scaling factor of the order.
+    /// @return maxSpent The maximum spent Output array for the order.
+    function createMaximumSpent(Fill memory mainFill, uint256 scalingFactor)
+        internal
+        view
+        returns (IOriginSettler.Output[] memory)
+    {
+        uint256 amount = type(uint256).max;
+        if (scalingFactor < 1e18) {
+            // For exact out, the maximum spent is the minimum fill amount
+            amount = mainFill.minimumFillAmount;
+        }
+
         IOriginSettler.Output memory spent = IOriginSettler.Output({
             token: addressToBytes32(mainFill.fillToken),
-            amount: type(uint256).max,
+            amount: amount,
             recipient: addressToBytes32(mainFill.recipient),
             chainId: mainFill.chainId
         });
         IOriginSettler.Output[] memory maxSpent = new IOriginSettler.Output[](1);
         maxSpent[0] = spent;
-        resolvedOrder.maxSpent = maxSpent;
-
-        resolvedOrder.minReceived = createMinimumReceived(orderData.commitments);
-
-        return resolvedOrder;
+        return maxSpent;
     }
 
     /// @notice Creates the minimum received Output array for an order.
     /// @param commitments The sponsor's commitments of the order.
     /// @return minReceived The minimum received Output array for the order.
-    function createMinimumReceived(Lock[] calldata commitments)
+    function createMinimumReceived(Lock[] calldata commitments, uint256 scalingFactor)
         internal
         view
         returns (IOriginSettler.Output[] memory)
     {
         IOriginSettler.Output[] memory minReceived = new IOriginSettler.Output[](commitments.length);
 
+        bool useExactIn = scalingFactor > 1e18;
+
         for (uint256 i = 0; i < commitments.length; i++) {
+            uint256 amount = 0;
+            if (useExactIn) {
+                amount = commitments[i].amount;
+            }
+
             IOriginSettler.Output memory received = IOriginSettler.Output({
                 token: addressToBytes32(commitments[i].token),
-                amount: commitments[i].amount,
+                amount: amount,
                 recipient: bytes32(0), // Leave empty since these tokens will be received by the filler
                 chainId: block.chainid
             });
             minReceived[i] = received;
         }
         return minReceived;
+    }
+
+    function updateMinimumReceived(
+        IOriginSettler.ResolvedCrossChainOrder memory resolvedOrder,
+        uint256[] memory registeredAmounts,
+        uint256 scalingFactor
+    ) internal pure returns (IOriginSettler.ResolvedCrossChainOrder memory) {
+        if (scalingFactor > 1e18) {
+            // For exact in, the minimum received is the commitments amounts
+            for (uint256 i = 0; i < registeredAmounts.length; i++) {
+                resolvedOrder.minReceived[i].amount = registeredAmounts[i];
+            }
+        }
+        return resolvedOrder;
     }
 
     /// @notice Hashes the mandate of the order.
@@ -314,13 +372,13 @@ library ERC7683AllocatorLib {
 
     function addressToBytes32(address input) internal pure returns (bytes32 output) {
         assembly ("memory-safe") {
-            output := shr(96, shl(96, input))
+            output := and(input, 0xffffffffffffffffffffffffffffffffffffffff)
         }
     }
 
     function sanitizeUint32(uint32 value) internal pure returns (uint32) {
         assembly ("memory-safe") {
-            value := shr(224, shl(224, value))
+            value := and(value, 0xffffffff)
         }
         return value;
     }
