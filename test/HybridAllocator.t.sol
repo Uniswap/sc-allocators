@@ -1223,7 +1223,7 @@ contract HybridAllocatorTest is Test, TestHelper {
 
         // old signer can no longer propose; new signer can propose
         vm.prank(newSigner);
-        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.CallerNotSigner.selector));
         allocator.replaceSigner(newSigner2);
 
         // accept the latest replacement

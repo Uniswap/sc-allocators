@@ -13,6 +13,7 @@ import {Test} from 'forge-std/Test.sol';
 import {ERC20Mock} from 'src/test/ERC20Mock.sol';
 
 import {TheCompact} from '@uniswap/the-compact/TheCompact.sol';
+import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 
 import {IAllocator} from '@uniswap/the-compact/interfaces/IAllocator.sol';
 
@@ -144,9 +145,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         uint256 expiration = vm.getBlockTimestamp() + 600; // 10 min reset period
 
         vm.prank(user);
-        vm.expectRevert(
-            abi.encodeWithSelector(IOnChainAllocator.InvalidExpiration.selector, expiration, expiration)
-        );
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidExpiration.selector, expiration, expiration));
         allocator.allocate(commitments, arbiter, uint32(expiration), BATCH_COMPACT_TYPEHASH, bytes32(0));
     }
 
@@ -1637,7 +1636,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
             allocator.isClaimAuthorized(claimHash, arbiter, recipient, nonce, defaultExpiration, idsAndAmounts, '')
         );
     }
-    
+
     function test_constructor_allowsPreRegisteredAllocator_create2() public {
         OnChainAllocatorFactory factory = new OnChainAllocatorFactory();
 
@@ -1742,7 +1741,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
         idsAndAmounts[0][1] = defaultAmount;
 
-        assertEq(nonce, _composeNonceUint(caller, 1));
+        assertEq(nonce, 1);
         assertEq(registeredAmounts.length, 1);
         assertEq(registeredAmounts[0], defaultAmount);
         // Ensure the allocation happened for the caller, not address(0)

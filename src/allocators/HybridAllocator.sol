@@ -122,7 +122,7 @@ contract HybridAllocator is IHybridAllocator {
         if (newSigner_ == address(0) || signers[newSigner_]) {
             revert InvalidSigner();
         }
-        address oldSigner = msg.sender
+        address oldSigner = msg.sender;
         pendingSignerReplacement[oldSigner] = newSigner_;
         emit SignerReplacementProposed(oldSigner, newSigner_);
     }
