@@ -1125,6 +1125,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
     {
         vm.assume(recipient1 != address(0));
         vm.assume(recipient2 != address(0));
+        vm.assume(recipient1 != recipient2);
 
         uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), defaultAmount);
 
