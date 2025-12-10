@@ -17,6 +17,7 @@ library AllocatorLib {
 
     error InvalidBalanceChange(uint256 newBalance, uint256 oldBalance);
     error InvalidPreparation();
+    error InvalidAllocatorId(uint96 providedId, uint96 allocatorId);
     error InvalidRegistration(address recipient, bytes32 claimHash, bytes32 typehash);
 
     function prepareAllocation(
@@ -27,7 +28,8 @@ library AllocatorLib {
         address arbiter,
         uint256 expires,
         bytes32 typehash,
-        bytes32 witness
+        bytes32 witness,
+        uint96 allocatorId
     ) internal {
         assembly ("memory-safe") {
             // identifier = keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));
@@ -44,6 +46,14 @@ library AllocatorLib {
 
             for { let i := 0 } lt(i, idsAndAmounts.length) { i := add(i, 1) } {
                 let id := calldataload(add(idsAndAmounts.offset, mul(i, 0x40)))
+
+                // Verify the id fits the allocator
+                if iszero(eq(shr(164, shl(4, id)), allocatorId)) {
+                    mstore(0x00, 0x8bbfd798) // InvalidAllocatorId()
+                    mstore(0x20, shr(164, shl(4, id)))
+                    mstore(0x40, allocatorId)
+                    revert(0x1c, 0x44)
+                }
 
                 // Retrieve and store the current balance of the recipient in transient storage
                 mstore(0x14, recipient) // Store the `owner` argument.

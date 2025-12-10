@@ -194,7 +194,9 @@ contract HybridAllocator is IHybridAllocator {
         bytes calldata /* orderData */
     ) external returns (uint256 nonce) {
         nonce = nonces + 1;
-        AL.prepareAllocation(address(_COMPACT), nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
+        AL.prepareAllocation(
+            address(_COMPACT), nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness, ALLOCATOR_ID
+        );
     }
 
     /// @inheritdoc IOnChainAllocation
