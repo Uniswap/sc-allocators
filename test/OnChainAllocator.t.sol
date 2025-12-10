@@ -1,13 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-/*
-    Tests for OnChainAllocator.sol
-    These largely mirror the structure & style of HybridAllocator.t.sol while
-    focussing on the purely-on-chain allocation flow (no signature logic except
-    the permit-style path in allocateFor).
-*/
-
 import {Test} from 'forge-std/Test.sol';
 
 import {ERC20Mock} from 'src/test/ERC20Mock.sol';
