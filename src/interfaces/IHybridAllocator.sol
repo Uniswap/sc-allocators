@@ -16,30 +16,45 @@ interface IHybridAllocator is IOnChainAllocation {
     error InvalidAllocatorId(uint96 allocatorId, uint96 expectedAllocatorId);
     error InvalidCaller(address sender, address expectedSender);
     error InvalidSignature();
+    error InvalidOwner();
     error InvalidSigner();
-    error CallerNotSigner();
-    error LastSigner();
+    error CallerNotOwner();
     error InvalidValue(uint256 value, uint256 expectedValue);
 
     /**
      * @notice Add an offchain signer to the allocator.
      * @param signer_ The address of the signer to add.
+     * @dev The caller must be the owner.
      */
     function addSigner(address signer_) external;
 
     /**
      * @notice Remove an offchain signer from the allocator.
-     * @dev The last signer cannot be removed.
+     * @dev The caller must be the owner.
      * @param signer_ The address of the signer to remove.
      */
     function removeSigner(address signer_) external;
 
     /**
      * @notice Replace an offchain signer with a new one.
-     * @dev The caller must be the replaced signer.
+     * @dev The caller must be the owner.
+     * @param oldSigner_ The address of the old signer.
      * @param newSigner_ The address of the new signer.
      */
-    function replaceSigner(address newSigner_) external;
+    function replaceSigner(address oldSigner_, address newSigner_) external;
+
+    /**
+     * @notice Propose a new owner for the allocator.
+     * @dev The caller must be the current owner.
+     * @param newOwner_ The address of the new owner.
+     */
+    function proposeOwnerReplacement(address newOwner_) external;
+
+    /**
+     * @notice Accept the ownership replacement.
+     * @dev The caller must be the new (pending) owner.
+     */
+    function acceptOwnerReplacement() external;
 
     /**
      * @notice Create an allocation and a registration on the compact by depositing the relevant tokens to the compact.

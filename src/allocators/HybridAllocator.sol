@@ -25,9 +25,9 @@ import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 contract HybridAllocator is IHybridAllocator {
     event SignerAdded(address signer);
     event SignerRemoved(address signer);
-    event SignerReplacementProposed(address oldSigner, address newSigner);
-    event SignerReplaced(address oldSigner, address newSigner);
-    event AllocatorInitialized(address compact, address initialSigner, uint96 allocatorId);
+    event OwnerReplacementProposed(address newOwner);
+    event OwnerReplaced(address oldOwner, address newOwner);
+    event AllocatorInitialized(address compact, address owner, uint96 allocatorId);
 
     /// @notice The unique identifier for this allocator within The Compact protocol
     uint96 public immutable ALLOCATOR_ID;
@@ -40,22 +40,22 @@ contract HybridAllocator is IHybridAllocator {
     ///      The next 20 bytes are the sponsors address, followed by the freely chosen nonce within the next 11 bytes.
     ///      This will prevent nonce collisions.
     uint88 public nonces;
-    /// @notice The total number of authorized signers for off-chain allocations
-    uint256 public signerCount;
+    /// @notice The owner of the allocator, authorized to add and remove signers
+    address public owner;
     /// @notice Mapping tracking which addresses are authorized signers for off-chain allocations
     mapping(address signer => bool isSigner) public signers;
-    mapping(address => address) public pendingSignerReplacement;
+    address private _pendingOwner;
 
-    modifier onlySigner() {
-        if (!signers[msg.sender]) {
-            revert CallerNotSigner();
+    modifier onlyOwner() {
+        if (msg.sender != owner) {
+            revert CallerNotOwner();
         }
         _;
     }
 
-    constructor(address signer_) {
-        if (signer_ == address(0)) {
-            revert InvalidSigner();
+    constructor(address owner_, address signer_) {
+        if (owner_ == address(0)) {
+            revert InvalidOwner();
         }
         _INITIAL_CHAIN_ID = block.chainid;
         _COMPACT_DOMAIN_SEPARATOR = ITheCompact(AL.THE_COMPACT).DOMAIN_SEPARATOR();
@@ -86,61 +86,59 @@ contract HybridAllocator is IHybridAllocator {
             ALLOCATOR_ID = allocatorId;
         }
 
-        signers[signer_] = true;
-        signerCount++;
+        owner = owner_;
+        addSigner(signer_);
 
-        emit AllocatorInitialized(AL.THE_COMPACT, signer_, ALLOCATOR_ID);
-        emit SignerAdded(signer_);
+        emit AllocatorInitialized(AL.THE_COMPACT, owner_, ALLOCATOR_ID);
     }
 
     /// @inheritdoc IHybridAllocator
-    function addSigner(address signer_) external onlySigner {
+    function addSigner(address signer_) public onlyOwner {
         if (signer_ == address(0) || signers[signer_]) {
             revert InvalidSigner();
         }
         signers[signer_] = true;
-        signerCount++;
         emit SignerAdded(signer_);
     }
 
     /// @inheritdoc IHybridAllocator
-    function removeSigner(address signer_) external onlySigner {
-        if (signerCount == 1) {
-            revert LastSigner();
-        }
+    function removeSigner(address signer_) public onlyOwner {
         if (!signers[signer_]) {
             revert InvalidSigner();
         }
-        // Clear any pending replacement proposed by this signer
-        delete pendingSignerReplacement[signer_];
 
         signers[signer_] = false;
-        signerCount--;
         emit SignerRemoved(signer_);
     }
 
     /// @inheritdoc IHybridAllocator
-    function replaceSigner(address newSigner_) external onlySigner {
-        if (newSigner_ == address(0) || signers[newSigner_]) {
+    function replaceSigner(address oldSigner_, address newSigner_) external onlyOwner {
+        if (oldSigner_ == newSigner_) {
             revert InvalidSigner();
         }
-        address oldSigner = msg.sender;
-        pendingSignerReplacement[oldSigner] = newSigner_;
-        emit SignerReplacementProposed(oldSigner, newSigner_);
+        removeSigner(oldSigner_);
+        addSigner(newSigner_);
     }
 
-    function acceptSignerReplacement(address oldSigner_) external {
-        address newSigner_ = pendingSignerReplacement[oldSigner_];
-        if (newSigner_ == address(0) || msg.sender != newSigner_) {
-            revert InvalidSigner();
+    /// @inheritdoc IHybridAllocator
+    function proposeOwnerReplacement(address newOwner_) external onlyOwner {
+        if (newOwner_ == address(0)) {
+            revert InvalidOwner();
         }
-        if (!signers[oldSigner_]) {
-            revert InvalidSigner();
+        _pendingOwner = newOwner_;
+        emit OwnerReplacementProposed(newOwner_);
+    }
+
+    /// @inheritdoc IHybridAllocator
+    function acceptOwnerReplacement() external {
+        if (msg.sender != _pendingOwner) {
+            revert InvalidOwner();
         }
-        delete pendingSignerReplacement[oldSigner_];
-        signers[oldSigner_] = false;
-        signers[newSigner_] = true;
-        emit SignerReplaced(oldSigner_, newSigner_);
+
+        delete _pendingOwner;
+        address previousOwner = owner;
+        owner = msg.sender;
+        emit OwnerReplaced(previousOwner, msg.sender);
     }
 
     /// @inheritdoc IAllocator
