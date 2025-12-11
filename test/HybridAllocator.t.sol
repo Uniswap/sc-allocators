@@ -23,8 +23,8 @@ import {OnChainAllocationCaller} from 'src/test/OnChainAllocationCaller.sol';
 import {DeployTheCompact} from 'test/util/DeployTheCompact.sol';
 
 contract HybridAllocatorFactory {
-    function deploy(bytes32 salt, address compact, address signer) external returns (address) {
-        return address(new HybridAllocator{salt: salt}(compact, signer));
+    function deploy(bytes32 salt, address signer) external returns (address) {
+        return address(new HybridAllocator{salt: salt}(signer));
     }
 }
 
@@ -1257,8 +1257,8 @@ contract HybridAllocatorTest is Test, TestHelper {
         HybridAllocatorFactory factory = new HybridAllocatorFactory();
 
         bytes32 salt = keccak256('hybrid-allocator-pre-registered');
-        bytes memory initCode =
-            abi.encodePacked(type(HybridAllocator).creationCode, abi.encode(address(compact), signer));
+        // initCode must match what the factory deploys: creationCode + abi.encode(signer)
+        bytes memory initCode = abi.encodePacked(type(HybridAllocator).creationCode, abi.encode(signer));
         bytes32 initCodeHash = keccak256(initCode);
 
         address expected =
@@ -1269,7 +1269,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         uint96 preId = compact.__registerAllocator(expected, proof);
         assertEq(_toAllocatorId(expected), preId);
 
-        address deployed = HybridAllocatorFactory(address(factory)).deploy(salt, address(compact), signer);
+        address deployed = HybridAllocatorFactory(address(factory)).deploy(salt, signer);
         assertEq(deployed, expected);
 
         HybridAllocator newAllocator = HybridAllocator(deployed);

@@ -34,8 +34,8 @@ import {DeployTheCompact} from 'test/util/DeployTheCompact.sol';
 import {TestHelper} from 'test/util/TestHelper.sol';
 
 contract OnChainAllocatorFactory {
-    function deploy(bytes32 salt, address compact) external returns (address) {
-        return address(new OnChainAllocator{salt: salt}(compact));
+    function deploy(bytes32 salt) external returns (address) {
+        return address(new OnChainAllocator{salt: salt}());
     }
 }
 
@@ -592,12 +592,14 @@ contract OnChainAllocatorTest is Test, TestHelper {
         vm.chainId(1);
         assertEq(block.chainid, 1);
 
+        // After chain fork, the domain separator changes, so the signature will recover
+        // to a different address (not the user). We compute the wrong recovered address
+        // by using the new chain's domain separator with the old signature.
+        bytes32 newDigest = keccak256(abi.encodePacked(bytes2(0x1901), compact.DOMAIN_SEPARATOR(), claimHash));
+        address wrongSigner = ecrecover(newDigest, v, r, s);
+
         vm.prank(relayer);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IOnChainAllocator.InvalidSignature.selector, address(0x71efFb57bf7C717a0a5012186792C45A4851ef5d), user
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidSignature.selector, wrongSigner, user));
         allocator.allocateFor(user, commitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, 0x0, sig);
     }
 
@@ -1739,7 +1741,8 @@ contract OnChainAllocatorTest is Test, TestHelper {
         OnChainAllocatorFactory factory = new OnChainAllocatorFactory();
 
         bytes32 salt = keccak256('onchain-allocator-pre-registered');
-        bytes memory initCode = abi.encodePacked(type(OnChainAllocator).creationCode, abi.encode(address(compact)));
+        // OnChainAllocator constructor takes no arguments, so initCode is just creationCode
+        bytes memory initCode = type(OnChainAllocator).creationCode;
         bytes32 initCodeHash = keccak256(initCode);
 
         address expected = vm.computeCreate2Address(salt, initCodeHash, address(factory));
@@ -1749,7 +1752,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         uint96 preId = compact.__registerAllocator(expected, proof);
         assertEq(_toAllocatorId(expected), preId);
 
-        address deployed = OnChainAllocatorFactory(address(factory)).deploy(salt, address(compact));
+        address deployed = OnChainAllocatorFactory(address(factory)).deploy(salt);
         assertEq(deployed, expected);
 
         OnChainAllocator newAllocator = OnChainAllocator(deployed);
@@ -1762,7 +1765,8 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         // Precalculate the allocator's address
         bytes32 salt = keccak256('onchain-allocator-pre-registered');
-        bytes memory initCode = abi.encodePacked(type(OnChainAllocator).creationCode, abi.encode(address(compact)));
+        // OnChainAllocator constructor takes no arguments, so initCode is just creationCode
+        bytes memory initCode = type(OnChainAllocator).creationCode;
         bytes32 initCodeHash = keccak256(initCode);
 
         address expected = vm.computeCreate2Address(salt, initCodeHash, address(factory));
@@ -1785,7 +1789,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
                 IOnChainAllocator.InvalidAllocatorRegistration.selector, differentRegisteredAllocator
             )
         );
-        OnChainAllocatorFactory(address(factory)).deploy(salt, address(compact));
+        OnChainAllocatorFactory(address(factory)).deploy(salt);
     }
 
     function test_allocateAndRegister_tokensImmediatelyAllocated() public {
