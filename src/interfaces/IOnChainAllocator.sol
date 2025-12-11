@@ -114,6 +114,7 @@ interface IOnChainAllocator is IOnChainAllocation {
     function permit2Allocation(
         address arbiter,
         address depositor,
+        uint256 expires,
         ISignatureTransfer.TokenPermissions[] calldata permitted,
         DepositDetails calldata details,
         bytes32 claimHash,

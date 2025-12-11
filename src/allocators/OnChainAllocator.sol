@@ -247,6 +247,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
     function permit2Allocation(
         address arbiter,
         address depositor,
+        uint256 expires,
         ISignatureTransfer.TokenPermissions[] calldata permitted,
         DepositDetails calldata details,
         bytes32 claimHash,
@@ -254,12 +255,13 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         bytes32 witnessHash,
         bytes calldata signature
     ) external returns (Lock[] memory commitments) {
-        if (details.deadline > type(uint32).max) {
-            revert InvalidExpiration(details.deadline, type(uint32).max);
+        if (expires > type(uint32).max) {
+            revert InvalidExpiration(expires, type(uint32).max);
         }
 
-        commitments =
-            AL.permit2Allocation(arbiter, depositor, permitted, details, claimHash, witness, witnessHash, signature);
+        commitments = AL.permit2Allocation(
+            arbiter, depositor, expires, permitted, details, claimHash, witness, witnessHash, signature
+        );
 
         // Allocate the claim
         for (uint256 i = 0; i < commitments.length; i++) {
@@ -273,10 +275,12 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
                 commitments[i].token,
                 uint224(commitments[i].amount),
                 depositor,
-                uint32(details.deadline), // deadline is verified in the AllocatorLib.permit2Allocation function
+                uint32(expires), // expires is verified in the AllocatorLib.permit2Allocation function
                 claimHash
             );
         }
+
+        emit Allocated(depositor, commitments, details.nonce, expires, claimHash);
     }
 
     /// @inheritdoc IOnChainAllocation
@@ -332,7 +336,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         bytes32 typehash,
         bytes32 witness
     ) private returns (bytes32, Lock[] memory) {
-        (bytes32 claimHash, Lock[] memory commitments) =
+        (bytes32 claimHash, Lock[] memory commitments,) =
             AL.executeAllocation(uint248(nonce), recipient, idsAndAmounts, arbiter, expires, typehash, witness);
 
         // Allocate the claim

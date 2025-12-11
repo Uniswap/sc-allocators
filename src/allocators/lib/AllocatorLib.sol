@@ -69,6 +69,7 @@ library AllocatorLib {
     function permit2Allocation(
         address arbiter,
         address depositor,
+        uint256 expires,
         ISignatureTransfer.TokenPermissions[] calldata permitted,
         DepositDetails calldata details,
         bytes32 claimHash, // This claim hash is connected to the allocation. This does not guarantee, that the allocated tokens are connected to the claim hash.
@@ -189,14 +190,14 @@ library AllocatorLib {
             mstore(0x40, m) // Restore the memory pointer
         }
 
-        // Verify the claim hash includes the permit2 deadline as expiration
+        // Verify the claim hash includes proposed expiration
         if (
             claimHash
                 != getClaimHash(
                     arbiter,
                     depositor,
                     details.nonce,
-                    details.deadline,
+                    expires,
                     getCommitmentsHashMemory(commitments),
                     witnessHash,
                     computeBatchCompactTypehash(witness)

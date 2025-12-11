@@ -190,6 +190,7 @@ contract HybridAllocator is IHybridAllocator {
     function permit2Allocation(
         address arbiter,
         address depositor,
+        uint256 expires,
         ISignatureTransfer.TokenPermissions[] calldata permitted,
         DepositDetails calldata details,
         bytes32 claimHash,
@@ -197,13 +198,14 @@ contract HybridAllocator is IHybridAllocator {
         bytes32 witnessHash,
         bytes calldata signature
     ) external returns (Lock[] memory commitments) {
-        commitments =
-            AL.permit2Allocation(arbiter, depositor, permitted, details, claimHash, witness, witnessHash, signature);
+        commitments = AL.permit2Allocation(
+            arbiter, depositor, expires, permitted, details, claimHash, witness, witnessHash, signature
+        );
 
         // Allocate the claim
         claims[claimHash] = true;
 
-        emit Allocated(depositor, commitments, details.nonce, details.deadline, claimHash);
+        emit Allocated(depositor, commitments, details.nonce, expires, claimHash);
     }
 
     /// @inheritdoc IOnChainAllocation
