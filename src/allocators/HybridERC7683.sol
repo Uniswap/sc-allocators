@@ -5,7 +5,10 @@ pragma solidity ^0.8.27;
 import {ERC7683AllocatorLib as ERC7683AL} from './lib/ERC7683AllocatorLib.sol';
 import {LibBytes} from '@solady/utils/LibBytes.sol';
 
-import {COMPACT_TYPEHASH_WITH_MANDATE, COMPACT_WITH_MANDATE_TYPESTRING} from '@uniswap/tribunal/types/TribunalTypeHashes.sol';
+import {
+    COMPACT_TYPEHASH_WITH_MANDATE,
+    COMPACT_WITH_MANDATE_TYPESTRING
+} from '@uniswap/tribunal/types/TribunalTypeHashes.sol';
 import {HybridAllocator} from 'src/allocators/HybridAllocator.sol';
 import {IERC7683Allocator} from 'src/interfaces/IERC7683Allocator.sol';
 
@@ -18,7 +21,7 @@ import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
     error OnlyDepositsAllowed();
 
-    constructor(address signer) HybridAllocator(signer) {}
+    constructor(address owner_, address signer_) HybridAllocator(owner_, signer_) {}
 
     /// @inheritdoc IOriginSettler
     function openFor(GaslessCrossChainOrder calldata order, bytes calldata sponsorSignature, bytes calldata) external {

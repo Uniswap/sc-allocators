@@ -50,15 +50,17 @@ import {DeployTheCompact} from 'test/util/DeployTheCompact.sol';
 
 contract MockAllocator is GaslessCrossChainOrderData, OnChainCrossChainOrderData {
     HybridERC7683 hybridERC7683Allocator;
+    address owner;
     address signer;
     uint256 signerPK;
 
     function setUp() public virtual override(GaslessCrossChainOrderData, OnChainCrossChainOrderData) {
+        owner = makeAddr('owner');
         (signer, signerPK) = makeAddrAndKey('signer');
         TheCompact compactContract_ = DeployTheCompact(new DeployTheCompact()).deployTheCompact();
         assertEq(address(compactContract_), address(0x00000000000000171ede64904551eeDF3C6C9788));
 
-        hybridERC7683Allocator = new HybridERC7683(signer);
+        hybridERC7683Allocator = new HybridERC7683(owner, signer);
         // HybridAllocator uses simplified nonce: command | counter (no address embedded)
         _setUp(address(hybridERC7683Allocator), compactContract_, _composeNonceUint(ON_CHAIN_NONCE, address(0), 1));
         super.setUp();
@@ -1014,7 +1016,7 @@ contract HybridERC7683_hybridAllocatorInheritance is MockAllocator {
     function test_inheritsHybridAllocatorFunctionality() public view {
         // Test that it properly inherits from HybridAllocator
         assertEq(hybridERC7683Allocator.nonces(), 0);
-        assertEq(hybridERC7683Allocator.signerCount(), 1);
+        assertEq(hybridERC7683Allocator.owner(), owner);
         assertTrue(hybridERC7683Allocator.signers(signer));
         assertEq(hybridERC7683Allocator.ALLOCATOR_ID(), _toAllocatorId(address(hybridERC7683Allocator)));
     }

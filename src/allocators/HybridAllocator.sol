@@ -87,7 +87,10 @@ contract HybridAllocator is IHybridAllocator {
         }
 
         owner = owner_;
-        addSigner(signer_);
+        if (signer_ != address(0)) {
+            signers[signer_] = true;
+            emit SignerAdded(signer_);
+        }
 
         emit AllocatorInitialized(AL.THE_COMPACT, owner_, ALLOCATOR_ID);
     }

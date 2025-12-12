@@ -2033,7 +2033,9 @@ contract OnChainAllocatorTest is Test, TestHelper {
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
         idsAndAmounts[0][1] = defaultAmount;
 
-        assertEq(nonce, 1);
+        // Nonce format: ON_CHAIN_NONCE | (sponsor << 88) | 1
+        // When msg.sender is non-zero, sponsor in nonce becomes address(0) (see _getAndUpdateNonce)
+        assertEq(nonce, _composeNonceUint(address(0), 1));
         assertEq(registeredAmounts.length, 1);
         assertEq(registeredAmounts[0], defaultAmount);
         // Ensure the allocation happened for the caller, not address(0)
@@ -2404,8 +2406,9 @@ contract OnChainAllocatorTest is Test, TestHelper {
         bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPK);
 
         // Execute
-        Lock[] memory commitments =
-            allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
+        Lock[] memory commitments = allocator.permit2Allocation(
+            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+        );
         vm.snapshotGasLastCall('onchain_permit2Allocation_singleERC20');
 
         // Verify commitments
@@ -2470,8 +2473,9 @@ contract OnChainAllocatorTest is Test, TestHelper {
         bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPK);
 
         // Execute
-        Lock[] memory commitments =
-            allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
+        Lock[] memory commitments = allocator.permit2Allocation(
+            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+        );
         vm.snapshotGasLastCall('onchain_permit2Allocation_multipleERC20');
 
         // Verify commitments
@@ -2522,29 +2526,33 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         // Should revert with UnauthorizedNonce because command is not PERMIT2_NONCE
         vm.expectRevert(abi.encodeWithSelector(AllocatorLib.UnauthorizedNonce.selector, bytes1(0x01), user));
-        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
+        allocator.permit2Allocation(
+            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+        );
     }
 
     function test_permit2Allocation_revert_invalidExpiration() public {
         bytes12 lockTag = _getLockTag();
         uint88 freeNonce = 1;
         uint256 nonce = _createPermit2Nonce(user, freeNonce);
-        uint256 invalidDeadline = uint256(type(uint32).max) + 1;
+        uint256 invalidExpiration = uint256(type(uint32).max) + 1;
 
         // Prepare token permissions
         ISignatureTransfer.TokenPermissions[] memory permitted = _createTokenPermissions(address(usdc), defaultAmount);
 
-        // Prepare deposit details with invalid expiration
-        DepositDetails memory details = _createDepositDetails(nonce, invalidDeadline, lockTag);
+        // Prepare deposit details - deadline can be valid, only expires matters
+        DepositDetails memory details = _createDepositDetails(nonce, defaultExpiration, lockTag);
 
         bytes32 claimHash = bytes32(uint256(1)); // dummy claim hash
         bytes memory signature = new bytes(64); // dummy signature
 
-        // Should revert because deadline exceeds uint32 max
+        // Should revert because expires exceeds uint32 max
         vm.expectRevert(
-            abi.encodeWithSelector(IOnChainAllocator.InvalidExpiration.selector, invalidDeadline, type(uint32).max)
+            abi.encodeWithSelector(IOnChainAllocator.InvalidExpiration.selector, invalidExpiration, type(uint32).max)
         );
-        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
+        allocator.permit2Allocation(
+            arbiter, user, invalidExpiration, permitted, details, claimHash, '', bytes32(0), signature
+        );
     }
 
     function test_permit2Allocation_revert_invalidAmount() public {
@@ -2584,7 +2592,9 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         // Should revert because amount exceeds uint224 max
         vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidAmount.selector, largeAmount));
-        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
+        allocator.permit2Allocation(
+            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+        );
     }
 
     function test_permit2Allocation_fullClaimFlow() public {
@@ -2619,7 +2629,9 @@ contract OnChainAllocatorTest is Test, TestHelper {
         bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPK);
 
         // Execute permit2Allocation
-        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
+        allocator.permit2Allocation(
+            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+        );
 
         // Verify claim is authorized
         uint256[2][] memory idsAndAmounts = new uint256[2][](1);
@@ -2690,7 +2702,9 @@ contract OnChainAllocatorTest is Test, TestHelper {
         bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPK);
 
         // Execute permit2Allocation
-        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
+        allocator.permit2Allocation(
+            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+        );
 
         // Verify claim is authorized before expiration
         uint256[2][] memory idsAndAmounts = new uint256[2][](1);
@@ -2735,7 +2749,9 @@ contract OnChainAllocatorTest is Test, TestHelper {
         bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPK);
 
         // Execute permit2Allocation
-        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
+        allocator.permit2Allocation(
+            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+        );
 
         // Try to transfer - should fail because tokens are allocated
         vm.prank(user);

@@ -37,8 +37,8 @@ import {OnChainAllocationCaller} from 'src/test/OnChainAllocationCaller.sol';
 import {DeployTheCompact} from 'test/util/DeployTheCompact.sol';
 
 contract HybridAllocatorFactory {
-    function deploy(bytes32 salt, address signer) external returns (address) {
-        return address(new HybridAllocator{salt: salt}(signer));
+    function deploy(bytes32 salt, address owner, address signer) external returns (address) {
+        return address(new HybridAllocator{salt: salt}(owner, signer));
     }
 }
 
@@ -46,6 +46,7 @@ contract HybridAllocatorTest is Test, TestHelper {
     TheCompact compact;
     address arbiter;
     HybridAllocator allocator;
+    address owner;
     address signer;
     uint256 signerPrivateKey;
     ERC20Mock usdc;
@@ -108,8 +109,9 @@ contract HybridAllocatorTest is Test, TestHelper {
         _deployPermit2();
 
         arbiter = makeAddr('arbiter');
+        owner = makeAddr('owner');
         (signer, signerPrivateKey) = makeAddrAndKey('signer');
-        allocator = new HybridAllocator(signer);
+        allocator = new HybridAllocator(owner, signer);
         usdc = new ERC20Mock('USDC', 'USDC');
         dai = new ERC20Mock('DAI', 'DAI');
         (user, userPrivateKey) = makeAddrAndKey('user');
@@ -364,9 +366,14 @@ contract HybridAllocatorTest is Test, TestHelper {
         return abi.encodePacked(r, vs);
     }
 
-    function test_constructor_revert_signerIsAddressZero() public {
-        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
-        new HybridAllocator(address(0));
+    function test_constructor_revert_ownerIsAddressZero() public {
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidOwner.selector));
+        new HybridAllocator(address(0), signer);
+    }
+
+    function test_constructor_skipSignerAssignmentIfAddressZero() public {
+        HybridAllocator allocator_ = new HybridAllocator(owner, address(0));
+        assertFalse(allocator_.signers(signer));
     }
 
     function test_checkAllocatorId() public view {
@@ -377,8 +384,8 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertEq(allocator.nonces(), 0);
     }
 
-    function test_checkSignerCount() public view {
-        assertEq(allocator.signerCount(), 1);
+    function test_checkOwner() public view {
+        assertEq(allocator.owner(), owner);
     }
 
     function test_checkSigners(address attacker) public view {
@@ -854,7 +861,8 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertEq(registeredAmounts[0], defaultAmount);
         assertEq(usdc.balanceOf(address(compact)), defaultAmount);
         assertEq(compact.balanceOf(address(user), idsAndAmounts[0][0]), defaultAmount);
-        assertEq(nonce, 1);
+        // HybridAllocator nonce format: command | counter (no address embedded)
+        assertEq(nonce, _composeNonceUint(ON_CHAIN_NONCE, address(0), 1));
     }
 
     function test_allocateAndRegister_slot() public {
@@ -899,7 +907,8 @@ contract HybridAllocatorTest is Test, TestHelper {
         bytes memory invalidSignature = abi.encodePacked(bytes32(0), bytes32(0), uint8(0));
 
         // Forcing address(0) as signer
-        uint256 signersSlot = 0x03;
+        // Storage layout: slot 0 = claims mapping, slot 1 = nonces + owner (packed), slot 2 = signers mapping
+        uint256 signersSlot = 0x02;
         vm.store(address(allocator), keccak256(abi.encode(address(0), signersSlot)), bytes32(uint256(1)));
 
         assertTrue(allocator.signers(address(0)));
@@ -1093,7 +1102,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         compact.batchClaim(claim);
     }
 
-    function test_authorizeClaim_revert_oldSignatureAfterFork(uint128 nonce) public {
+    function test_authorizeClaim_revert_oldSignatureAfterFork(uint88 freeNonce) public {
         uint256[2][] memory idsAndAmounts = new uint256[2][](2);
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0));
         idsAndAmounts[0][1] = defaultAmount;
@@ -1106,6 +1115,9 @@ contract HybridAllocatorTest is Test, TestHelper {
         usdc.approve(address(compact), defaultAmount);
 
         bytes32 witness = keccak256(abi.encode(WITNESS_TYPEHASH, 1));
+
+        // Format nonce with OFF_CHAIN_NONCE command and user as sponsor
+        uint256 nonce = _composeNonceUint(OFF_CHAIN_NONCE, user, freeNonce);
 
         bytes32 claimHash = _toBatchCompactHashWithWitness(
             BATCH_COMPACT_TYPEHASH_WITH_WITNESS,
@@ -1386,61 +1398,47 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertFalse(allocator.isClaimAuthorized(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
     }
 
-    function test_addSigner_revert_CallerNotSigner(address attacker) public {
+    function test_addSigner_revert_CallerNotOwner(address attacker) public {
         vm.assume(attacker != address(0));
-        vm.assume(attacker != signer);
+        vm.assume(attacker != owner);
         vm.prank(attacker);
-        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.CallerNotSigner.selector));
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.CallerNotOwner.selector));
         allocator.addSigner(attacker);
-        assertEq(allocator.signerCount(), 1);
         assertFalse(allocator.signers(attacker));
     }
 
     function test_addSigner_revert_signerIsZero() public {
-        vm.prank(signer);
+        vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
         allocator.addSigner(address(0));
-        assertEq(allocator.signerCount(), 1);
         assertFalse(allocator.signers(address(0)));
     }
 
     function test_addSigner_success(address newSigner) public {
         vm.assume(newSigner != signer);
         vm.assume(newSigner != address(0));
-        vm.prank(signer);
+        vm.prank(owner);
         allocator.addSigner(newSigner);
-        assertEq(allocator.signerCount(), 2);
         assertTrue(allocator.signers(newSigner));
         assertTrue(allocator.signers(signer));
     }
 
-    function test_removeSigner_revert_CallerNotSigner(address attacker) public {
-        vm.assume(attacker != signer);
+    function test_removeSigner_revert_CallerNotOwner(address attacker) public {
+        vm.assume(attacker != owner);
         vm.prank(attacker);
-        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.CallerNotSigner.selector));
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.CallerNotOwner.selector));
         allocator.removeSigner(signer);
-        assertEq(allocator.signerCount(), 1);
-        assertTrue(allocator.signers(signer));
-    }
-
-    function test_removeSigner_revert_LastSigner() public {
-        vm.prank(signer);
-        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.LastSigner.selector));
-        allocator.removeSigner(signer);
-        assertEq(allocator.signerCount(), 1);
         assertTrue(allocator.signers(signer));
     }
 
     function test_removeSigner_revert_InvalidSigner(address attacker) public {
         vm.assume(attacker != signer);
         vm.assume(attacker != address(this));
-        vm.prank(signer);
+        vm.prank(owner);
         allocator.addSigner(address(this));
-        assertEq(allocator.signerCount(), 2);
-        vm.prank(address(this));
+        vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
         allocator.removeSigner(attacker);
-        assertEq(allocator.signerCount(), 2);
         assertTrue(allocator.signers(address(this)));
         assertTrue(allocator.signers(signer));
     }
@@ -1448,118 +1446,140 @@ contract HybridAllocatorTest is Test, TestHelper {
     function test_removeSigner_success(address newSigner) public {
         vm.assume(newSigner != signer);
         vm.assume(newSigner != address(0));
-        vm.prank(signer);
+        vm.prank(owner);
         allocator.addSigner(newSigner);
-        assertEq(allocator.signerCount(), 2);
-        vm.prank(newSigner);
+        vm.prank(owner);
         allocator.removeSigner(signer);
-        assertEq(allocator.signerCount(), 1);
         assertFalse(allocator.signers(signer));
         assertTrue(allocator.signers(newSigner));
-    }
-
-    function test_removeSigner_clearsPendingReplacement(address newSigner) public {
-        vm.assume(newSigner != signer);
-        vm.assume(newSigner != address(0));
-        vm.prank(signer);
-        allocator.replaceSigner(newSigner);
-        // add a second signer so removal of proposer is permitted
-        address second = makeAddr('second');
-        vm.prank(signer);
-        allocator.addSigner(second);
-        // remove the proposer while pending exists (now allowed)
-        vm.prank(second);
-        allocator.removeSigner(signer);
-        // re-add signer, ensure old pending cannot be accepted
-        vm.prank(newSigner);
-        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
-        allocator.acceptSignerReplacement(signer);
     }
 
     function test_removeSigner_success_deleteSelf(address newSigner) public {
         vm.assume(newSigner != signer);
         vm.assume(newSigner != address(0));
-        vm.prank(signer);
+        vm.prank(owner);
         allocator.addSigner(newSigner);
-        assertEq(allocator.signerCount(), 2);
-        vm.prank(newSigner);
+        vm.prank(owner);
         allocator.removeSigner(newSigner);
-        assertEq(allocator.signerCount(), 1);
         assertTrue(allocator.signers(signer));
         assertFalse(allocator.signers(newSigner));
     }
 
-    function test_replaceSigner_revert_CallerNotSigner(address attacker) public {
-        vm.assume(attacker != signer);
+    function test_replaceSigner_revert_CallerNotOwner(address attacker) public {
+        vm.assume(attacker != owner);
+        address newSigner = makeAddr('newSigner');
         vm.prank(attacker);
-        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.CallerNotSigner.selector));
-        allocator.replaceSigner(attacker);
-        assertEq(allocator.signerCount(), 1);
-        assertFalse(allocator.signers(attacker));
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.CallerNotOwner.selector));
+        allocator.replaceSigner(signer, newSigner);
+        assertFalse(allocator.signers(newSigner));
     }
 
     function test_replaceSigner_revert_signerIsZero() public {
-        vm.prank(signer);
+        vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
-        allocator.replaceSigner(address(0));
-        assertEq(allocator.signerCount(), 1);
+        allocator.replaceSigner(signer, address(0));
         assertFalse(allocator.signers(address(0)));
+    }
+
+    function test_replaceSigner_revert_sameSigners() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
+        allocator.replaceSigner(signer, signer);
+        assertTrue(allocator.signers(signer));
     }
 
     function test_replaceSigner_success_twoStep(address newSigner) public {
         vm.assume(newSigner != signer);
         vm.assume(newSigner != address(0));
-        vm.prank(signer);
-        allocator.replaceSigner(newSigner);
-        // Not active until accepted by new signer
-        assertTrue(allocator.signers(signer));
-        assertFalse(allocator.signers(newSigner));
-
-        vm.prank(newSigner);
-        allocator.acceptSignerReplacement(signer);
+        vm.prank(owner);
+        allocator.replaceSigner(signer, newSigner);
+        // Immediate replacement - no two step anymore
         assertFalse(allocator.signers(signer));
         assertTrue(allocator.signers(newSigner));
-        assertEq(allocator.signerCount(), 1);
     }
 
-    function test_replaceSigner_multipleProposals_lastWins(address newSigner, address newSigner2) public {
+    function test_replaceSigner(address newSigner, address newSigner2) public {
         vm.assume(newSigner != signer);
         vm.assume(newSigner != address(0));
         vm.assume(newSigner2 != signer);
         vm.assume(newSigner2 != address(0));
         vm.assume(newSigner2 != newSigner);
 
-        vm.prank(signer);
-        allocator.replaceSigner(newSigner);
-        // can propose a second replacement; last wins
-        vm.prank(signer);
-        allocator.replaceSigner(newSigner2);
+        vm.prank(owner);
+        allocator.replaceSigner(signer, newSigner);
+        // Now newSigner is the signer
+        assertFalse(allocator.signers(signer));
+        assertTrue(allocator.signers(newSigner));
 
-        // accepting first should now fail
-        vm.prank(newSigner);
-        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
-        allocator.acceptSignerReplacement(signer);
-
-        // old signer can no longer propose; new signer can propose
-        vm.prank(newSigner);
-        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.CallerNotSigner.selector));
-        allocator.replaceSigner(newSigner2);
-
-        // accept the latest replacement
-        vm.prank(newSigner2);
-        allocator.acceptSignerReplacement(signer);
+        // Replace newSigner with newSigner2
+        vm.prank(owner);
+        allocator.replaceSigner(newSigner, newSigner2);
 
         assertFalse(allocator.signers(signer));
         assertFalse(allocator.signers(newSigner));
         assertTrue(allocator.signers(newSigner2));
     }
 
+    function test_proposeOwnerReplacement_revert_CallerNotOwner(address attacker) public {
+        vm.assume(attacker != owner);
+        address newOwner = makeAddr('newOwner');
+        vm.prank(attacker);
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.CallerNotOwner.selector));
+        allocator.proposeOwnerReplacement(newOwner);
+    }
+
+    function test_proposeOwnerReplacement_revert_zeroAddress() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidOwner.selector));
+        allocator.proposeOwnerReplacement(address(0));
+    }
+
+    function test_acceptOwnerReplacement_revert_notPendingOwner(address attacker) public {
+        vm.assume(attacker != owner);
+        address newOwner = makeAddr('newOwner');
+        vm.assume(attacker != newOwner);
+
+        // First propose a new owner
+        vm.prank(owner);
+        allocator.proposeOwnerReplacement(newOwner);
+
+        // Try to accept from wrong address
+        vm.prank(attacker);
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidOwner.selector));
+        allocator.acceptOwnerReplacement();
+    }
+
+    function test_ownerReplacement_success() public {
+        address newOwner = makeAddr('newOwner');
+
+        // Propose new owner
+        vm.prank(owner);
+        allocator.proposeOwnerReplacement(newOwner);
+        assertEq(allocator.owner(), owner);
+
+        // Accept as new owner
+        vm.prank(newOwner);
+        allocator.acceptOwnerReplacement();
+        assertEq(allocator.owner(), newOwner);
+
+        // New owner can add signers
+        address newSigner = makeAddr('anotherSigner');
+        vm.prank(newOwner);
+        allocator.addSigner(newSigner);
+        assertTrue(allocator.signers(newSigner));
+
+        // Old owner cannot add signers
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.CallerNotOwner.selector));
+        allocator.addSigner(makeAddr('yetAnotherSigner'));
+    }
+
     function test_constructor_allowsPreRegisteredAllocator_create2() public {
         HybridAllocatorFactory factory = new HybridAllocatorFactory();
 
         bytes32 salt = keccak256('hybrid-allocator-pre-registered');
-        // initCode must match what the factory deploys: creationCode + abi.encode(signer)
-        bytes memory initCode = abi.encodePacked(type(HybridAllocator).creationCode, abi.encode(signer));
+        // initCode must match what the factory deploys: creationCode + abi.encode(owner, signer)
+        bytes memory initCode = abi.encodePacked(type(HybridAllocator).creationCode, abi.encode(owner, signer));
         bytes32 initCodeHash = keccak256(initCode);
 
         address expected =
@@ -1570,7 +1590,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         uint96 preId = compact.__registerAllocator(expected, proof);
         assertEq(_toAllocatorId(expected), preId);
 
-        address deployed = HybridAllocatorFactory(address(factory)).deploy(salt, signer);
+        address deployed = HybridAllocatorFactory(address(factory)).deploy(salt, owner, signer);
         assertEq(deployed, expected);
 
         HybridAllocator newAllocator = HybridAllocator(deployed);
@@ -1616,8 +1636,9 @@ contract HybridAllocatorTest is Test, TestHelper {
         bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPrivateKey);
 
         // Execute
-        Lock[] memory commitments =
-            allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
+        Lock[] memory commitments = allocator.permit2Allocation(
+            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+        );
         vm.snapshotGasLastCall('hybrid_permit2Allocation_singleERC20');
 
         // Verify commitments
@@ -1679,7 +1700,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         // Note: The witness parameter should be just the inner content (e.g., "uint256 witness"),
         // not the full struct definition, as TheCompact wraps it in "Mandate(...)"
         Lock[] memory commitments = allocator.permit2Allocation(
-            arbiter, user, permitted, details, claimHash, WITNESS_STRING, witness, signature
+            arbiter, user, defaultExpiration, permitted, details, claimHash, WITNESS_STRING, witness, signature
         );
         vm.snapshotGasLastCall('hybrid_permit2Allocation_singleERC20_withWitness');
 
@@ -1742,8 +1763,9 @@ contract HybridAllocatorTest is Test, TestHelper {
         bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPrivateKey);
 
         // Execute
-        Lock[] memory commitments =
-            allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
+        Lock[] memory commitments = allocator.permit2Allocation(
+            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+        );
         vm.snapshotGasLastCall('hybrid_permit2Allocation_multipleERC20');
 
         // Verify commitments
@@ -1789,7 +1811,9 @@ contract HybridAllocatorTest is Test, TestHelper {
 
         // Should revert with UnauthorizedNonce because command is not PERMIT2_NONCE
         vm.expectRevert(abi.encodeWithSelector(AllocatorLib.UnauthorizedNonce.selector, bytes1(0x01), user));
-        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
+        allocator.permit2Allocation(
+            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+        );
     }
 
     function test_permit2Allocation_revert_invalidNonceSponsor() public {
@@ -1811,7 +1835,9 @@ contract HybridAllocatorTest is Test, TestHelper {
 
         // Should revert because sponsor in nonce doesn't match depositor
         vm.expectRevert(abi.encodeWithSelector(AllocatorLib.UnauthorizedNonce.selector, bytes1(0x03), wrongSponsor));
-        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
+        allocator.permit2Allocation(
+            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+        );
     }
 
     function test_permit2Allocation_emitsAllocatedEvent() public {
@@ -1851,7 +1877,9 @@ contract HybridAllocatorTest is Test, TestHelper {
         vm.expectEmit(true, true, true, true);
         emit IOnChainAllocation.Allocated(user, expectedCommitments, nonce, defaultExpiration, claimHash);
 
-        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
+        allocator.permit2Allocation(
+            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+        );
     }
 
     function test_permit2Allocation_fullClaimFlow() public {
@@ -1886,7 +1914,9 @@ contract HybridAllocatorTest is Test, TestHelper {
         bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPrivateKey);
 
         // Execute permit2Allocation
-        allocator.permit2Allocation(arbiter, user, permitted, details, claimHash, '', bytes32(0), signature);
+        allocator.permit2Allocation(
+            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+        );
 
         // Verify claim is authorized
         assertTrue(allocator.isClaimAuthorized(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
