@@ -73,6 +73,11 @@ abstract contract MocksSetup is Test, TestHelper {
 
     uint256 NONCES_STORAGE_SLOT = 1;
 
+    // Nonce command constants (must match AllocatorLib)
+    bytes1 constant ON_CHAIN_NONCE = 0x01;
+    bytes1 constant OFF_CHAIN_NONCE = 0x02;
+    bytes1 constant PERMIT2_NONCE = 0x03;
+
     function setUp() public virtual {
         (user, userPK) = makeAddrAndKey('user');
         arbiter = makeAddr('arbiter');
@@ -98,12 +103,13 @@ abstract contract MocksSetup is Test, TestHelper {
         defaultNonce = defaultNonce_;
     }
 
-    function _composeNonceUint(address a, uint256 nonce) internal pure returns (uint256) {
-        return (uint256(uint160(a)) << 96) | nonce;
+    function _composeNonceUint(bytes1 command, address a, uint256 nonce) internal pure returns (uint256) {
+        // Nonce structure: command (8 bits) | address (160 bits) | nonce (88 bits)
+        return (uint256(uint8(command)) << 248) | (uint256(uint160(a)) << 88) | nonce;
     }
 
-    function _composeNonce(address a, uint256 nonce) internal pure returns (bytes32) {
-        return bytes32(_composeNonceUint(a, nonce));
+    function _composeNonce(bytes1 command, address a, uint256 nonce) internal pure returns (bytes32) {
+        return bytes32(_composeNonceUint(command, a, nonce));
     }
 }
 
@@ -333,7 +339,7 @@ abstract contract GaslessCrossChainOrderData is CompactData {
 
         gaslessCrossChainOrder.originSettler = allocator;
         gaslessCrossChainOrder.user = compact_.sponsor;
-        gaslessCrossChainOrder.nonce = _composeNonceUint(compact_.sponsor, defaultNonce);
+        gaslessCrossChainOrder.nonce = defaultNonce;
         gaslessCrossChainOrder.originChainId = block.chainid;
         gaslessCrossChainOrder.openDeadline = uint32(_getClaimExpiration());
         gaslessCrossChainOrder.fillDeadline = uint32(_getFillExpiration());

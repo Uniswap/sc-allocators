@@ -4,7 +4,21 @@ pragma solidity ^0.8.27;
 import {ERC6909} from '@solady/tokens/ERC6909.sol';
 
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
-import {LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
+import {
+    BATCH_COMPACT_TYPEHASH,
+    BATCH_COMPACT_TYPESTRING_FRAGMENT_FIVE,
+    BATCH_COMPACT_TYPESTRING_FRAGMENT_FOUR,
+    BATCH_COMPACT_TYPESTRING_FRAGMENT_ONE,
+    BATCH_COMPACT_TYPESTRING_FRAGMENT_SIX,
+    BATCH_COMPACT_TYPESTRING_FRAGMENT_THREE,
+    BATCH_COMPACT_TYPESTRING_FRAGMENT_TWO,
+    LOCK_TYPEHASH,
+    Lock
+} from '@uniswap/the-compact/types/EIP712Types.sol';
+import {ISignatureTransfer} from 'permit2/src/interfaces/ISignatureTransfer.sol';
+
+import {CompactCategory} from 'the-compact/src/types/CompactCategory.sol';
+import {DepositDetails} from 'the-compact/src/types/DepositDetails.sol';
 
 /// @title AllocatorLib
 /// @notice Library providing core functionality for atomic token allocation verification using transient storage
@@ -21,17 +35,182 @@ library AllocatorLib {
     /// @dev bytes4(keccak256('exttload(bytes32)'))
     uint256 private constant EXTTLOAD_SELECTOR = 0xf135baaa;
 
+    /// @notice Function selector for the extsload function that gets a value in transient storage
+    /// @dev bytes4(keccak256('extsload(bytes32)'))
+    uint256 private constant EXTSLOAD_SELECTOR = 0x1e2eaeaf;
+
     /// @notice Transient storage slot for the reentrancy guard within the compact
     uint256 private constant REENTRANCY_GUARD_SLOT = 0x929eee149b4bd21268;
+
+    /// @notice Storage slot seed on the compact for mapping allocator IDs to allocator addresses.
+    uint256 private constant ALLOCATOR_BY_ALLOCATOR_ID_SLOT_SEED = 0x000044036fc77deaed2300000000000000000000000;
+
+    /// @notice The command indicating an on chain nonce
+    bytes1 internal constant ON_CHAIN_NONCE = 0x01;
+
+    /// @notice The command indicating an off chain nonce
+    bytes1 internal constant OFF_CHAIN_NONCE = 0x02;
+
+    /// @notice The command indicating a permit2 nonce
+    bytes1 internal constant PERMIT2_NONCE = 0x03;
+
+    bytes1 internal constant NONCE_COMMAND_MASK = 0xff;
 
     error InvalidBalanceChange(uint256 newBalance, uint256 oldBalance);
     error InvalidPreparation();
     error InvalidAllocatorId(uint96 providedId, uint96 allocatorId);
     error InvalidRegistration(address recipient, bytes32 claimHash, bytes32 typehash);
     error CompactReentrancyGuardActive();
+    error InvalidAllocator();
+    error UnauthorizedNonce(bytes1 command, address sponsor);
+    error InvalidCompactCall(address theCompact);
+    error InvalidClaim(bytes32 claimHash);
+
+    function permit2Allocation(
+        address arbiter,
+        address depositor,
+        uint256 expires,
+        ISignatureTransfer.TokenPermissions[] calldata permitted,
+        DepositDetails calldata details,
+        bytes32 claimHash, // This claim hash is connected to the allocation. This does not guarantee, that the allocated tokens are connected to the claim hash.
+        string calldata witness,
+        bytes32 witnessHash,
+        bytes calldata signature
+    ) internal returns (Lock[] memory commitments) {
+        // Verifying the nonce is scoped to a permit2 allocation and to the sponsor
+        verifyNonce(details.nonce, PERMIT2_NONCE, depositor);
+        // We can now trust permit2 to burn the nonce and prevent replay attacks
+
+        commitments = new Lock[](permitted.length);
+        bytes12 lockTag = details.lockTag;
+
+        // Prepare allocation
+        assembly ("memory-safe") {
+            let m := mload(0x40) // Store the memory pointer. Will be dirtied and restored at the end of the function.
+
+            // Memory layout for Lock[]:
+            // - commitments + 0x00: length (permittedLength)
+            // - commitments + 0x20: absolute pointer to the Lock struct [0]
+            // - commitments + 0x40: absolute pointer to the Lock struct [1]
+            // - commitments + 0x60: lockTag[0]
+            // - commitments + 0x80: token[0]
+            // - commitments + 0xa0: amount[0]
+            // - commitments + 0xc0: lockTag[1]
+            // - ...
+            let permittedLength := permitted.length
+            let commitmentsContent := add(commitments, 0x20)
+
+            mstore(0x14, depositor) // Store the `owner` as the first argument for the balanceOf call.
+            mstore(0x00, 0x00fdd58e000000000000000000000000) // function selector of `balanceOf(address,uint256)`.
+
+            for { let i := 0 } lt(i, permittedLength) { i := add(i, 1) } {
+                let token := calldataload(add(permitted.offset, mul(i, 0x40)))
+
+                // Store the lockTag and token in the Lock struct
+                let commitmentMemLoc := mload(add(commitmentsContent, mul(i, 0x20))) // load the absolute pointer to the Lock struct
+                mstore(commitmentMemLoc, lockTag) // lockTag
+                mstore(add(commitmentMemLoc, 0x20), token) // token
+
+                // Store the id as the second argument for the balanceOf call.
+                mstore(0x34, or(lockTag, token))
+
+                // Retrieve and store the current balance of the depositor into the amount slot (temporarily)
+                let commitmentAmountMemLoc := add(commitmentMemLoc, 0x40)
+
+                if iszero(staticcall(gas(), THE_COMPACT, 0x10, 0x44, commitmentAmountMemLoc, 0x20)) {
+                    mstore(0x00, 0x6d728277) // InvalidCompactCall(address theCompact)
+                    mstore(0x20, THE_COMPACT)
+                    revert(0x1c, 0x24)
+                }
+            }
+
+            // Deposit and register the tokens using permit2
+            mstore(add(m, 0x20), depositor)
+            mstore(add(m, 0x0c), 0x45ebe218000000000000000000000000) // function selector of `batchDepositAndRegisterViaPermit2()`.
+            mstore(add(m, 0x40), 0x120) // Store the offset for the permitted
+            calldatacopy(add(m, 0x60), details, 0x60) // Store the details from calldata to memory
+            mstore(add(m, 0xc0), claimHash)
+            mstore(add(m, 0xe0), 0x01) // uint8(CompactCategory.BatchCompact)
+            let witnessOffset := add(0x140, mul(permittedLength, 0x40))
+            mstore(add(m, 0x100), witnessOffset)
+            let signatureOffset := add(add(witnessOffset, 0x20), and(add(witness.length, 31), not(31))) // round up to the nearest multiple of 32
+            mstore(add(m, 0x120), signatureOffset)
+            // store permitted length & contents to memory
+            mstore(add(m, 0x140), permittedLength)
+            calldatacopy(add(m, 0x160), permitted.offset, mul(permittedLength, 0x40))
+            // store witness contents to memory
+            let witnessMemLoc := add(m, add(0x20, witnessOffset)) // Add 0x20 to skip the function selector
+            mstore(witnessMemLoc, witness.length)
+            calldatacopy(add(witnessMemLoc, 0x20), witness.offset, witness.length)
+            // store signature contents to memory
+            let signatureMemLoc := add(m, add(0x20, signatureOffset))
+            mstore(signatureMemLoc, signature.length)
+            calldatacopy(add(signatureMemLoc, 0x20), signature.offset, signature.length)
+            let fullCallDataSize := add(add(signatureOffset, 0x24), and(add(signature.length, 31), not(31)))
+
+            // Call the batchDepositAndRegisterViaPermit2 function and revert if it fails
+            if iszero(call(gas(), THE_COMPACT, callvalue(), add(m, 0x1c), fullCallDataSize, 0, 0)) {
+                mstore(0x00, 0x6d728277) // InvalidCompactCall(address theCompact)
+                mstore(0x20, THE_COMPACT)
+                revert(0x1c, 0x24)
+            }
+
+            // Confirm the allocation - calculate balance differences
+            for { let i := 0 } lt(i, permittedLength) { i := add(i, 1) } {
+                let commitmentMemLoc := mload(add(commitmentsContent, mul(i, 0x20))) // load the absolute pointer to the Lock struct
+                // Reconstruct id from stored lockTag and token
+                let token := mload(add(commitmentMemLoc, 0x20))
+
+                let commitmentAmountMemLoc := add(commitmentMemLoc, 0x40)
+                let oldBalance := mload(commitmentAmountMemLoc)
+
+                // Store the id as the second argument for the balanceOf call.
+                mstore(0x34, or(lockTag, token))
+
+                // Retrieve the new balance of the depositor and store it in the amount slot of the commitment
+                if iszero(staticcall(gas(), THE_COMPACT, 0x10, 0x44, commitmentAmountMemLoc, 0x20)) {
+                    mstore(0x00, 0x6d728277) // InvalidCompactCall(address theCompact)
+                    mstore(0x20, THE_COMPACT)
+                    revert(0x1c, 0x24)
+                }
+
+                let currentBalance := mload(commitmentAmountMemLoc)
+                if iszero(gt(currentBalance, oldBalance)) {
+                    mstore(0x00, 0x9f2aec67) // InvalidBalanceChange()
+                    mstore(0x20, currentBalance)
+                    mstore(0x40, oldBalance)
+                    revert(0x1c, 0x44)
+                }
+                let diffBalance := sub(currentBalance, oldBalance)
+
+                // Update the amount in the Lock struct with the balance difference
+                mstore(commitmentAmountMemLoc, diffBalance)
+            }
+
+            mstore(0x40, m) // Restore the memory pointer
+        }
+
+        // Verify the claim hash includes proposed expiration
+        if (
+            claimHash
+                != getClaimHash(
+                    arbiter,
+                    depositor,
+                    details.nonce,
+                    expires,
+                    getCommitmentsHashMemory(commitments),
+                    witnessHash,
+                    computeBatchCompactTypehash(witness)
+                )
+        ) {
+            revert InvalidClaim(claimHash);
+        }
+
+        return commitments;
+    }
 
     function prepareAllocation(
-        uint256 nonce,
+        uint248 noncePreCommand,
         address recipient,
         uint256[2][] calldata idsAndAmounts,
         address arbiter,
@@ -39,9 +218,11 @@ library AllocatorLib {
         bytes32 typehash,
         bytes32 witness,
         uint96 allocatorId
-    ) internal {
+    ) internal returns (uint256 nonce) {
         // Before preparing the allocation, check if the compact's reentrancy guard is active
         checkCompactReentrancyGuardAndRevert();
+
+        nonce = getNonceWithCommand(ON_CHAIN_NONCE, noncePreCommand);
 
         assembly ("memory-safe") {
             // identifier = keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));
@@ -100,18 +281,20 @@ library AllocatorLib {
     }
 
     function executeAllocation(
-        uint256 nonce,
+        uint248 noncePreCommand,
         address recipient,
         uint256[2][] calldata idsAndAmounts,
         address arbiter,
         uint256 expires,
         bytes32 typehash,
         bytes32 witness
-    ) internal view returns (bytes32 claimHash, Lock[] memory) {
+    ) internal view returns (bytes32 claimHash, Lock[] memory, uint256 nonce) {
         bytes32[] memory commitmentHashes = new bytes32[](idsAndAmounts.length);
         Lock[] memory commitments = new Lock[](idsAndAmounts.length);
         bytes32 commitmentsHash;
         uint256 storedNonce;
+
+        nonce = getNonceWithCommand(ON_CHAIN_NONCE, noncePreCommand);
 
         // Before executing the allocation, check if the compact's reentrancy guard is active
         checkCompactReentrancyGuardAndRevert();
@@ -152,7 +335,7 @@ library AllocatorLib {
                 mstore(0x00, PREPARE_ALLOCATION_SELECTOR)
                 mstore(0x20, recipient)
                 mstore(0x40, id)
-                // Store the current balance in transient storage
+                // Read the old balance from transient storage
                 let oldBalance := tload(keccak256(0x00, 0x60))
                 if iszero(gt(currentBalance, oldBalance)) {
                     mstore(0x00, 0x9f2aec67) // InvalidBalanceChange()
@@ -207,7 +390,7 @@ library AllocatorLib {
         if (!ITheCompact(THE_COMPACT).isRegistered(recipient, claimHash, typehash)) {
             revert InvalidRegistration(recipient, claimHash, typehash);
         }
-        return (claimHash, commitments);
+        return (claimHash, commitments, storedNonce);
     }
 
     function checkCompactReentrancyGuardAndRevert() internal view {
@@ -233,6 +416,29 @@ library AllocatorLib {
                 mstore(0, 0x87621186)
                 revert(0x1c, 0x04)
             }
+        }
+    }
+
+    function getRegisteredAllocator(uint96 allocatorId) internal view returns (address allocator) {
+        assembly ("memory-safe") {
+            mstore(0x00, EXTSLOAD_SELECTOR)
+            mstore(0x20, or(ALLOCATOR_BY_ALLOCATOR_ID_SLOT_SEED, allocatorId))
+
+            if iszero(
+                mul(
+                    mload(0x20),
+                    and(
+                        gt(returndatasize(), 0x1f), // At least 32 bytes returned.
+                        staticcall(gas(), THE_COMPACT, 0x1c, 0x24, 0x20, 0x20)
+                    )
+                )
+            ) {
+                // revert InvalidAllocator()
+                mstore(0x00, 0x59dad761)
+                revert(0x1c, 0x04)
+            }
+
+            allocator := mload(0x20)
         }
     }
 
@@ -264,6 +470,22 @@ library AllocatorLib {
         return getCommitmentsHash(commitments, LOCK_TYPEHASH);
     }
 
+    function getCommitmentsHashMemory(Lock[] memory commitments) internal pure returns (bytes32 commitmentsHash) {
+        assembly ("memory-safe") {
+            let memoryPointer := mload(0x40)
+            let commitmentsLength := mload(commitments)
+            let commitmentsContent := add(commitments, 0x20)
+            let commitmentHashes := add(memoryPointer, 0x80) // leave space for typehash, lockTag, token and amount
+            mstore(memoryPointer, LOCK_TYPEHASH)
+            for { let i := 0 } lt(i, commitmentsLength) { i := add(i, 1) } {
+                let commitmentOffset := mload(add(commitmentsContent, mul(i, 0x20)))
+                mcopy(add(memoryPointer, 0x20), commitmentOffset, 0x60) // copy lockTag, token and amount to different memory
+                mstore(add(commitmentHashes, mul(i, 0x20)), keccak256(memoryPointer, 0x80))
+            }
+            commitmentsHash := keccak256(commitmentHashes, mul(commitmentsLength, 0x20))
+        }
+    }
+
     function getClaimHash(
         address arbiter,
         address sponsor,
@@ -283,6 +505,25 @@ library AllocatorLib {
             mstore(add(m, 0xa0), commitmentsHash)
             mstore(add(m, 0xc0), witness)
             claimHash := keccak256(m, sub(0xe0, mul(iszero(witness), 0x20)))
+        }
+    }
+
+    function computeBatchCompactTypehash(string calldata witness) internal pure returns (bytes32 typeHash) {
+        assembly ("memory-safe") {
+            typeHash := BATCH_COMPACT_TYPEHASH
+            if witness.length {
+                let m := mload(0x40)
+                mstore(m, BATCH_COMPACT_TYPESTRING_FRAGMENT_ONE)
+                mstore(add(m, 0x20), BATCH_COMPACT_TYPESTRING_FRAGMENT_TWO)
+                mstore(add(m, 0x40), BATCH_COMPACT_TYPESTRING_FRAGMENT_THREE)
+                mstore(add(m, 0x60), BATCH_COMPACT_TYPESTRING_FRAGMENT_FOUR)
+                mstore(add(m, 0x88), BATCH_COMPACT_TYPESTRING_FRAGMENT_SIX)
+                mstore(add(m, 0x80), BATCH_COMPACT_TYPESTRING_FRAGMENT_FIVE)
+                let witnessStart := add(m, 0xa8)
+                calldatacopy(witnessStart, witness.offset, witness.length)
+                mstore8(add(witnessStart, witness.length), 0x29) // Closing parenthesis
+                typeHash := keccak256(m, add(0xa9, witness.length))
+            }
         }
     }
 
@@ -318,6 +559,26 @@ library AllocatorLib {
         return recipient;
     }
 
+    function getNonceWithCommand(bytes1 command, uint248 noncePreCommand) internal pure returns (uint256 nonce) {
+        assembly ("memory-safe") {
+            nonce := or(command, noncePreCommand)
+        }
+        return nonce;
+    }
+
+    function verifyNonce(uint256 nonce, bytes1 expectedCommand, address expectedSponsor) internal pure {
+        assembly ("memory-safe") {
+            let command := and(nonce, NONCE_COMMAND_MASK)
+            let sponsor := shr(96, shl(8, nonce))
+            if iszero(and(eq(command, expectedCommand), eq(sponsor, expectedSponsor))) {
+                mstore(0x00, 0xb8a0afb2) // UnauthorizedNonce()
+                mstore(0x20, command)
+                mstore(0x40, sponsor)
+                revert(0x1c, 0x44)
+            }
+        }
+    }
+
     function splitId(uint256 id) internal pure returns (uint96 allocatorId_, address token_) {
         return (splitAllocatorId(id), splitToken(id));
     }
@@ -350,6 +611,39 @@ library AllocatorLib {
 
     function toLock(uint256 id, uint256 amount) internal pure returns (Lock memory) {
         return Lock({lockTag: bytes12(bytes32(id)), token: splitToken(id), amount: amount});
+    }
+
+    /// @dev copied from the-compact/src/lib/IdLib.sol
+    function toAllocatorId(address allocator) internal pure returns (uint96 allocatorId) {
+        uint8 compactFlag;
+        assembly ("memory-safe") {
+            // Extract the uppermost 72 bits of the address.
+            let x := shr(184, shl(96, allocator))
+
+            // Propagate the highest set bit.
+            x := or(x, shr(1, x))
+            x := or(x, shr(2, x))
+            x := or(x, shr(4, x))
+            x := or(x, shr(8, x))
+            x := or(x, shr(16, x))
+            x := or(x, shr(32, x))
+            x := or(x, shr(64, x))
+
+            // Count set bits to derive most significant bit in the last byte.
+            let y := sub(x, and(shr(1, x), 0x5555555555555555))
+            y := add(and(y, 0x3333333333333333), and(shr(2, y), 0x3333333333333333))
+            y := and(add(y, shr(4, y)), 0x0f0f0f0f0f0f0f0f)
+            y := add(y, shr(8, y))
+            y := add(y, shr(16, y))
+            y := add(y, shr(32, y))
+
+            // Look up final value in the sequence.
+            compactFlag := and(shr(and(sub(72, and(y, 127)), not(3)), 0xfedcba9876543210000), 15)
+        }
+
+        assembly ("memory-safe") {
+            allocatorId := or(shl(88, compactFlag), shr(168, shl(168, allocator)))
+        }
     }
 
     function toSeconds(bytes12 lockTag) internal pure returns (uint256 duration) {

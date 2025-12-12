@@ -5,7 +5,10 @@ pragma solidity ^0.8.27;
 import {ERC7683AllocatorLib as ERC7683AL} from './lib/ERC7683AllocatorLib.sol';
 import {LibBytes} from '@solady/utils/LibBytes.sol';
 
-import {COMPACT_TYPEHASH_WITH_MANDATE, COMPACT_WITH_MANDATE_TYPESTRING} from '@uniswap/tribunal/types/TribunalTypeHashes.sol';
+import {
+    COMPACT_TYPEHASH_WITH_MANDATE,
+    COMPACT_WITH_MANDATE_TYPESTRING
+} from '@uniswap/tribunal/types/TribunalTypeHashes.sol';
 import {HybridAllocator} from 'src/allocators/HybridAllocator.sol';
 import {IERC7683Allocator} from 'src/interfaces/IERC7683Allocator.sol';
 
@@ -18,7 +21,7 @@ import {IOriginSettler} from 'src/interfaces/ERC7683/IOriginSettler.sol';
 contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
     error OnlyDepositsAllowed();
 
-    constructor(address signer) HybridAllocator(signer) {}
+    constructor(address owner_, address signer_) HybridAllocator(owner_, signer_) {}
 
     /// @inheritdoc IOriginSettler
     function openFor(GaslessCrossChainOrder calldata order, bytes calldata sponsorSignature, bytes calldata) external {
@@ -105,7 +108,7 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
         }
 
         // We ignore the order.nonce and use the one assigned by the hybrid allocator
-        resolvedOrder.orderId = bytes32(uint256(nonces) + 1);
+        resolvedOrder.orderId = bytes32(AL.getNonceWithCommand(AL.ON_CHAIN_NONCE, uint248(nonces) + 1));
 
         return resolvedOrder;
     }
@@ -115,7 +118,14 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
         (IERC7683Allocator.Order calldata orderData, uint32 expires,, bytes32[] memory fillHashes) =
             ERC7683AL.openPreparation(order);
 
-        return ERC7683AL.resolveOrder(msg.sender, nonces + 1, expires, fillHashes, orderData, LibBytes.emptyCalldata());
+        return ERC7683AL.resolveOrder(
+            msg.sender,
+            AL.getNonceWithCommand(AL.ON_CHAIN_NONCE, uint248(nonces) + 1),
+            expires,
+            fillHashes,
+            orderData,
+            LibBytes.emptyCalldata()
+        );
     }
 
     /// @inheritdoc IERC7683Allocator
@@ -133,7 +143,7 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
             revert OnlyDepositsAllowed();
         }
 
-        return nonces + 1;
+        return AL.getNonceWithCommand(AL.ON_CHAIN_NONCE, uint248(nonces) + 1);
     }
 
     /// @inheritdoc IERC7683Allocator

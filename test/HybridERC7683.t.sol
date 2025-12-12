@@ -50,16 +50,19 @@ import {DeployTheCompact} from 'test/util/DeployTheCompact.sol';
 
 contract MockAllocator is GaslessCrossChainOrderData, OnChainCrossChainOrderData {
     HybridERC7683 hybridERC7683Allocator;
+    address owner;
     address signer;
     uint256 signerPK;
 
     function setUp() public virtual override(GaslessCrossChainOrderData, OnChainCrossChainOrderData) {
+        owner = makeAddr('owner');
         (signer, signerPK) = makeAddrAndKey('signer');
         TheCompact compactContract_ = DeployTheCompact(new DeployTheCompact()).deployTheCompact();
         assertEq(address(compactContract_), address(0x00000000000000171ede64904551eeDF3C6C9788));
 
-        hybridERC7683Allocator = new HybridERC7683(signer);
-        _setUp(address(hybridERC7683Allocator), compactContract_, 1 /* defaultNonce */ );
+        hybridERC7683Allocator = new HybridERC7683(owner, signer);
+        // HybridAllocator uses simplified nonce: command | counter (no address embedded)
+        _setUp(address(hybridERC7683Allocator), compactContract_, _composeNonceUint(ON_CHAIN_NONCE, address(0), 1));
         super.setUp();
     }
 }
@@ -408,6 +411,8 @@ contract HybridERC7683_authorizeClaim is MockAllocator {
         usdc.approve(address(compactContract), defaultAmount);
 
         BatchCompact memory compact_ = _getCompact();
+        // Off-chain signature tests need OFF_CHAIN_NONCE format
+        compact_.nonce = _composeNonceUint(OFF_CHAIN_NONCE, user, 1);
         Mandate memory mandate_ = _getMandate();
         bytes32 claimHash = _deriveClaimHash(compact_, mandate_);
 
@@ -434,7 +439,7 @@ contract HybridERC7683_authorizeClaim is MockAllocator {
             allocatorData: allocatorSignature,
             sponsorSignature: '',
             sponsor: user,
-            nonce: defaultNonce,
+            nonce: compact_.nonce,
             expires: compact_.expires,
             witness: mandateHash,
             witnessTypestring: WITNESS_TYPESTRING_TRIBUNAL,
@@ -451,6 +456,8 @@ contract HybridERC7683_authorizeClaim is MockAllocator {
         usdc.approve(address(compactContract), defaultAmount);
 
         BatchCompact memory compact_ = _getCompact();
+        // Off-chain signature tests need OFF_CHAIN_NONCE format
+        compact_.nonce = _composeNonceUint(OFF_CHAIN_NONCE, user, 1);
         Mandate memory mandate_ = _getMandate();
         bytes32 claimHash = _deriveClaimHash(compact_, mandate_);
 
@@ -477,7 +484,7 @@ contract HybridERC7683_authorizeClaim is MockAllocator {
             allocatorData: allocatorSignature, // signed by attacker
             sponsorSignature: '',
             sponsor: user,
-            nonce: defaultNonce,
+            nonce: compact_.nonce,
             expires: compact_.expires,
             witness: mandateHash,
             witnessTypestring: WITNESS_TYPESTRING_TRIBUNAL,
@@ -495,6 +502,8 @@ contract HybridERC7683_authorizeClaim is MockAllocator {
         usdc.approve(address(compactContract), defaultAmount);
 
         BatchCompact memory compact_ = _getCompact();
+        // Off-chain signature tests need OFF_CHAIN_NONCE format
+        compact_.nonce = _composeNonceUint(OFF_CHAIN_NONCE, user, 1);
         Mandate memory mandate_ = _getMandate();
         bytes32 claimHash = _deriveClaimHash(compact_, mandate_);
 
@@ -522,7 +531,7 @@ contract HybridERC7683_authorizeClaim is MockAllocator {
             allocatorData: allocatorSignature, // allocator signature with a length of 66 bytes
             sponsorSignature: '',
             sponsor: user,
-            nonce: defaultNonce,
+            nonce: compact_.nonce,
             expires: compact_.expires,
             witness: mandateHash,
             witnessTypestring: WITNESS_TYPESTRING_TRIBUNAL,
@@ -739,7 +748,7 @@ contract HybridERC7683_resolveFor is MockAllocator {
             originChainId: block.chainid,
             openDeadline: uint32(compact_.expires),
             fillDeadline: uint32(mandate_.fills[0].expires),
-            orderId: bytes32(defaultNonce),
+            orderId: _composeNonce(ON_CHAIN_NONCE, address(0), defaultNonce),
             maxSpent: maxSpent,
             minReceived: minReceived,
             fillInstructions: fillInstructions
@@ -966,7 +975,7 @@ contract HybridERC7683_resolve is MockAllocator {
             originChainId: block.chainid,
             openDeadline: uint32(compact_.expires),
             fillDeadline: uint32(mandate_.fills[0].expires),
-            orderId: bytes32(defaultNonce),
+            orderId: _composeNonce(ON_CHAIN_NONCE, address(0), defaultNonce),
             maxSpent: maxSpent,
             minReceived: minReceived,
             fillInstructions: fillInstructions
@@ -1007,7 +1016,7 @@ contract HybridERC7683_hybridAllocatorInheritance is MockAllocator {
     function test_inheritsHybridAllocatorFunctionality() public view {
         // Test that it properly inherits from HybridAllocator
         assertEq(hybridERC7683Allocator.nonces(), 0);
-        assertEq(hybridERC7683Allocator.signerCount(), 1);
+        assertEq(hybridERC7683Allocator.owner(), owner);
         assertTrue(hybridERC7683Allocator.signers(signer));
         assertEq(hybridERC7683Allocator.ALLOCATOR_ID(), _toAllocatorId(address(hybridERC7683Allocator)));
     }
@@ -1035,6 +1044,6 @@ contract HybridERC7683_hybridAllocatorInheritance is MockAllocator {
         assertEq(registeredAmounts[0], defaultAmount);
         assertEq(usdc.balanceOf(address(compactContract)), defaultAmount);
         assertEq(compactContract.balanceOf(address(user), idsAndAmounts[0][0]), defaultAmount);
-        assertEq(nonce, 1);
+        assertEq(nonce, _composeNonceUint(ON_CHAIN_NONCE, address(0), 1));
     }
 }

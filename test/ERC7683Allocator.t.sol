@@ -55,7 +55,8 @@ contract MockAllocator is GaslessCrossChainOrderData, OnChainCrossChainOrderData
         assertEq(address(compactContract_), address(0x00000000000000171ede64904551eeDF3C6C9788));
 
         erc7683Allocator = new ERC7683Allocator();
-        _setUp(address(erc7683Allocator), compactContract_, _composeNonceUint(user, 1));
+        // Most pre-registration tests use on-chain flows, so default to ON_CHAIN_NONCE
+        _setUp(address(erc7683Allocator), compactContract_, _composeNonceUint(ON_CHAIN_NONCE, user, 1));
         super.setUp();
     }
 }
@@ -75,6 +76,7 @@ contract ERC7683Allocator_open is MockAllocator {
         vm.expectRevert();
         erc7683Allocator.open(onChainCrossChainOrder_);
     }
+
     function test_revert_InvalidOrderDataType() public {
         // Order data type is invalid
         bytes32 falseOrderDataType = keccak256('false');
@@ -232,11 +234,10 @@ contract ERC7683Allocator_openFor is MockAllocator {
         IOriginSettler.GaslessCrossChainOrder memory gasless = _getGaslessCrossChainOrder();
         gasless.originChainId = wrongChainId;
         vm.prank(user);
-        vm.expectRevert(
-            abi.encodeWithSelector(ERC7683AL.InvalidOriginChainId.selector, wrongChainId, block.chainid)
-        );
+        vm.expectRevert(abi.encodeWithSelector(ERC7683AL.InvalidOriginChainId.selector, wrongChainId, block.chainid));
         erc7683Allocator.openFor(gasless, '', '');
     }
+
     function test_revert_InvalidOrderDataType() public {
         // Order data type is invalid
         bytes32 falseOrderDataType = keccak256('false');
@@ -1267,7 +1268,8 @@ contract ERC7683Allocator_openForDeposit is MockAllocator {
 
         assertEq(ERC6909(address(compactContract)).balanceOf(user, usdcId), defaultAmount);
 
-        compact_.nonce = _composeNonceUint(address(0), 1);
+        // On-chain allocation uses ON_CHAIN_NONCE with address(0) in the nonce
+        compact_.nonce = _composeNonceUint(ON_CHAIN_NONCE, address(0), 1);
         compact_.commitments[0].amount = defaultAmount;
 
         (bytes32 mandateHash,) = _hashMandate(mandate_);
@@ -1284,7 +1286,8 @@ contract ERC7683Allocator_openForDeposit is MockAllocator {
         usdc.mint(address(erc7683Allocator), amount);
 
         BatchCompact memory compact_ = _getCompact();
-        compact_.nonce = _composeNonceUint(address(0), 1);
+        // On-chain allocation uses ON_CHAIN_NONCE with address(0) in the nonce
+        compact_.nonce = _composeNonceUint(ON_CHAIN_NONCE, address(0), 1);
 
         Mandate memory mandate_ = _getMandate();
         IOriginSettler.GaslessCrossChainOrder memory order_ = _getGaslessCrossChainOrder(compact_, mandate_, true);

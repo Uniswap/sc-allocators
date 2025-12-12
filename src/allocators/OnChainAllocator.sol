@@ -14,8 +14,10 @@ import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAlloca
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {Extsload} from '@uniswap/the-compact/lib/Extsload.sol';
 import {IdLib} from '@uniswap/the-compact/lib/IdLib.sol';
+import {DepositDetails} from '@uniswap/the-compact/types/DepositDetails.sol';
 import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 import {Utility} from '@uniswap/the-compact/utility/Utility.sol';
+import {ISignatureTransfer} from 'permit2/src/interfaces/ISignatureTransfer.sol';
 
 /// @title OnChainAllocator
 /// @notice Allocates tokens deposited into the compact.
@@ -33,8 +35,8 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
     mapping(bytes32 tokenHash => Allocation[] allocations) internal _allocations;
 
     /// @notice Mapping of user addresses to their current nonce for replay protection.
-    /// @dev The actual nonce will be a combination of the next free nonce and the user address.
-    mapping(address user => uint96 nonce) public nonces;
+    /// @dev The actual nonce will be a combination of the on chain nonce command, the users address and the free nonce.
+    mapping(address user => uint88 nonce) public nonces;
 
     modifier onlyCompact() {
         if (msg.sender != AL.THE_COMPACT) {
@@ -241,6 +243,46 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         return commitments;
     }
 
+    /// @inheritdoc IOnChainAllocator
+    function permit2Allocation(
+        address arbiter,
+        address depositor,
+        uint256 expires,
+        ISignatureTransfer.TokenPermissions[] calldata permitted,
+        DepositDetails calldata details,
+        bytes32 claimHash,
+        string calldata witness,
+        bytes32 witnessHash,
+        bytes calldata signature
+    ) external returns (Lock[] memory commitments) {
+        if (expires > type(uint32).max) {
+            revert InvalidExpiration(expires, type(uint32).max);
+        }
+
+        commitments = AL.permit2Allocation(
+            arbiter, depositor, expires, permitted, details, claimHash, witness, witnessHash, signature
+        );
+
+        // Allocate the claim
+        for (uint256 i = 0; i < commitments.length; i++) {
+            // Check the amount fits in the supported range
+            if (commitments[i].amount > type(uint224).max) {
+                revert InvalidAmount(commitments[i].amount);
+            }
+
+            _storeAllocation(
+                commitments[i].lockTag,
+                commitments[i].token,
+                uint224(commitments[i].amount),
+                depositor,
+                uint32(expires), // expires is verified in the AllocatorLib.permit2Allocation function
+                claimHash
+            );
+        }
+
+        emit Allocated(depositor, commitments, details.nonce, expires, claimHash);
+    }
+
     /// @inheritdoc IOnChainAllocation
     function prepareAllocation(
         address recipient,
@@ -255,9 +297,10 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
             revert InvalidExpiration(expires, type(uint32).max);
         }
         uint32 expiration = uint32(expires);
-        nonce = _getNonce(msg.sender, recipient);
-
-        AL.prepareAllocation(nonce, recipient, idsAndAmounts, arbiter, expiration, typehash, witness, ALLOCATOR_ID);
+        nonce = _getNonce(msg.sender, recipient); // Includes command. AL will handle the command, so we remove it by casting to uint248.
+        AL.prepareAllocation(
+            uint248(nonce), recipient, idsAndAmounts, arbiter, expiration, typehash, witness, ALLOCATOR_ID
+        );
 
         return nonce;
     }
@@ -276,7 +319,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
             revert InvalidExpiration(expires, type(uint32).max);
         }
         uint32 expiration = uint32(expires);
-        uint256 nonce = _getAndUpdateNonce(msg.sender, recipient);
+        uint256 nonce = _getAndUpdateNonce(msg.sender, recipient); // Includes command. AL will handle the command, so we remove it by casting to uint248.
 
         (bytes32 claimHash, Lock[] memory commitments) =
             _executeAllocation(nonce, recipient, idsAndAmounts, arbiter, expiration, typehash, witness);
@@ -293,8 +336,8 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         bytes32 typehash,
         bytes32 witness
     ) private returns (bytes32, Lock[] memory) {
-        (bytes32 claimHash, Lock[] memory commitments) =
-            AL.executeAllocation(nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
+        (bytes32 claimHash, Lock[] memory commitments,) =
+            AL.executeAllocation(uint248(nonce), recipient, idsAndAmounts, arbiter, expires, typehash, witness);
 
         // Allocate the claim
         for (uint256 i = 0; i < commitments.length; i++) {
@@ -579,25 +622,31 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
     }
 
     function _getAndUpdateNonce(address calling, address sponsor) internal returns (uint256 nonce) {
+        // Create an on chain nonce by combining the command, the calling address and the next free nonce.
+        // Updates the free nonce pointer.
+        bytes1 onChainNonceCommand = AL.ON_CHAIN_NONCE;
         assembly ("memory-safe") {
             sponsor := mul(sponsor, iszero(calling))
             mstore(0x00, sponsor)
             mstore(0x20, nonces.slot)
             let nonceSlot := keccak256(0x00, 0x40)
-            let nonce96 := sload(nonceSlot)
-            nonce := or(shl(96, sponsor), add(nonce96, 1))
-            sstore(nonceSlot, add(nonce96, 1))
+            let nonce88 := sload(nonceSlot)
+            nonce := or(onChainNonceCommand, or(shl(88, sponsor), add(nonce88, 1)))
+            sstore(nonceSlot, add(nonce88, 1))
         }
     }
 
     function _getNonce(address calling, address sponsor) internal view returns (uint256 nonce) {
+        // Create an on chain nonce by combining the command, the calling address and the next free nonce.
+        // Does NOT update the free nonce pointer.
+        bytes1 onChainNonceCommand = AL.ON_CHAIN_NONCE;
         assembly ("memory-safe") {
             sponsor := mul(sponsor, iszero(calling))
             mstore(0x00, sponsor)
             mstore(0x20, nonces.slot)
             let nonceSlot := keccak256(0x00, 0x40)
-            let nonce96 := sload(nonceSlot)
-            nonce := or(shl(96, sponsor), add(nonce96, 1))
+            let nonce88 := sload(nonceSlot)
+            nonce := or(onChainNonceCommand, or(shl(88, sponsor), add(nonce88, 1)))
         }
     }
 

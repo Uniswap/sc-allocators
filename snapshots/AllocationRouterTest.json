@@ -1,0 +1,6 @@
+{
+  "depositRegisterAndAllocate_explicit_singleERC20": "224087",
+  "depositRegisterAndAllocate_simple_multipleERC20": "293495",
+  "depositRegisterAndAllocate_simple_nativeToken": "192416",
+  "depositRegisterAndAllocate_simple_singleERC20": "224644"
+}

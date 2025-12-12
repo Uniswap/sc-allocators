@@ -3,7 +3,9 @@
 pragma solidity ^0.8.27;
 
 import {IOnChainAllocation} from '@uniswap/the-compact/interfaces/IOnChainAllocation.sol';
+import {DepositDetails} from '@uniswap/the-compact/types/DepositDetails.sol';
 import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
+import {ISignatureTransfer} from 'permit2/src/interfaces/ISignatureTransfer.sol';
 
 /// @title IOnChainAllocator
 /// @notice Interface for the on-chain token allocator that prevents double-spending in a fully decentralized manner
@@ -95,4 +97,29 @@ interface IOnChainAllocator is IOnChainAllocation {
         bytes32 typehash,
         bytes32 witness
     ) external payable returns (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce);
+
+    /// @notice Deposits, registers and allocates a claim via Permit2 signature transfer
+    /// @dev Deposits the tokens subject to the order and registers the claim directly with the compact, then allocates the claim
+    /// @param arbiter The arbiter of the allocation
+    /// @param depositor The address depositing tokens and the sponsor of the claim (must sign the Permit2 message)
+    /// @param permitted The token permissions for the Permit2 transfer. Must match the commitments in the claim
+    /// @param details The deposit details including nonce, deadline, and lock tag
+    ///                Nonce must match the nonce structure expected by the allocator
+    ///                Deadline will be used as the expiration of the claim
+    /// @param claimHash The hash of the claim to register. Must match the claim hash recreated by the allocator
+    /// @param witness The witness typestring for the Permit2 signature (empty string if no witness)
+    /// @param witnessHash The hash of the witness data (bytes32(0) if no witness)
+    /// @param signature The Permit2 signature from the depositor, will be verified by the compact
+    /// @return commitments The lock commitments created by the allocation
+    function permit2Allocation(
+        address arbiter,
+        address depositor,
+        uint256 expires,
+        ISignatureTransfer.TokenPermissions[] calldata permitted,
+        DepositDetails calldata details,
+        bytes32 claimHash,
+        string calldata witness,
+        bytes32 witnessHash,
+        bytes calldata signature
+    ) external returns (Lock[] memory commitments);
 }

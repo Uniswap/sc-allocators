@@ -14,6 +14,8 @@ import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 
 import {Extsload} from '@uniswap/the-compact/lib/Extsload.sol';
 import {IdLib} from '@uniswap/the-compact/lib/IdLib.sol';
+import {DepositDetails} from '@uniswap/the-compact/types/DepositDetails.sol';
+import {ISignatureTransfer} from 'permit2/src/interfaces/ISignatureTransfer.sol';
 import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 
 /// @title HybridAllocator
@@ -23,9 +25,9 @@ import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 contract HybridAllocator is IHybridAllocator {
     event SignerAdded(address signer);
     event SignerRemoved(address signer);
-    event SignerReplacementProposed(address oldSigner, address newSigner);
-    event SignerReplaced(address oldSigner, address newSigner);
-    event AllocatorInitialized(address compact, address initialSigner, uint96 allocatorId);
+    event OwnerReplacementProposed(address newOwner);
+    event OwnerReplaced(address oldOwner, address newOwner);
+    event AllocatorInitialized(address compact, address owner, uint96 allocatorId);
 
     /// @notice The unique identifier for this allocator within The Compact protocol
     uint96 public immutable ALLOCATOR_ID;
@@ -34,24 +36,26 @@ contract HybridAllocator is IHybridAllocator {
 
     mapping(bytes32 claimHash => bool allocated) internal claims;
 
-    /// @dev The off chain allocator must use a uint256 nonce where the first 160 bits are the sponsors address to ensure no nonce collisions
-    uint96 public nonces;
-    /// @notice The total number of authorized signers for off-chain allocations
-    uint256 public signerCount;
+    /// @dev The off chain allocator must use a uint256 nonce where the first byte is the off chain nonce command (0xfc).
+    ///      The next 20 bytes are the sponsors address, followed by the freely chosen nonce within the next 11 bytes.
+    ///      This will prevent nonce collisions.
+    uint88 public nonces;
+    /// @notice The owner of the allocator, authorized to add and remove signers
+    address public owner;
     /// @notice Mapping tracking which addresses are authorized signers for off-chain allocations
     mapping(address signer => bool isSigner) public signers;
-    mapping(address => address) public pendingSignerReplacement;
+    address private _pendingOwner;
 
-    modifier onlySigner() {
-        if (!signers[msg.sender]) {
-            revert CallerNotSigner();
+    modifier onlyOwner() {
+        if (msg.sender != owner) {
+            revert CallerNotOwner();
         }
         _;
     }
 
-    constructor(address signer_) {
-        if (signer_ == address(0)) {
-            revert InvalidSigner();
+    constructor(address owner_, address signer_) {
+        if (owner_ == address(0)) {
+            revert InvalidOwner();
         }
         _INITIAL_CHAIN_ID = block.chainid;
         _COMPACT_DOMAIN_SEPARATOR = ITheCompact(AL.THE_COMPACT).DOMAIN_SEPARATOR();
@@ -82,61 +86,62 @@ contract HybridAllocator is IHybridAllocator {
             ALLOCATOR_ID = allocatorId;
         }
 
-        signers[signer_] = true;
-        signerCount++;
+        owner = owner_;
+        if (signer_ != address(0)) {
+            signers[signer_] = true;
+            emit SignerAdded(signer_);
+        }
 
-        emit AllocatorInitialized(AL.THE_COMPACT, signer_, ALLOCATOR_ID);
-        emit SignerAdded(signer_);
+        emit AllocatorInitialized(AL.THE_COMPACT, owner_, ALLOCATOR_ID);
     }
 
     /// @inheritdoc IHybridAllocator
-    function addSigner(address signer_) external onlySigner {
+    function addSigner(address signer_) public onlyOwner {
         if (signer_ == address(0) || signers[signer_]) {
             revert InvalidSigner();
         }
         signers[signer_] = true;
-        signerCount++;
         emit SignerAdded(signer_);
     }
 
     /// @inheritdoc IHybridAllocator
-    function removeSigner(address signer_) external onlySigner {
-        if (signerCount == 1) {
-            revert LastSigner();
-        }
+    function removeSigner(address signer_) public onlyOwner {
         if (!signers[signer_]) {
             revert InvalidSigner();
         }
-        // Clear any pending replacement proposed by this signer
-        delete pendingSignerReplacement[signer_];
 
         signers[signer_] = false;
-        signerCount--;
         emit SignerRemoved(signer_);
     }
 
     /// @inheritdoc IHybridAllocator
-    function replaceSigner(address newSigner_) external onlySigner {
-        if (newSigner_ == address(0) || signers[newSigner_]) {
+    function replaceSigner(address oldSigner_, address newSigner_) external onlyOwner {
+        if (oldSigner_ == newSigner_) {
             revert InvalidSigner();
         }
-        address oldSigner = msg.sender;
-        pendingSignerReplacement[oldSigner] = newSigner_;
-        emit SignerReplacementProposed(oldSigner, newSigner_);
+        removeSigner(oldSigner_);
+        addSigner(newSigner_);
     }
 
-    function acceptSignerReplacement(address oldSigner_) external {
-        address newSigner_ = pendingSignerReplacement[oldSigner_];
-        if (newSigner_ == address(0) || msg.sender != newSigner_) {
-            revert InvalidSigner();
+    /// @inheritdoc IHybridAllocator
+    function proposeOwnerReplacement(address newOwner_) external onlyOwner {
+        if (newOwner_ == address(0)) {
+            revert InvalidOwner();
         }
-        if (!signers[oldSigner_]) {
-            revert InvalidSigner();
+        _pendingOwner = newOwner_;
+        emit OwnerReplacementProposed(newOwner_);
+    }
+
+    /// @inheritdoc IHybridAllocator
+    function acceptOwnerReplacement() external {
+        if (msg.sender != _pendingOwner) {
+            revert InvalidOwner();
         }
-        delete pendingSignerReplacement[oldSigner_];
-        signers[oldSigner_] = false;
-        signers[newSigner_] = true;
-        emit SignerReplaced(oldSigner_, newSigner_);
+
+        delete _pendingOwner;
+        address previousOwner = owner;
+        owner = msg.sender;
+        emit OwnerReplaced(previousOwner, msg.sender);
     }
 
     /// @inheritdoc IAllocator
@@ -160,9 +165,10 @@ contract HybridAllocator is IHybridAllocator {
         recipient = AL.getRecipient(recipient);
         idsAndAmounts = _actualIdsAndAmounts(idsAndAmounts);
 
+        uint256 nonce = AL.getNonceWithCommand(AL.ON_CHAIN_NONCE, ++nonces);
         (bytes32 claimHash, uint256[] memory registeredAmounts) = ITheCompact(AL.THE_COMPACT).batchDepositAndRegisterFor{
             value: msg.value
-        }(recipient, idsAndAmounts, arbiter, ++nonces, expires, typehash, witness);
+        }(recipient, idsAndAmounts, arbiter, nonce, expires, typehash, witness);
 
         Lock[] memory commitments = new Lock[](idsAndAmounts.length);
         for (uint256 i = 0; i < idsAndAmounts.length; i++) {
@@ -176,9 +182,31 @@ contract HybridAllocator is IHybridAllocator {
         // Allocate the claim
         claims[claimHash] = true;
 
-        emit Allocated(recipient, commitments, nonces, expires, claimHash);
+        emit Allocated(recipient, commitments, nonce, expires, claimHash);
 
-        return (claimHash, registeredAmounts, nonces);
+        return (claimHash, registeredAmounts, nonce);
+    }
+
+    /// @inheritdoc IHybridAllocator
+    function permit2Allocation(
+        address arbiter,
+        address depositor,
+        uint256 expires,
+        ISignatureTransfer.TokenPermissions[] calldata permitted,
+        DepositDetails calldata details,
+        bytes32 claimHash,
+        string calldata witness,
+        bytes32 witnessHash,
+        bytes calldata signature
+    ) external returns (Lock[] memory commitments) {
+        commitments = AL.permit2Allocation(
+            arbiter, depositor, expires, permitted, details, claimHash, witness, witnessHash, signature
+        );
+
+        // Allocate the claim
+        claims[claimHash] = true;
+
+        emit Allocated(depositor, commitments, details.nonce, expires, claimHash);
     }
 
     /// @inheritdoc IOnChainAllocation
@@ -191,8 +219,10 @@ contract HybridAllocator is IHybridAllocator {
         bytes32 witness,
         bytes calldata /* orderData */
     ) external returns (uint256 nonce) {
-        nonce = nonces + 1;
-        AL.prepareAllocation(nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness, ALLOCATOR_ID);
+        uint88 nonce88 = nonces + 1;
+
+        nonce =
+            AL.prepareAllocation(nonce88, recipient, idsAndAmounts, arbiter, expires, typehash, witness, ALLOCATOR_ID);
     }
 
     /// @inheritdoc IOnChainAllocation
@@ -205,10 +235,10 @@ contract HybridAllocator is IHybridAllocator {
         bytes32 witness,
         bytes calldata /* orderData */
     ) external {
-        uint256 nonce = ++nonces;
+        uint88 nonce88 = ++nonces;
 
-        (bytes32 claimHash, Lock[] memory commitments) =
-            AL.executeAllocation(nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
+        (bytes32 claimHash, Lock[] memory commitments, uint256 nonce) =
+            AL.executeAllocation(nonce88, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
 
         // Allocate the claim
         claims[claimHash] = true;
@@ -220,8 +250,8 @@ contract HybridAllocator is IHybridAllocator {
     function authorizeClaim(
         bytes32 claimHash,
         address, /*arbiter*/
-        address, /*sponsor*/
-        uint256, /*nonce*/
+        address sponsor,
+        uint256 nonce,
         uint256, /*expires*/
         uint256[2][] calldata, /*idsAndAmounts*/
         bytes calldata allocatorData_
@@ -235,9 +265,14 @@ contract HybridAllocator is IHybridAllocator {
         if (claims[claimHash]) {
             delete claims[claimHash];
 
+            // If the claim hash is matching, the nonce must be either an on chain nonce, or a permit2 scoped nonce
+
             // Authorize the claim
             return IAllocator.authorizeClaim.selector;
         }
+
+        // Verify the nonce is scoped to an off chain allocation and to the sponsor
+        AL.verifyNonce(nonce, AL.OFF_CHAIN_NONCE, sponsor);
 
         // Check the allocator data for a valid signature by an authorized signer
         bytes32 digest = _deriveDigest(claimHash, _COMPACT_DOMAIN_SEPARATOR);
