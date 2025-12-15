@@ -56,6 +56,8 @@ library AllocatorLib {
 
     bytes1 internal constant NONCE_COMMAND_MASK = 0xff;
 
+    error InvalidBalanceForAdditionalCommitments(uint256 availableBalance, uint256 expectedBalance);
+    error InvalidAdditionalCommitmentsLength(uint256 providedLength, uint256 expectedLength);
     error InvalidBalanceChange(uint256 newBalance, uint256 oldBalance);
     error InvalidPreparation();
     error InvalidAllocatorId(uint96 providedId, uint96 allocatorId);
@@ -71,12 +73,16 @@ library AllocatorLib {
         address depositor,
         uint256 expires,
         ISignatureTransfer.TokenPermissions[] calldata permitted,
+        uint256[] calldata additionalCommitmentAmounts,
         DepositDetails calldata details,
         bytes32 claimHash, // This claim hash is connected to the allocation. This does not guarantee, that the allocated tokens are connected to the claim hash.
         string calldata witness,
         bytes32 witnessHash,
         bytes calldata signature
-    ) internal returns (Lock[] memory commitments) {
+    ) internal returns (Lock[] memory commitments, bool containsAdditionalCommitments) {
+        // Ensure the additional commitment amounts are the correct length
+        checkAdditionalCommitmentsAndRevert(permitted.length, additionalCommitmentAmounts);
+
         // Verifying the nonce is scoped to a permit2 allocation and to the sponsor
         verifyNonce(details.nonce, PERMIT2_NONCE, depositor);
         // We can now trust permit2 to burn the nonce and prevent replay attacks
@@ -183,6 +189,25 @@ library AllocatorLib {
                 }
                 let diffBalance := sub(currentBalance, oldBalance)
 
+                let additionalCommitmentAmount := calldataload(add(additionalCommitmentAmounts.offset, mul(i, 0x20)))
+                if gt(additionalCommitmentAmount, oldBalance) {
+                    /// @dev This is NOT a sufficient check to guarantee the user has enough unallocated tokens available for the additional commitment.
+                    ///      The additional committed amounts MUST be verified by the implementation of the allocator library before or after this function is called.
+                    ///      This check will only be used to check if enough tokens are generally available to cover the additional commitment,
+                    ///      not if those available tokens are actually unallocated.
+
+                    mstore(0x00, 0x9a534c61) // InvalidBalanceForAdditionalCommitments()
+                    mstore(0x20, oldBalance)
+                    mstore(0x40, additionalCommitmentAmount)
+                    revert(0x1c, 0x44)
+                }
+
+                // Add the additional commitment amount to the difference in balance. This amount must be verifiably unallocated.
+                diffBalance := add(diffBalance, additionalCommitmentAmount)
+
+                // Set the containsAdditionalCommitments flag if the additional commitment amount is not zero
+                containsAdditionalCommitments := or(containsAdditionalCommitments, gt(additionalCommitmentAmount, 0))
+
                 // Update the amount in the Lock struct with the balance difference
                 mstore(commitmentAmountMemLoc, diffBalance)
             }
@@ -206,19 +231,22 @@ library AllocatorLib {
             revert InvalidClaim(claimHash);
         }
 
-        return commitments;
+        return (commitments, containsAdditionalCommitments);
     }
 
     function prepareAllocation(
         uint256 nonce,
         address recipient,
         uint256[2][] calldata idsAndAmounts,
+        uint256[] calldata additionalCommitmentAmounts,
         address arbiter,
         uint256 expires,
         bytes32 typehash,
         bytes32 witness,
         uint96 allocatorId
     ) internal {
+        // Ensure the additional commitment amounts are the correct length
+        checkAdditionalCommitmentsAndRevert(idsAndAmounts.length, additionalCommitmentAmounts);
         // Before preparing the allocation, check if the compact's reentrancy guard is active
         checkCompactReentrancyGuardAndRevert();
 
@@ -258,6 +286,21 @@ library AllocatorLib {
                             staticcall(gas(), THE_COMPACT, 0x10, 0x44, 0x20, 0x20)
                         )
                     )
+
+                // Verify the current balance is sufficient for the additional commitment amounts
+                let additionalCommitmentAmount := calldataload(add(additionalCommitmentAmounts.offset, mul(i, 0x20)))
+                if gt(additionalCommitmentAmount, currentBalance) {
+                    /// @dev This is NOT a sufficient check to guarantee the user has enough unallocated tokens available for the additional commitment.
+                    ///      The additional committed amounts MUST be verified by the implementation of the allocator library during the execution.
+                    ///      This check will only be used to check if enough tokens are generally available to cover the additional commitment,
+                    ///      not if those available tokens are actually unallocated.
+
+                    mstore(0x00, 0x9a534c61) // InvalidBalanceForAdditionalCommitments()
+                    mstore(0x20, currentBalance)
+                    mstore(0x40, additionalCommitmentAmount)
+                    revert(0x1c, 0x44)
+                }
+
                 mstore(0x00, PREPARE_ALLOCATION_SELECTOR)
                 mstore(0x20, recipient)
                 mstore(0x40, id)
@@ -278,22 +321,6 @@ library AllocatorLib {
         }
     }
 
-    function executeAllocation(
-        uint256 nonce,
-        address recipient,
-        uint256[2][] calldata idsAndAmounts,
-        address arbiter,
-        uint256 expires,
-        bytes32 typehash,
-        bytes32 witness
-    ) internal view returns (bytes32 claimHash, Lock[] memory) {
-        uint256[] memory additionalCommitmentAmounts = new uint256[](idsAndAmounts.length);
-
-        return executeAllocation(
-            nonce, recipient, idsAndAmounts, additionalCommitmentAmounts, arbiter, expires, typehash, witness
-        );
-    }
-
     /// @dev Additional commitment amounts MUST be unallocated, which IS NOT verified by this library.
     function executeAllocation(
         uint256 nonce,
@@ -304,11 +331,14 @@ library AllocatorLib {
         uint256 expires,
         bytes32 typehash,
         bytes32 witness
-    ) internal view returns (bytes32 claimHash, Lock[] memory) {
+    ) internal view returns (bytes32 claimHash, Lock[] memory, bool containsAdditionalCommitments) {
         bytes32[] memory commitmentHashes = new bytes32[](idsAndAmounts.length);
         Lock[] memory commitments = new Lock[](idsAndAmounts.length);
         bytes32 commitmentsHash;
         uint256 storedNonce;
+
+        // Ensure the additional commitment amounts are the correct length
+        checkAdditionalCommitmentsAndRevert(idsAndAmounts.length, additionalCommitmentAmounts);
 
         // Before executing the allocation, check if the compact's reentrancy guard is active
         checkCompactReentrancyGuardAndRevert();
@@ -359,20 +389,23 @@ library AllocatorLib {
                 }
                 let diffBalance := sub(currentBalance, oldBalance)
 
-                // Add the additional commitment amount.
                 let additionalCommitmentAmount := calldataload(add(additionalCommitmentAmounts.offset, mul(i, 0x20)))
-                diffBalance := add(diffBalance, additionalCommitmentAmount)
-                if gt(diffBalance, currentBalance) {
+                if gt(additionalCommitmentAmount, oldBalance) {
                     /// @dev This is NOT a sufficient check to guarantee the user has enough unallocated tokens available for the additional commitment.
                     ///      The additional committed amounts MUST be verified by the implementation of the allocator library.
                     ///      This check will only be used to check if enough tokens are generally available to cover the additional commitment,
                     ///      not if those available tokens are actually unallocated.
 
-                    mstore(0x00, 0x9f2aec67) // InvalidBalanceChange()
+                    mstore(0x00, 0x9a534c61) // InvalidBalanceForAdditionalCommitments()
                     mstore(0x20, currentBalance)
                     mstore(0x40, diffBalance)
                     revert(0x1c, 0x44)
                 }
+                // Add the additional commitment amount.
+                diffBalance := add(diffBalance, additionalCommitmentAmount)
+
+                // Set the containsAdditionalCommitments flag if the additional commitment amount is not zero
+                containsAdditionalCommitments := or(containsAdditionalCommitments, gt(additionalCommitmentAmount, 0))
 
                 // Store the commitment
                 let commitmentOffset := add(add(commitments, 0x20 /* skip length */ ), mul(i, 0x20))
@@ -419,7 +452,7 @@ library AllocatorLib {
         if (!ITheCompact(THE_COMPACT).isRegistered(recipient, claimHash, typehash)) {
             revert InvalidRegistration(recipient, claimHash, typehash);
         }
-        return (claimHash, commitments);
+        return (claimHash, commitments, containsAdditionalCommitments);
     }
 
     function checkCompactReentrancyGuardAndRevert() internal view {
@@ -444,6 +477,21 @@ library AllocatorLib {
                 // revert CompactReentrancyGuardActive()
                 mstore(0, 0x87621186)
                 revert(0x1c, 0x04)
+            }
+        }
+    }
+
+    function checkAdditionalCommitmentsAndRevert(uint256 target, uint256[] calldata additionalCommitmentAmounts)
+        private
+        view
+    {
+        assembly ("memory-safe") {
+            let additionalCommitmentAmountsLength := additionalCommitmentAmounts.length
+            if iszero(eq(target, additionalCommitmentAmountsLength)) {
+                mstore(0x00, 0x81c2fd0e) // InvalidAdditionalCommitmentsLength()
+                mstore(0x20, additionalCommitmentAmountsLength)
+                mstore(0x40, target)
+                revert(0x1c, 0x44)
             }
         }
     }

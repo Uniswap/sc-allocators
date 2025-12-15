@@ -12,7 +12,6 @@ import {ISignatureTransfer} from 'permit2/src/interfaces/ISignatureTransfer.sol'
 interface IHybridAllocator is IOnChainAllocation {
     struct HybridAllocationContext {
         uint256 nonce; // MUST start with the off chain command, followed by the sponsors address
-        uint256[] additionalCommitmentAmounts; // MUST match the commitments lengths and order within the claim
         bytes signature;
     }
 

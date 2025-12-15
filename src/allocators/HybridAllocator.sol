@@ -192,33 +192,51 @@ contract HybridAllocator is IHybridAllocator {
         return (claimHash, registeredAmounts, nonce);
     }
 
-    /// @inheritdoc IHybridAllocator
+    /// @inheritdoc IOnChainAllocation
     function permit2Allocation(
         address arbiter,
         address depositor,
         uint256 expires,
         ISignatureTransfer.TokenPermissions[] calldata permitted,
+        uint256[] calldata additionalCommitmentAmounts,
         DepositDetails calldata details,
         bytes32 claimHash,
         string calldata witness,
         bytes32 witnessHash,
         bytes calldata signature,
-        bytes calldata context
-    ) external returns (Lock[] memory commitments) {
-        commitments = AL.permit2Allocation(
-            arbiter, depositor, expires, permitted, details, claimHash, witness, witnessHash, signature
+        bytes calldata context // allocator signature
+    ) external returns (Lock[] memory) {
+        (Lock[] memory commitments, bool containsAdditionalCommitments) = AL.permit2Allocation(
+            arbiter,
+            depositor,
+            expires,
+            permitted,
+            additionalCommitmentAmounts,
+            details,
+            claimHash,
+            witness,
+            witnessHash,
+            signature
         );
+
+        if (containsAdditionalCommitments) {
+            // Validate the allocator's signature for the additional commitments
+            _validateContext(commitments, details.nonce, additionalCommitmentAmounts, claimHash, context);
+        }
 
         // Allocate the claim
         claims[claimHash] = true;
 
         emit Allocated(depositor, commitments, details.nonce, expires, claimHash);
+
+        return commitments;
     }
 
     /// @inheritdoc IOnChainAllocation
     function prepareAllocation(
         address recipient,
         uint256[2][] calldata idsAndAmounts,
+        uint256[] calldata additionalCommitmentAmounts,
         address arbiter,
         uint256 expires,
         bytes32 typehash,
@@ -227,68 +245,77 @@ contract HybridAllocator is IHybridAllocator {
     ) external returns (uint256 nonce) {
         if (context.length > 0) {
             // Potential off chain nonce provided
-            HybridAllocationContext calldata allocationContext = _decodeContext(idsAndAmounts.length, context);
+            HybridAllocationContext calldata allocationContext = _decodeContext(context);
 
             // Verify the nonce is scoped to an off chain allocation and to the recipient
             AL.verifyNonce(allocationContext.nonce, AL.OFF_CHAIN_NONCE, recipient);
-
-            AL.prepareAllocation(
-                allocationContext.nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness, ALLOCATOR_ID
-            );
+            nonce = allocationContext.nonce;
         } else {
             // No off chain nonce provided, use an on chain nonce
             uint88 nonce88 = nonces + 1;
             nonce = AL.getNonceWithCommand(AL.ON_CHAIN_NONCE, nonce88);
-            AL.prepareAllocation(nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness, ALLOCATOR_ID);
         }
+        AL.prepareAllocation(
+            nonce,
+            recipient,
+            idsAndAmounts,
+            additionalCommitmentAmounts,
+            arbiter,
+            expires,
+            typehash,
+            witness,
+            ALLOCATOR_ID
+        );
     }
 
-    // TODO: THINK ABOUT IF THE uint256[] calldata additionalCommitmentAmounts should be a default parameter. A registration must confirm the users intentions and the contract must make sure that the additional commitments are unallocated.
-    //       Either by checking an off chain signature, or on chain by checking the unallocated balances
     function executeAllocation(
         address recipient,
         uint256[2][] calldata idsAndAmounts,
+        uint256[] calldata additionalCommitmentAmounts,
         address arbiter,
         uint256 expires,
         bytes32 typehash,
         bytes32 witness,
         bytes calldata context
     ) external {
+        uint256 nonce;
         bytes32 claimHash;
         Lock[] memory commitments;
-        uint256 nonce;
+        bool containsAdditionalCommitments;
 
         if (context.length > 0) {
             // Off chain nonce and additional commitments amounts provided
-            HybridAllocationContext calldata allocationContext = _decodeContext(idsAndAmounts.length, context);
+            HybridAllocationContext calldata allocationContext = _decodeContext(context);
 
             // Verify the nonce is scoped to an off chain allocation and to the recipient
             AL.verifyNonce(allocationContext.nonce, AL.OFF_CHAIN_NONCE, recipient);
 
-            (claimHash, commitments) = AL.executeAllocation(
-                allocationContext.nonce,
-                recipient,
-                idsAndAmounts,
-                allocationContext.additionalCommitmentAmounts,
-                arbiter,
-                expires,
-                typehash,
-                witness
+            nonce = allocationContext.nonce;
+            (claimHash, commitments, containsAdditionalCommitments) = AL.executeAllocation(
+                nonce, recipient, idsAndAmounts, additionalCommitmentAmounts, arbiter, expires, typehash, witness
             );
-
             // Validate the signers signature for the hybrid allocation context
-            _validateContext(commitments, allocationContext, claimHash);
+            _validateContext(
+                commitments,
+                allocationContext.nonce,
+                additionalCommitmentAmounts,
+                claimHash,
+                allocationContext.signature
+            );
         } else {
             // No off chain nonce provided, use an on chain nonce
             uint88 nonce88 = ++nonces;
             nonce = AL.getNonceWithCommand(AL.ON_CHAIN_NONCE, nonce88);
-
-            (claimHash, commitments) =
-                AL.executeAllocation(nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
+            (claimHash, commitments, containsAdditionalCommitments) = AL.executeAllocation(
+                nonce, recipient, idsAndAmounts, additionalCommitmentAmounts, arbiter, expires, typehash, witness
+            );
+            if (containsAdditionalCommitments) {
+                revert InvalidSignature();
+            }
         }
 
+        // If the claim was already allocated, skip the allocation and the event emission
         if (claims[claimHash]) {
-            // If the claim was already allocated, skip the allocation and the event emission
             return;
         }
 
@@ -425,7 +452,7 @@ contract HybridAllocator is IHybridAllocator {
         }
     }
 
-    function _decodeContext(uint256 commitmentsLength, bytes calldata context)
+    function _decodeContext(bytes calldata context)
         internal
         pure
         returns (HybridAllocationContext calldata allocationContext)
@@ -433,29 +460,20 @@ contract HybridAllocator is IHybridAllocator {
         assembly ("memory-safe") {
             // HybridAllocationContext structure:
             // 0x00: HybridAllocationContext.offset
-            // 0x20: claimHash
-            // 0x40: nonce
-            // 0x60: additionalCoAm.offset
-            // 0x80: signature.offset
-            // 0xa0: additionalCoAm.length (must match commitments.length)
-            // 0xc0: additionalCommitments.content
-            // 0xc0 + (commitments.length * 0x20): signature.length (must be 64 or 65 bytes)
-            // 0xe0 + (commitments.length * 0x20): signature.content
+            // 0x20: nonce
+            // 0x40: signature.offset
+            // 0x60: signature.length
+            // 0x80: signature.content
 
-            // required length must be 0x100 + (commitments.length * 0x20) + signature length of 64 or 96 bytes (65 bytes will be padded to 96 bytes)
+            // required length must be 0x80 + signature length of 64 or 96 bytes (65 bytes will be padded to 96 bytes)
 
-            let requiredLength := 0x100
-            let lengthOfCommitments := mul(0x20, commitmentsLength)
-            requiredLength := add(requiredLength, lengthOfCommitments) // must match commitments.length
-            requiredLength := add(requiredLength, 0x40) // compact signature of 64 bytes minimum length as minimum length
+            let minimumLength := 0xc0
 
-            let errorBuffer := or(lt(context.length, requiredLength), gt(context.length, add(requiredLength, 0x20))) // check length of context is valid
-            errorBuffer := or(errorBuffer, xor(calldataload(add(context.offset, 0x60)), 0x80)) // check additionalCoAm offset is valid (offset relative to context.offset)
-            errorBuffer := or(errorBuffer, xor(calldataload(add(context.offset, 0xa0)), commitmentsLength)) // check additionalCoAm length is valid (must match commitments.length)
-            errorBuffer := or(errorBuffer, xor(calldataload(add(context.offset, 0x80)), add(0xa0, lengthOfCommitments))) // check signature offset is valid (offset relative to context.offset)
+            let errorBuffer := or(lt(context.length, minimumLength), gt(context.length, add(minimumLength, 0x20))) // check length of context is valid
+            errorBuffer := or(errorBuffer, xor(calldataload(add(context.offset, 0x40)), 0x60)) // check signature offset is valid (offset relative to context.offset)
 
             // Check the signature is valid
-            let calldataSignatureLength := calldataload(add(context.offset, add(0xc0, lengthOfCommitments)))
+            let calldataSignatureLength := calldataload(add(context.offset, 0x60))
             errorBuffer := or(errorBuffer, or(lt(calldataSignatureLength, 0x40), gt(calldataSignatureLength, 0x41))) // check signature length is valid (must be 64 or 65 bytes)
             if errorBuffer { revert(0x00, 0x00) }
 
@@ -465,12 +483,13 @@ contract HybridAllocator is IHybridAllocator {
 
     function _validateContext(
         Lock[] memory commitments,
-        HybridAllocationContext calldata allocationContext,
-        bytes32 claimHash
+        uint256 nonce,
+        uint256[] calldata additionalCommitmentAmounts,
+        bytes32 claimHash,
+        bytes calldata allocatorSignature
     ) internal view {
         bytes32 hybridAllocationHash;
         bytes32[] memory commitmentsHashes = new bytes32[](commitments.length);
-        uint256[] calldata additionalCommitmentAmounts = allocationContext.additionalCommitmentAmounts;
 
         // Create the hybrid allocation context hash
         assembly ("memory-safe") {
@@ -483,10 +502,10 @@ contract HybridAllocator is IHybridAllocator {
             let m := mload(0x40)
             mstore(m, HYBRID_ALLOCATION_CONTEXT_TYPEHASH) // typehash
             mstore(add(m, 0x20), claimHash) // claimHash
-            mstore(add(m, 0x40), calldataload(allocationContext)) // nonce
+            mstore(add(m, 0x40), nonce) // nonce
 
             // Create the commitments hash
-            // Use the commitments lockTag and token, but the amount from HybridAllocationContext.additionalCommitmentAmounts
+            // Use the commitments lockTag and token, but the amount from additionalCommitmentAmounts
             let freeMemoryPointer := add(m, 0x80)
             let commitmentsLength := mload(commitments)
             // Populate all thecommitmentHashes
@@ -497,7 +516,7 @@ contract HybridAllocator is IHybridAllocator {
                 mstore(add(freeMemoryPointer, 0x40), mload(add(commitmentOffset, 0x20))) // token from commitments
                 mstore(
                     add(freeMemoryPointer, 0x60), calldataload(add(additionalCommitmentAmounts.offset, mul(i, 0x20)))
-                ) // amount from HybridAllocationContext.additionalCommitmentAmounts
+                ) // amount from additionalCommitmentAmounts
                 let commitmentsHashPointer := add(add(commitmentsHashes, 0x20 /* skip length */ ), mul(i, 0x20))
                 mstore(commitmentsHashPointer, keccak256(freeMemoryPointer, 0x80))
             }
@@ -514,7 +533,7 @@ contract HybridAllocator is IHybridAllocator {
             // If the chain was forked, we can not use the cached domain separator
             digest = _deriveDigest(claimHash, ITheCompact(AL.THE_COMPACT).DOMAIN_SEPARATOR());
         }
-        if (!_checkSignature(digest, allocationContext.signature)) {
+        if (!_checkSignature(digest, allocatorSignature)) {
             revert InvalidSignature();
         }
     }
