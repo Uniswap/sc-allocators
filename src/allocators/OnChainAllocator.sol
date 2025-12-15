@@ -253,7 +253,8 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         bytes32 claimHash,
         string calldata witness,
         bytes32 witnessHash,
-        bytes calldata signature
+        bytes calldata signature,
+        bytes calldata /* context */
     ) external returns (Lock[] memory commitments) {
         if (expires > type(uint32).max) {
             revert InvalidExpiration(expires, type(uint32).max);

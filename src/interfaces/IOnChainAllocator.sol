@@ -110,6 +110,7 @@ interface IOnChainAllocator is IOnChainAllocation {
     /// @param witness The witness typestring for the Permit2 signature (empty string if no witness)
     /// @param witnessHash The hash of the witness data (bytes32(0) if no witness)
     /// @param signature The Permit2 signature from the depositor, will be verified by the compact
+    /// @param context Additional context for the allocation
     /// @return commitments The lock commitments created by the allocation
     function permit2Allocation(
         address arbiter,
@@ -120,6 +121,7 @@ interface IOnChainAllocator is IOnChainAllocation {
         bytes32 claimHash,
         string calldata witness,
         bytes32 witnessHash,
-        bytes calldata signature
+        bytes calldata signature,
+        bytes calldata context
     ) external returns (Lock[] memory commitments);
 }

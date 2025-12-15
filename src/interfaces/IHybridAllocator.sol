@@ -10,6 +10,12 @@ import {ISignatureTransfer} from 'permit2/src/interfaces/ISignatureTransfer.sol'
 /// @notice Interface for hybrid allocators supporting both on-chain and off-chain authorization mechanisms
 /// @dev Combines direct token deposit functionality with signature-based off-chain allocation authorization
 interface IHybridAllocator is IOnChainAllocation {
+    struct HybridAllocationContext {
+        uint256 nonce; // MUST start with the off chain command, followed by the sponsors address
+        uint256[] additionalCommitmentAmounts; // MUST match the commitments lengths and order within the claim
+        bytes signature;
+    }
+
     error InvalidAllocatorRegistration(address alreadyRegisteredAllocator);
     error Unsupported();
     error InvalidIds();
@@ -88,6 +94,7 @@ interface IHybridAllocator is IOnChainAllocation {
     /// @param witness The witness typestring for the Permit2 signature (empty string if no witness)
     /// @param witnessHash The hash of the witness data (bytes32(0) if no witness)
     /// @param signature The Permit2 signature from the depositor, will be verified by the compact
+    /// @param context Additional context for the allocation
     /// @return commitments The lock commitments created by the allocation
     function permit2Allocation(
         address arbiter,
@@ -98,6 +105,7 @@ interface IHybridAllocator is IOnChainAllocation {
         bytes32 claimHash,
         string calldata witness,
         bytes32 witnessHash,
-        bytes calldata signature
+        bytes calldata signature,
+        bytes calldata context
     ) external returns (Lock[] memory commitments);
 }

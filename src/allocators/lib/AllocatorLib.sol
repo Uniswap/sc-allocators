@@ -210,7 +210,7 @@ library AllocatorLib {
     }
 
     function prepareAllocation(
-        uint248 noncePreCommand,
+        uint256 nonce,
         address recipient,
         uint256[2][] calldata idsAndAmounts,
         address arbiter,
@@ -218,11 +218,9 @@ library AllocatorLib {
         bytes32 typehash,
         bytes32 witness,
         uint96 allocatorId
-    ) internal returns (uint256 nonce) {
+    ) internal {
         // Before preparing the allocation, check if the compact's reentrancy guard is active
         checkCompactReentrancyGuardAndRevert();
-
-        nonce = getNonceWithCommand(ON_CHAIN_NONCE, noncePreCommand);
 
         assembly ("memory-safe") {
             // identifier = keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));
@@ -281,20 +279,36 @@ library AllocatorLib {
     }
 
     function executeAllocation(
-        uint248 noncePreCommand,
+        uint256 nonce,
         address recipient,
         uint256[2][] calldata idsAndAmounts,
         address arbiter,
         uint256 expires,
         bytes32 typehash,
         bytes32 witness
-    ) internal view returns (bytes32 claimHash, Lock[] memory, uint256 nonce) {
+    ) internal view returns (bytes32 claimHash, Lock[] memory) {
+        uint256[] memory additionalCommitmentAmounts = new uint256[](idsAndAmounts.length);
+
+        return executeAllocation(
+            nonce, recipient, idsAndAmounts, additionalCommitmentAmounts, arbiter, expires, typehash, witness
+        );
+    }
+
+    /// @dev Additional commitment amounts MUST be unallocated, which IS NOT verified by this library.
+    function executeAllocation(
+        uint256 nonce,
+        address recipient,
+        uint256[2][] calldata idsAndAmounts,
+        uint256[] calldata additionalCommitmentAmounts,
+        address arbiter,
+        uint256 expires,
+        bytes32 typehash,
+        bytes32 witness
+    ) internal view returns (bytes32 claimHash, Lock[] memory) {
         bytes32[] memory commitmentHashes = new bytes32[](idsAndAmounts.length);
         Lock[] memory commitments = new Lock[](idsAndAmounts.length);
         bytes32 commitmentsHash;
         uint256 storedNonce;
-
-        nonce = getNonceWithCommand(ON_CHAIN_NONCE, noncePreCommand);
 
         // Before executing the allocation, check if the compact's reentrancy guard is active
         checkCompactReentrancyGuardAndRevert();
@@ -345,6 +359,21 @@ library AllocatorLib {
                 }
                 let diffBalance := sub(currentBalance, oldBalance)
 
+                // Add the additional commitment amount.
+                let additionalCommitmentAmount := calldataload(add(additionalCommitmentAmounts.offset, mul(i, 0x20)))
+                diffBalance := add(diffBalance, additionalCommitmentAmount)
+                if gt(diffBalance, currentBalance) {
+                    /// @dev This is NOT a sufficient check to guarantee the user has enough unallocated tokens available for the additional commitment.
+                    ///      The additional committed amounts MUST be verified by the implementation of the allocator library.
+                    ///      This check will only be used to check if enough tokens are generally available to cover the additional commitment,
+                    ///      not if those available tokens are actually unallocated.
+
+                    mstore(0x00, 0x9f2aec67) // InvalidBalanceChange()
+                    mstore(0x20, currentBalance)
+                    mstore(0x40, diffBalance)
+                    revert(0x1c, 0x44)
+                }
+
                 // Store the commitment
                 let commitmentOffset := add(add(commitments, 0x20 /* skip length */ ), mul(i, 0x20))
                 let commitmentContent :=
@@ -390,7 +419,7 @@ library AllocatorLib {
         if (!ITheCompact(THE_COMPACT).isRegistered(recipient, claimHash, typehash)) {
             revert InvalidRegistration(recipient, claimHash, typehash);
         }
-        return (claimHash, commitments, storedNonce);
+        return (claimHash, commitments);
     }
 
     function checkCompactReentrancyGuardAndRevert() internal view {
