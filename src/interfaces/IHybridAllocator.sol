@@ -80,31 +80,4 @@ interface IHybridAllocator is IOnChainAllocation {
         bytes32 typehash,
         bytes32 witness
     ) external payable returns (bytes32, uint256[] memory, uint256);
-
-    /// @notice Deposits, registers and allocates a claim via Permit2 signature transfer
-    /// @dev Deposits the tokens subject to the order and registers the claim directly with the compact, then allocates the claim
-    /// @param arbiter The arbiter of the allocation
-    /// @param depositor The address depositing tokens and the sponsor of the claim (must sign the Permit2 message)
-    /// @param permitted The token permissions for the Permit2 transfer. Must match the commitments in the claim
-    /// @param details The deposit details including nonce, deadline, and lock tag
-    ///                Nonce must match the nonce structure expected by the allocator
-    ///                Deadline will be used as the expiration of the claim
-    /// @param claimHash The hash of the claim to register. Must match the claim hash recreated by the allocator
-    /// @param witness The witness typestring for the Permit2 signature (empty string if no witness)
-    /// @param witnessHash The hash of the witness data (bytes32(0) if no witness)
-    /// @param signature The Permit2 signature from the depositor, will be verified by the compact
-    /// @param context Additional context for the allocation
-    /// @return commitments The lock commitments created by the allocation
-    function permit2Allocation(
-        address arbiter,
-        address depositor,
-        uint256 expires,
-        ISignatureTransfer.TokenPermissions[] calldata permitted,
-        DepositDetails calldata details,
-        bytes32 claimHash,
-        string calldata witness,
-        bytes32 witnessHash,
-        bytes calldata signature,
-        bytes calldata context
-    ) external returns (Lock[] memory commitments);
 }

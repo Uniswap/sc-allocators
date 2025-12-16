@@ -79,7 +79,10 @@ library AllocatorLib {
         string calldata witness,
         bytes32 witnessHash,
         bytes calldata signature
-    ) internal returns (Lock[] memory commitments, bool containsAdditionalCommitments) {
+    )
+        internal
+        returns (Lock[] memory commitments, uint256[] memory previousBalances, bool containsAdditionalCommitments)
+    {
         // Ensure the additional commitment amounts are the correct length
         checkAdditionalCommitmentsAndRevert(permitted.length, additionalCommitmentAmounts);
 
@@ -88,6 +91,8 @@ library AllocatorLib {
         // We can now trust permit2 to burn the nonce and prevent replay attacks
 
         commitments = new Lock[](permitted.length);
+        previousBalances = new uint256[](permitted.length);
+
         bytes12 lockTag = details.lockTag;
 
         // Prepare allocation
@@ -161,6 +166,8 @@ library AllocatorLib {
                 revert(0x1c, 0x24)
             }
 
+            let previousBalancesPointer := add(previousBalances, 0x20)
+
             // Confirm the allocation - calculate balance differences
             for { let i := 0 } lt(i, permittedLength) { i := add(i, 1) } {
                 let commitmentMemLoc := mload(add(commitmentsContent, mul(i, 0x20))) // load the absolute pointer to the Lock struct
@@ -202,6 +209,9 @@ library AllocatorLib {
                     revert(0x1c, 0x44)
                 }
 
+                // Store the old balance in the previousBalances array
+                mstore(add(previousBalancesPointer, mul(i, 0x20)), oldBalance)
+
                 // Add the additional commitment amount to the difference in balance. This amount must be verifiably unallocated.
                 diffBalance := add(diffBalance, additionalCommitmentAmount)
 
@@ -231,7 +241,7 @@ library AllocatorLib {
             revert InvalidClaim(claimHash);
         }
 
-        return (commitments, containsAdditionalCommitments);
+        return (commitments, previousBalances, containsAdditionalCommitments);
     }
 
     function prepareAllocation(
@@ -331,9 +341,20 @@ library AllocatorLib {
         uint256 expires,
         bytes32 typehash,
         bytes32 witness
-    ) internal view returns (bytes32 claimHash, Lock[] memory, bool containsAdditionalCommitments) {
+    )
+        internal
+        view
+        returns (
+            bytes32 claimHash,
+            Lock[] memory commitments,
+            uint256[] memory previousBalances,
+            bool containsAdditionalCommitments
+        )
+    {
+        commitments = new Lock[](idsAndAmounts.length);
+        previousBalances = new uint256[](idsAndAmounts.length);
+
         bytes32[] memory commitmentHashes = new bytes32[](idsAndAmounts.length);
-        Lock[] memory commitments = new Lock[](idsAndAmounts.length);
         bytes32 commitmentsHash;
         uint256 storedNonce;
 
@@ -358,6 +379,8 @@ library AllocatorLib {
 
             let freeSlots := add(add(memoryPointer, 0x100), mul(idsAndAmounts.length, 0x20))
             mstore(freeSlots, LOCK_TYPEHASH) // Store the typehash for the commitment hash creation
+
+            let previousBalancesPointer := add(previousBalances, 0x20)
 
             for { let i := 0 } lt(i, idsAndAmounts.length) { i := add(i, 1) } {
                 let id := calldataload(add(idsAndAmounts.offset, mul(i, 0x40)))
@@ -401,6 +424,10 @@ library AllocatorLib {
                     mstore(0x40, diffBalance)
                     revert(0x1c, 0x44)
                 }
+
+                // Store the old balance in the previousBalances array
+                mstore(add(previousBalancesPointer, mul(i, 0x20)), oldBalance)
+
                 // Add the additional commitment amount.
                 diffBalance := add(diffBalance, additionalCommitmentAmount)
 
@@ -452,7 +479,7 @@ library AllocatorLib {
         if (!ITheCompact(THE_COMPACT).isRegistered(recipient, claimHash, typehash)) {
             revert InvalidRegistration(recipient, claimHash, typehash);
         }
-        return (claimHash, commitments, containsAdditionalCommitments);
+        return (claimHash, commitments, previousBalances, containsAdditionalCommitments);
     }
 
     function checkCompactReentrancyGuardAndRevert() internal view {
@@ -483,7 +510,7 @@ library AllocatorLib {
 
     function checkAdditionalCommitmentsAndRevert(uint256 target, uint256[] calldata additionalCommitmentAmounts)
         private
-        view
+        pure
     {
         assembly ("memory-safe") {
             let additionalCommitmentAmountsLength := additionalCommitmentAmounts.length

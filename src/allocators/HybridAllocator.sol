@@ -30,9 +30,9 @@ contract HybridAllocator is IHybridAllocator {
     event AllocatorInitialized(address compact, address owner, uint96 allocatorId);
 
     /// @dev The typehash for the HybridAllocationContext:
-    ///      keccak256('HybridAllocationContext(bytes32 claimHash,uint256 nonce,Lock[] additionalCommitments)Lock(bytes12 lockTag,address token,uint256 amount)')
+    ///      keccak256('HybridAllocationContext(bytes32 claimHash,Lock[] additionalCommitments)Lock(bytes12 lockTag,address token,uint256 amount)')
     bytes32 constant HYBRID_ALLOCATION_CONTEXT_TYPEHASH =
-        0x6aa08e172ed524dc2013404e602ede105a3158471f628286084d00f175913ee4;
+        0x3d88798eb330fca0ab1589827743878b2ccd0cdaa353080dffeb0d3e6fd7a639;
 
     /// @notice The unique identifier for this allocator within The Compact protocol
     uint96 public immutable ALLOCATOR_ID;
@@ -206,7 +206,7 @@ contract HybridAllocator is IHybridAllocator {
         bytes calldata signature,
         bytes calldata context // allocator signature
     ) external returns (Lock[] memory) {
-        (Lock[] memory commitments, bool containsAdditionalCommitments) = AL.permit2Allocation(
+        (Lock[] memory commitments,, bool containsAdditionalCommitments) = AL.permit2Allocation(
             arbiter,
             depositor,
             expires,
@@ -221,7 +221,7 @@ contract HybridAllocator is IHybridAllocator {
 
         if (containsAdditionalCommitments) {
             // Validate the allocator's signature for the additional commitments
-            _validateContext(commitments, details.nonce, additionalCommitmentAmounts, claimHash, context);
+            _validateContext(commitments, additionalCommitmentAmounts, claimHash, context);
         }
 
         // Allocate the claim
@@ -291,22 +291,16 @@ contract HybridAllocator is IHybridAllocator {
             AL.verifyNonce(allocationContext.nonce, AL.OFF_CHAIN_NONCE, recipient);
 
             nonce = allocationContext.nonce;
-            (claimHash, commitments, containsAdditionalCommitments) = AL.executeAllocation(
+            (claimHash, commitments,, containsAdditionalCommitments) = AL.executeAllocation(
                 nonce, recipient, idsAndAmounts, additionalCommitmentAmounts, arbiter, expires, typehash, witness
             );
             // Validate the signers signature for the hybrid allocation context
-            _validateContext(
-                commitments,
-                allocationContext.nonce,
-                additionalCommitmentAmounts,
-                claimHash,
-                allocationContext.signature
-            );
+            _validateContext(commitments, additionalCommitmentAmounts, claimHash, allocationContext.signature);
         } else {
             // No off chain nonce provided, use an on chain nonce
             uint88 nonce88 = ++nonces;
             nonce = AL.getNonceWithCommand(AL.ON_CHAIN_NONCE, nonce88);
-            (claimHash, commitments, containsAdditionalCommitments) = AL.executeAllocation(
+            (claimHash, commitments,, containsAdditionalCommitments) = AL.executeAllocation(
                 nonce, recipient, idsAndAmounts, additionalCommitmentAmounts, arbiter, expires, typehash, witness
             );
             if (containsAdditionalCommitments) {
@@ -483,7 +477,6 @@ contract HybridAllocator is IHybridAllocator {
 
     function _validateContext(
         Lock[] memory commitments,
-        uint256 nonce,
         uint256[] calldata additionalCommitmentAmounts,
         bytes32 claimHash,
         bytes calldata allocatorSignature
@@ -496,17 +489,15 @@ contract HybridAllocator is IHybridAllocator {
             // hybrid allocation context hash:
             // 0x00: typehash
             // 0x20: claimHash
-            // 0x40: nonce
-            // 0x60: additionalCommitments hash
+            // 0x40: additionalCommitments hash
 
             let m := mload(0x40)
             mstore(m, HYBRID_ALLOCATION_CONTEXT_TYPEHASH) // typehash
             mstore(add(m, 0x20), claimHash) // claimHash
-            mstore(add(m, 0x40), nonce) // nonce
 
             // Create the commitments hash
             // Use the commitments lockTag and token, but the amount from additionalCommitmentAmounts
-            let freeMemoryPointer := add(m, 0x80)
+            let freeMemoryPointer := add(m, 0x60)
             let commitmentsLength := mload(commitments)
             // Populate all thecommitmentHashes
             mstore(freeMemoryPointer, LOCK_TYPEHASH)
@@ -523,10 +514,10 @@ contract HybridAllocator is IHybridAllocator {
 
             // Create the commitments hash: keccak256(abi.encodePacked(commitmentsHashes))
             mstore(
-                add(m, 0x60), keccak256(add(commitmentsHashes, 0x20 /* skip length */ ), mul(commitmentsLength, 0x20))
+                add(m, 0x40), keccak256(add(commitmentsHashes, 0x20 /* skip length */ ), mul(commitmentsLength, 0x20))
             )
 
-            hybridAllocationHash := keccak256(m, 0x80)
+            hybridAllocationHash := keccak256(m, 0x60)
         }
         bytes32 digest = _deriveDigest(hybridAllocationHash, _COMPACT_DOMAIN_SEPARATOR);
         if (block.chainid != _INITIAL_CHAIN_ID) {
