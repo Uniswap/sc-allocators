@@ -335,9 +335,9 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
             revert InvalidExpiration(expires, type(uint32).max);
         }
         uint32 expiration = uint32(expires);
-        nonce = _getNonce(msg.sender, recipient); // Includes command. AL will handle the command, so we remove it by casting to uint248.
+        nonce = _getNonce(msg.sender, recipient); // Includes command.
         AL.prepareAllocation(
-            uint248(nonce),
+            nonce,
             recipient,
             idsAndAmounts,
             additionalCommitmentAmounts,
@@ -366,7 +366,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
             revert InvalidExpiration(expires, type(uint32).max);
         }
         uint32 expiration = uint32(expires);
-        uint256 nonce = _getAndUpdateNonce(msg.sender, recipient); // Includes command. AL will handle the command, so we remove it by casting to uint248.
+        uint256 nonce = _getAndUpdateNonce(msg.sender, recipient); // Includes command.
 
         (bytes32 claimHash, Lock[] memory commitments) = _executeAllocation(
             nonce, recipient, idsAndAmounts, additionalCommitmentAmounts, arbiter, expiration, typehash, witness
@@ -391,7 +391,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
             uint256[] memory previousBalances,
             bool containsAdditionalCommitments
         ) = AL.executeAllocation(
-            uint248(nonce), recipient, idsAndAmounts, additionalCommitmentAmounts, arbiter, expires, typehash, witness
+            nonce, recipient, idsAndAmounts, additionalCommitmentAmounts, arbiter, expires, typehash, witness
         );
 
         uint256 minResetPeriod = type(uint256).max;

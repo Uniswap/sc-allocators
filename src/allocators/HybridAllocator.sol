@@ -452,19 +452,19 @@ contract HybridAllocator is IHybridAllocator {
         returns (HybridAllocationContext calldata allocationContext)
     {
         assembly ("memory-safe") {
-            // HybridAllocationContext structure:
-            // 0x00: HybridAllocationContext.offset
-            // 0x20: nonce
-            // 0x40: signature.offset
-            // 0x60: signature.length
-            // 0x80: signature.content
+            // context structure
+            // 0x00: HybridAllocationContext.offset (0x20)
+            // 0x20: HybridAllocationContext.nonce
+            // 0x40: HybridAllocationContext.signature.offset (0x40 relative to struct start at 0x20)
+            // 0x60: HybridAllocationContext.signature.length
+            // 0x80: HybridAllocationContext.signature.content
 
             // required length must be 0x80 + signature length of 64 or 96 bytes (65 bytes will be padded to 96 bytes)
 
             let minimumLength := 0xc0
 
             let errorBuffer := or(lt(context.length, minimumLength), gt(context.length, add(minimumLength, 0x20))) // check length of context is valid
-            errorBuffer := or(errorBuffer, xor(calldataload(add(context.offset, 0x40)), 0x60)) // check signature offset is valid (offset relative to context.offset)
+            errorBuffer := or(errorBuffer, xor(calldataload(add(context.offset, 0x40)), 0x40)) // check signature offset is valid (0x40 relative to struct start)
 
             // Check the signature is valid
             let calldataSignatureLength := calldataload(add(context.offset, 0x60))

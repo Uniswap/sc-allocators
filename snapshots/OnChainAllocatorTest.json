@@ -1,11 +1,11 @@
 {
-  "allocateFor_success_withRegistration": "134199",
-  "allocate_and_delete_expired_allocation": "66401",
-  "allocate_erc20": "129672",
-  "allocate_native": "129432",
-  "allocate_second_erc20": "97684",
-  "onchain_execute_double": "346560",
-  "onchain_execute_single": "220180",
-  "onchain_permit2Allocation_multipleERC20": "365724",
-  "onchain_permit2Allocation_singleERC20": "232132"
+  "allocateFor_success_withRegistration": "134247",
+  "allocate_and_delete_expired_allocation": "66426",
+  "allocate_erc20": "129697",
+  "allocate_native": "129457",
+  "allocate_second_erc20": "97709",
+  "onchain_execute_double": "355504",
+  "onchain_execute_single": "225281",
+  "onchain_permit2Allocation_multipleERC20": "374116",
+  "onchain_permit2Allocation_singleERC20": "236970"
 }

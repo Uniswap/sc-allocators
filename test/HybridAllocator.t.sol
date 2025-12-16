@@ -20,6 +20,7 @@ import {
     BATCH_COMPACT_TYPESTRING_FRAGMENT_THREE,
     BATCH_COMPACT_TYPESTRING_FRAGMENT_TWO,
     BatchCompact,
+    LOCK_TYPEHASH,
     Lock
 } from '@uniswap/the-compact/types/EIP712Types.sol';
 import {ResetPeriod} from '@uniswap/the-compact/types/ResetPeriod.sol';
@@ -254,6 +255,11 @@ contract HybridAllocatorTest is Test, TestHelper {
         return uint256(0x03) << 248 | uint256(uint160(sponsor)) << 88 | uint256(freeNonce);
     }
 
+    /// @dev Creates an empty additionalCommitmentAmounts array of the specified length
+    function _emptyAmounts(uint256 length) internal pure returns (uint256[] memory) {
+        return new uint256[](length);
+    }
+
     function _createPermit2Signature(
         ISignatureTransfer.TokenPermissions[] memory permitted,
         DepositDetails memory details,
@@ -406,7 +412,7 @@ contract HybridAllocatorTest is Test, TestHelper {
             abi.encodeWithSelector(AllocatorLib.InvalidAllocatorId.selector, allocatorId, allocator.ALLOCATOR_ID())
         );
         allocator.prepareAllocation(
-            user, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+            user, idsAndAmounts, _emptyAmounts(1), arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
         );
     }
 
@@ -415,7 +421,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         uint88 beforeNonces = allocator.nonces();
         // call prepare directly
         uint256 returnedNonce = allocator.prepareAllocation(
-            user, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+            user, idsAndAmounts, _emptyAmounts(1), arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
         );
         // HybridAllocator passes just the counter to AL.prepareAllocation, so nonce is: command | counter
         // (address(0) is used because HybridAllocator doesn't embed recipient in nonce pre-command)
@@ -1637,7 +1643,17 @@ contract HybridAllocatorTest is Test, TestHelper {
 
         // Execute
         Lock[] memory commitments = allocator.permit2Allocation(
-            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            _emptyAmounts(1),
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            signature,
+            ''
         );
         vm.snapshotGasLastCall('hybrid_permit2Allocation_singleERC20');
 
@@ -1700,7 +1716,17 @@ contract HybridAllocatorTest is Test, TestHelper {
         // Note: The witness parameter should be just the inner content (e.g., "uint256 witness"),
         // not the full struct definition, as TheCompact wraps it in "Mandate(...)"
         Lock[] memory commitments = allocator.permit2Allocation(
-            arbiter, user, defaultExpiration, permitted, details, claimHash, WITNESS_STRING, witness, signature
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            _emptyAmounts(1),
+            details,
+            claimHash,
+            WITNESS_STRING,
+            witness,
+            signature,
+            ''
         );
         vm.snapshotGasLastCall('hybrid_permit2Allocation_singleERC20_withWitness');
 
@@ -1764,7 +1790,17 @@ contract HybridAllocatorTest is Test, TestHelper {
 
         // Execute
         Lock[] memory commitments = allocator.permit2Allocation(
-            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            _emptyAmounts(2),
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            signature,
+            ''
         );
         vm.snapshotGasLastCall('hybrid_permit2Allocation_multipleERC20');
 
@@ -1812,7 +1848,17 @@ contract HybridAllocatorTest is Test, TestHelper {
         // Should revert with UnauthorizedNonce because command is not PERMIT2_NONCE
         vm.expectRevert(abi.encodeWithSelector(AllocatorLib.UnauthorizedNonce.selector, bytes1(0x01), user));
         allocator.permit2Allocation(
-            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            _emptyAmounts(1),
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            signature,
+            ''
         );
     }
 
@@ -1836,7 +1882,17 @@ contract HybridAllocatorTest is Test, TestHelper {
         // Should revert because sponsor in nonce doesn't match depositor
         vm.expectRevert(abi.encodeWithSelector(AllocatorLib.UnauthorizedNonce.selector, bytes1(0x03), wrongSponsor));
         allocator.permit2Allocation(
-            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            _emptyAmounts(1),
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            signature,
+            ''
         );
     }
 
@@ -1878,7 +1934,17 @@ contract HybridAllocatorTest is Test, TestHelper {
         emit IOnChainAllocation.Allocated(user, expectedCommitments, nonce, defaultExpiration, claimHash);
 
         allocator.permit2Allocation(
-            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            _emptyAmounts(1),
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            signature,
+            ''
         );
     }
 
@@ -1915,7 +1981,17 @@ contract HybridAllocatorTest is Test, TestHelper {
 
         // Execute permit2Allocation
         allocator.permit2Allocation(
-            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            _emptyAmounts(1),
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            signature,
+            ''
         );
 
         // Verify claim is authorized
@@ -1952,5 +2028,720 @@ contract HybridAllocatorTest is Test, TestHelper {
 
         // Verify claim is no longer authorized (deleted after execution)
         assertFalse(allocator.isClaimAuthorized(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
+    }
+
+    /* --------------------------------------------------------------------- */
+    /*                   additionalCommitmentAmounts Tests                    */
+    /* --------------------------------------------------------------------- */
+
+    string constant HYBRID_ALLOCATION_CONTEXT_TYPESTRING =
+        'HybridAllocationContext(bytes32 claimHash,Lock[] additionalCommitments)Lock(bytes12 lockTag,address token,uint256 amount)';
+    bytes32 constant HYBRID_ALLOCATION_CONTEXT_TYPEHASH = keccak256(bytes(HYBRID_ALLOCATION_CONTEXT_TYPESTRING));
+
+    /// @dev Creates a signature for HybridAllocationContext
+    function _createContextSignature(
+        bytes32 claimHash,
+        Lock[] memory commitments,
+        uint256[] memory additionalCommitmentAmounts,
+        uint256 signerPk,
+        bool compactSignature
+    ) internal view returns (bytes memory) {
+        // Create commitment hashes using additionalCommitmentAmounts instead of commitment.amount
+        bytes32[] memory commitmentHashes = new bytes32[](commitments.length);
+        for (uint256 i = 0; i < commitments.length; i++) {
+            commitmentHashes[i] = keccak256(
+                abi.encode(LOCK_TYPEHASH, commitments[i].lockTag, commitments[i].token, additionalCommitmentAmounts[i])
+            );
+        }
+
+        bytes32 commitmentsHash = keccak256(abi.encodePacked(commitmentHashes));
+        bytes32 hybridAllocationHash =
+            keccak256(abi.encode(HYBRID_ALLOCATION_CONTEXT_TYPEHASH, claimHash, commitmentsHash));
+
+        bytes32 domainSeparator = compact.DOMAIN_SEPARATOR();
+        bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), domainSeparator, hybridAllocationHash));
+
+        if (compactSignature) {
+            (bytes32 r, bytes32 vs) = vm.signCompact(signerPk, digest);
+            return abi.encodePacked(r, vs);
+        } else {
+            (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, digest);
+            return abi.encodePacked(r, s, v);
+        }
+    }
+
+    /// @dev Encodes a HybridAllocationContext for use in prepareAllocation/executeAllocation
+    function _encodeHybridAllocationContext(uint256 nonce, bytes memory signature)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        IHybridAllocator.HybridAllocationContext memory context =
+            IHybridAllocator.HybridAllocationContext({nonce: nonce, signature: signature});
+        return abi.encode(context);
+    }
+
+    /// @notice Test permit2Allocation with additionalCommitmentAmounts using existing balance
+    function test_permit2Allocation_withAdditionalCommitments() public {
+        uint256 existingBalance = defaultAmount;
+        uint256 newDeposit = defaultAmount;
+        uint256 additionalCommitment = existingBalance / 2;
+        uint256 totalCommitment = newDeposit + additionalCommitment;
+
+        // First, deposit tokens directly to the user (existing balance)
+        usdc.mint(user, existingBalance);
+        vm.startPrank(user);
+        usdc.approve(address(compact), existingBalance);
+        bytes12 lockTag = _getLockTag();
+        uint256 id = compact.depositERC20(address(usdc), lockTag, existingBalance, user);
+        vm.stopPrank();
+
+        // Verify existing balance
+        assertEq(compact.balanceOf(user, id), existingBalance);
+
+        // Now do a permit2 allocation with additional commitment from existing balance
+        uint88 freeNonce = 1;
+        uint256 nonce = _createPermit2Nonce(user, freeNonce);
+
+        // Mint additional tokens for permit2 deposit
+        usdc.mint(user, newDeposit);
+
+        // Prepare token permissions for permit2
+        ISignatureTransfer.TokenPermissions[] memory permitted = _createTokenPermissions(address(usdc), newDeposit);
+
+        // Prepare deposit details
+        DepositDetails memory details = _createDepositDetails(nonce, defaultExpiration, lockTag);
+
+        // Compute claimHash with total commitment amount
+        bytes32[] memory commitmentHashes = new bytes32[](1);
+        commitmentHashes[0] = _computeCommitmentHash(id, totalCommitment);
+
+        bytes32 claimHash = keccak256(
+            abi.encode(
+                BATCH_COMPACT_TYPEHASH,
+                arbiter,
+                user,
+                nonce,
+                defaultExpiration,
+                keccak256(abi.encodePacked(commitmentHashes))
+            )
+        );
+
+        // Create Permit2 signature
+        bytes memory permit2Signature = _createPermit2Signature(permitted, details, claimHash, userPrivateKey);
+
+        // Create additional commitment amounts array
+        uint256[] memory additionalCommitmentAmounts = new uint256[](1);
+        additionalCommitmentAmounts[0] = additionalCommitment;
+
+        // Create the commitments array for context signature
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: totalCommitment});
+
+        // Create 64 bytes compact signature
+        uint256 snap = vm.snapshot();
+        // Create allocator signature for the additional commitments (context)
+        bytes memory contextSignature =
+            _createContextSignature(claimHash, commitments, additionalCommitmentAmounts, signerPrivateKey, true); // true creating 64 bytes signature
+
+        // Execute permit2Allocation with the context signature
+        allocator.permit2Allocation(
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            additionalCommitmentAmounts,
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            permit2Signature,
+            contextSignature
+        );
+
+        // Verify claim is authorized
+        assertTrue(allocator.isClaimAuthorized(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
+
+        // Verify user has total balance (existing + new deposit)
+        assertEq(compact.balanceOf(user, id), existingBalance + newDeposit);
+
+        // Verify the registration on the compact
+        assertTrue(compact.isRegistered(user, claimHash, BATCH_COMPACT_TYPEHASH));
+
+        // Revert and check with 65 byte signature
+        vm.revertTo(snap);
+
+        contextSignature =
+            _createContextSignature(claimHash, commitments, additionalCommitmentAmounts, signerPrivateKey, false); // false creating 65 bytes signature
+
+        // Execute permit2Allocation with the context signature
+        allocator.permit2Allocation(
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            additionalCommitmentAmounts,
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            permit2Signature,
+            contextSignature
+        );
+
+        // Verify claim is authorized
+        assertTrue(allocator.isClaimAuthorized(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
+
+        // Verify user has total balance (existing + new deposit)
+        assertEq(compact.balanceOf(user, id), existingBalance + newDeposit);
+
+        // Verify the registration on the compact
+        assertTrue(compact.isRegistered(user, claimHash, BATCH_COMPACT_TYPEHASH));
+    }
+
+    /// @notice Test permit2Allocation with additionalCommitmentAmounts and witness in claimHash
+    function test_permit2Allocation_withAdditionalCommitments_withWitness() public {
+        uint256 existingBalance = defaultAmount;
+        uint256 newDeposit = defaultAmount;
+        uint256 additionalCommitment = existingBalance / 2;
+        uint256 totalCommitment = newDeposit + additionalCommitment;
+
+        // First, deposit tokens directly to the user (existing balance)
+        usdc.mint(user, existingBalance);
+        vm.startPrank(user);
+        usdc.approve(address(compact), existingBalance);
+        bytes12 lockTag = _getLockTag();
+        uint256 id = compact.depositERC20(address(usdc), lockTag, existingBalance, user);
+        vm.stopPrank();
+
+        // Now do a permit2 allocation with additional commitment from existing balance
+        uint88 freeNonce = 1;
+        uint256 nonce = _createPermit2Nonce(user, freeNonce);
+
+        // Mint additional tokens for permit2 deposit
+        usdc.mint(user, newDeposit);
+
+        // Prepare token permissions for permit2
+        ISignatureTransfer.TokenPermissions[] memory permitted = _createTokenPermissions(address(usdc), newDeposit);
+
+        // Prepare deposit details
+        DepositDetails memory details = _createDepositDetails(nonce, defaultExpiration, lockTag);
+
+        // Create witness
+        uint256 witnessValue = 12_345;
+        bytes32 witness = keccak256(abi.encode(WITNESS_TYPEHASH, witnessValue));
+
+        // Compute claimHash with total commitment amount AND witness
+        bytes32[] memory commitmentHashes = new bytes32[](1);
+        commitmentHashes[0] = _computeCommitmentHash(id, totalCommitment);
+
+        bytes32 claimHash = keccak256(
+            abi.encode(
+                BATCH_COMPACT_TYPEHASH_WITH_WITNESS,
+                arbiter,
+                user,
+                nonce,
+                defaultExpiration,
+                keccak256(abi.encodePacked(commitmentHashes)),
+                witness
+            )
+        );
+
+        // Create Permit2 signature with witness
+        bytes memory permit2Signature =
+            _createPermit2SignatureWithWitness(permitted, details, claimHash, userPrivateKey);
+
+        // Create additional commitment amounts array
+        uint256[] memory additionalCommitmentAmounts = new uint256[](1);
+        additionalCommitmentAmounts[0] = additionalCommitment;
+
+        // Create the commitments array for context signature
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: totalCommitment});
+
+        // Create allocator signature for the additional commitments (context)
+        bytes memory contextSignature =
+            _createContextSignature(claimHash, commitments, additionalCommitmentAmounts, signerPrivateKey, true);
+
+        // Execute permit2Allocation with the context signature and witness
+        allocator.permit2Allocation(
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            additionalCommitmentAmounts,
+            details,
+            claimHash,
+            WITNESS_STRING,
+            witness,
+            permit2Signature,
+            contextSignature
+        );
+
+        // Verify claim is authorized
+        assertTrue(allocator.isClaimAuthorized(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
+
+        // Verify user has total balance (existing + new deposit)
+        assertEq(compact.balanceOf(user, id), existingBalance + newDeposit);
+    }
+
+    /// @notice Test permit2Allocation reverts when additionalCommitmentAmounts exceed existing balance
+    function test_permit2Allocation_revert_insufficientBalanceForAdditionalCommitments() public {
+        uint256 existingBalance = defaultAmount;
+        uint256 newDeposit = defaultAmount;
+        uint256 additionalCommitment = existingBalance + 1; // Exceed existing balance
+
+        // First, deposit tokens directly to the user (existing balance)
+        usdc.mint(user, existingBalance);
+        vm.startPrank(user);
+        usdc.approve(address(compact), existingBalance);
+        bytes12 lockTag = _getLockTag();
+        compact.depositERC20(address(usdc), lockTag, existingBalance, user);
+        vm.stopPrank();
+
+        // Now try permit2 allocation with additionalCommitment > existing balance
+        uint88 freeNonce = 1;
+        uint256 nonce = _createPermit2Nonce(user, freeNonce);
+
+        // Mint additional tokens for permit2 deposit
+        usdc.mint(user, newDeposit);
+
+        // Prepare token permissions for permit2
+        ISignatureTransfer.TokenPermissions[] memory permitted = _createTokenPermissions(address(usdc), newDeposit);
+
+        // Prepare deposit details
+        DepositDetails memory details = _createDepositDetails(nonce, defaultExpiration, lockTag);
+
+        // Compute claimHash (doesn't matter, will revert before)
+        uint256 id = AllocatorLib.toId(lockTag, address(usdc));
+        bytes32[] memory commitmentHashes = new bytes32[](1);
+        commitmentHashes[0] = _computeCommitmentHash(id, newDeposit + additionalCommitment);
+
+        bytes32 claimHash = keccak256(
+            abi.encode(
+                BATCH_COMPACT_TYPEHASH,
+                arbiter,
+                user,
+                nonce,
+                defaultExpiration,
+                keccak256(abi.encodePacked(commitmentHashes))
+            )
+        );
+
+        // Create Permit2 signature
+        bytes memory permit2Signature = _createPermit2Signature(permitted, details, claimHash, userPrivateKey);
+
+        // Create additional commitment amounts array
+        uint256[] memory additionalCommitmentAmounts = new uint256[](1);
+        additionalCommitmentAmounts[0] = additionalCommitment;
+
+        // Create context signature (will not be validated since we'll revert before)
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: newDeposit + additionalCommitment});
+        bytes memory contextSignature =
+            _createContextSignature(claimHash, commitments, additionalCommitmentAmounts, signerPrivateKey, true);
+
+        // Execute permit2Allocation should revert
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                AllocatorLib.InvalidBalanceForAdditionalCommitments.selector,
+                existingBalance, // available balance
+                additionalCommitment // requested additional commitment
+            )
+        );
+        allocator.permit2Allocation(
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            additionalCommitmentAmounts,
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            permit2Signature,
+            contextSignature
+        );
+    }
+
+    /// @notice Test permit2Allocation reverts with invalid context signature for additionalCommitmentAmounts
+    function test_permit2Allocation_revert_invalidContextSignature() public {
+        uint256 existingBalance = defaultAmount;
+        uint256 newDeposit = defaultAmount;
+        uint256 additionalCommitment = existingBalance / 2;
+        uint256 totalCommitment = newDeposit + additionalCommitment;
+
+        // First, deposit tokens directly to the user (existing balance)
+        usdc.mint(user, existingBalance);
+        vm.startPrank(user);
+        usdc.approve(address(compact), existingBalance);
+        bytes12 lockTag = _getLockTag();
+        uint256 id = compact.depositERC20(address(usdc), lockTag, existingBalance, user);
+        vm.stopPrank();
+
+        // Now do a permit2 allocation with additional commitment from existing balance
+        uint88 freeNonce = 1;
+        uint256 nonce = _createPermit2Nonce(user, freeNonce);
+
+        // Mint additional tokens for permit2 deposit
+        usdc.mint(user, newDeposit);
+
+        // Prepare token permissions for permit2
+        ISignatureTransfer.TokenPermissions[] memory permitted = _createTokenPermissions(address(usdc), newDeposit);
+
+        // Prepare deposit details
+        DepositDetails memory details = _createDepositDetails(nonce, defaultExpiration, lockTag);
+
+        // Compute claimHash with total commitment amount
+        bytes32[] memory commitmentHashes = new bytes32[](1);
+        commitmentHashes[0] = _computeCommitmentHash(id, totalCommitment);
+
+        bytes32 claimHash = keccak256(
+            abi.encode(
+                BATCH_COMPACT_TYPEHASH,
+                arbiter,
+                user,
+                nonce,
+                defaultExpiration,
+                keccak256(abi.encodePacked(commitmentHashes))
+            )
+        );
+
+        // Create Permit2 signature
+        bytes memory permit2Signature = _createPermit2Signature(permitted, details, claimHash, userPrivateKey);
+
+        // Create additional commitment amounts array
+        uint256[] memory additionalCommitmentAmounts = new uint256[](1);
+        additionalCommitmentAmounts[0] = additionalCommitment;
+
+        // Create commitments for context signature
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: totalCommitment});
+
+        // Create INVALID context signature - signed with wrong key (user instead of signer)
+        bytes memory invalidContextSignature =
+            _createContextSignature(claimHash, commitments, additionalCommitmentAmounts, userPrivateKey, true);
+
+        // Execute permit2Allocation should revert with InvalidSignature
+        vm.expectRevert(IHybridAllocator.InvalidSignature.selector);
+        allocator.permit2Allocation(
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            additionalCommitmentAmounts,
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            permit2Signature,
+            invalidContextSignature
+        );
+    }
+
+    /// @notice Test additionalCommitmentAmounts array length must match permitted length
+    function test_permit2Allocation_revert_invalidAdditionalCommitmentsLength() public {
+        bytes12 lockTag = _getLockTag();
+        uint88 freeNonce = 1;
+        uint256 nonce = _createPermit2Nonce(user, freeNonce);
+
+        // Prepare token permissions
+        ISignatureTransfer.TokenPermissions[] memory permitted = _createTokenPermissions(address(usdc), defaultAmount);
+
+        // Prepare deposit details
+        DepositDetails memory details = _createDepositDetails(nonce, defaultExpiration, lockTag);
+
+        // Create dummy claimHash and signature
+        bytes32 claimHash = bytes32(uint256(1));
+        bytes memory signature = new bytes(64);
+
+        // Create additionalCommitmentAmounts with wrong length
+        uint256[] memory additionalCommitmentAmounts = new uint256[](2); // Should be 1
+
+        vm.expectRevert(abi.encodeWithSelector(AllocatorLib.InvalidAdditionalCommitmentsLength.selector, 2, 1));
+        allocator.permit2Allocation(
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            additionalCommitmentAmounts,
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            signature,
+            ''
+        );
+    }
+
+    /// @notice Test prepareAllocation and executeAllocation flow with additionalCommitmentAmounts using off-chain nonce
+    /// forge-config: default.isolate = false
+    function test_prepareAndExecuteAllocation_withAdditionalCommitments() public {
+        address recipient = makeAddr('recipient');
+        uint256 existingBalance = defaultAmount;
+        uint256 newDeposit = defaultAmount;
+        uint256 additionalCommitment = existingBalance / 2;
+        uint256 totalCommitment = newDeposit + additionalCommitment;
+
+        // First, deposit tokens directly to the recipient (existing balance)
+        usdc.mint(user, existingBalance);
+        vm.startPrank(user);
+        usdc.approve(address(compact), existingBalance);
+        bytes12 lockTag = _getLockTag();
+        uint256 id = compact.depositERC20(address(usdc), lockTag, existingBalance, recipient);
+        vm.stopPrank();
+
+        // Verify existing balance
+        assertEq(compact.balanceOf(recipient, id), existingBalance);
+
+        // Create off-chain nonce for the recipient
+        uint88 freeNonce = 1;
+        uint256 nonce = _composeNonceUint(OFF_CHAIN_NONCE, recipient, freeNonce);
+
+        // Create idsAndAmounts for the new deposit
+        uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+        idsAndAmounts[0][0] = id;
+        idsAndAmounts[0][1] = newDeposit;
+
+        // Create additional commitment amounts array
+        uint256[] memory additionalCommitmentAmounts = new uint256[](1);
+        additionalCommitmentAmounts[0] = additionalCommitment;
+
+        // Compute claim hash with total commitment
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: totalCommitment});
+        bytes32 claimHash = _toBatchCompactHash(
+            BatchCompact({
+                arbiter: arbiter,
+                sponsor: recipient,
+                nonce: nonce,
+                expires: defaultExpiration,
+                commitments: commitments
+            })
+        );
+
+        // Create signer's signature for the HybridAllocationContext
+        bytes memory contextSignature =
+            _createContextSignature(claimHash, commitments, additionalCommitmentAmounts, signerPrivateKey, true);
+
+        // Encode the HybridAllocationContext
+        bytes memory context = _encodeHybridAllocationContext(nonce, contextSignature);
+
+        // Fund and approve for the deposit
+        usdc.mint(address(this), newDeposit);
+        usdc.approve(address(compact), newDeposit);
+
+        // Prepare allocation with context (off-chain nonce)
+        uint256 returnedNonce = allocator.prepareAllocation(
+            recipient,
+            idsAndAmounts,
+            additionalCommitmentAmounts,
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            context
+        );
+        assertEq(returnedNonce, nonce);
+
+        // Deposit via Compact
+        ITheCompact(compact).batchDeposit(idsAndAmounts, recipient);
+
+        // Register the claim
+        vm.prank(recipient);
+        ITheCompact(compact).register(claimHash, BATCH_COMPACT_TYPEHASH);
+
+        // Execute allocation with context
+        allocator.executeAllocation(
+            recipient,
+            idsAndAmounts,
+            additionalCommitmentAmounts,
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            context
+        );
+
+        // Verify claim is authorized
+        assertTrue(allocator.isClaimAuthorized(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
+
+        // Verify recipient has total balance (existing + new deposit)
+        assertEq(compact.balanceOf(recipient, id), existingBalance + newDeposit);
+
+        // Verify nonces counter was NOT incremented (off-chain nonces don't affect on-chain counter)
+        assertEq(allocator.nonces(), 0);
+    }
+
+    /// @notice Test that executeAllocation reverts with additionalCommitmentAmounts when no context/signature is provided
+    /// forge-config: default.isolate = false
+    function test_executeAllocation_revert_additionalCommitmentsWithoutContext() public {
+        address recipient = makeAddr('recipient');
+        uint256 additionalCommitment = defaultAmount / 2;
+        uint256 totalCommitment = defaultAmount + additionalCommitment;
+
+        // First, deposit tokens directly to the recipient (existing balance)
+        usdc.mint(user, defaultAmount);
+        vm.startPrank(user);
+        usdc.approve(address(compact), defaultAmount);
+        bytes12 lockTag = _getLockTag();
+        uint256 id = compact.depositERC20(address(usdc), lockTag, defaultAmount, recipient);
+        vm.stopPrank();
+
+        // Verify existing balance
+        assertEq(compact.balanceOf(recipient, id), defaultAmount);
+
+        uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+        idsAndAmounts[0][0] = id;
+        idsAndAmounts[0][1] = defaultAmount;
+
+        // Create non-zero additionalCommitmentAmounts
+        uint256[] memory additionalCommitmentAmounts = new uint256[](1);
+        additionalCommitmentAmounts[0] = additionalCommitment;
+
+        // Fund and approve for the new deposit
+        usdc.mint(address(this), defaultAmount);
+        usdc.approve(address(compact), defaultAmount);
+
+        // prepareAllocation without context succeeds (on-chain nonce is used)
+        // Note: prepareAllocation uses (nonces + 1) but doesn't increment, executeAllocation uses ++nonces
+        allocator.prepareAllocation(
+            recipient,
+            idsAndAmounts,
+            additionalCommitmentAmounts,
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
+        );
+
+        // Deposit via Compact
+        ITheCompact(compact).batchDeposit(idsAndAmounts, recipient);
+
+        // Compute the on-chain nonce that executeAllocation will use (++nonces, so 1 since nonces starts at 0)
+        uint256 expectedNonce = _composeNonceUint(ON_CHAIN_NONCE, address(0), 1);
+
+        // Compute the claim hash with the total commitment (including additionalCommitmentAmounts)
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: totalCommitment});
+        bytes32 claimHash = _toBatchCompactHash(
+            BatchCompact({
+                arbiter: arbiter,
+                sponsor: recipient,
+                nonce: expectedNonce,
+                expires: defaultExpiration,
+                commitments: commitments
+            })
+        );
+
+        // Register the claim so we can reach the InvalidSignature check
+        vm.prank(recipient);
+        ITheCompact(compact).register(claimHash, BATCH_COMPACT_TYPEHASH);
+
+        // executeAllocation without context should revert because additionalCommitmentAmounts requires a signature
+        vm.expectRevert(IHybridAllocator.InvalidSignature.selector);
+        allocator.executeAllocation(
+            recipient,
+            idsAndAmounts,
+            additionalCommitmentAmounts,
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
+        );
+    }
+
+    /// @notice Test prepareAllocation and executeAllocation flow with 65-byte signature
+    /// forge-config: default.isolate = false
+    function test_prepareAndExecuteAllocation_withAdditionalCommitments_65byteSignature() public {
+        address recipient = makeAddr('recipient');
+        uint256 existingBalance = defaultAmount;
+        uint256 newDeposit = defaultAmount;
+        uint256 additionalCommitment = existingBalance / 2;
+        uint256 totalCommitment = newDeposit + additionalCommitment;
+
+        // First, deposit tokens directly to the recipient (existing balance)
+        usdc.mint(user, existingBalance);
+        vm.startPrank(user);
+        usdc.approve(address(compact), existingBalance);
+        bytes12 lockTag = _getLockTag();
+        uint256 id = compact.depositERC20(address(usdc), lockTag, existingBalance, recipient);
+        vm.stopPrank();
+
+        // Create off-chain nonce for the recipient
+        uint88 freeNonce = 1;
+        uint256 nonce = _composeNonceUint(OFF_CHAIN_NONCE, recipient, freeNonce);
+
+        // Create idsAndAmounts for the new deposit
+        uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+        idsAndAmounts[0][0] = id;
+        idsAndAmounts[0][1] = newDeposit;
+
+        // Create additional commitment amounts array
+        uint256[] memory additionalCommitmentAmounts = new uint256[](1);
+        additionalCommitmentAmounts[0] = additionalCommitment;
+
+        // Compute claim hash with total commitment
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: totalCommitment});
+        bytes32 claimHash = _toBatchCompactHash(
+            BatchCompact({
+                arbiter: arbiter,
+                sponsor: recipient,
+                nonce: nonce,
+                expires: defaultExpiration,
+                commitments: commitments
+            })
+        );
+
+        // Create 65-byte signer's signature for the HybridAllocationContext
+        bytes memory contextSignature65 =
+            _createContextSignature(claimHash, commitments, additionalCommitmentAmounts, signerPrivateKey, false);
+
+        // Encode the HybridAllocationContext with 65-byte signature
+        bytes memory context = _encodeHybridAllocationContext(nonce, contextSignature65);
+
+        // Fund and approve for the deposit
+        usdc.mint(address(this), newDeposit);
+        usdc.approve(address(compact), newDeposit);
+
+        // Prepare allocation with context
+        allocator.prepareAllocation(
+            recipient,
+            idsAndAmounts,
+            additionalCommitmentAmounts,
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            context
+        );
+
+        // Deposit via Compact
+        ITheCompact(compact).batchDeposit(idsAndAmounts, recipient);
+
+        // Register the claim
+        vm.prank(recipient);
+        ITheCompact(compact).register(claimHash, BATCH_COMPACT_TYPEHASH);
+
+        // Execute allocation with context (65-byte signature)
+        allocator.executeAllocation(
+            recipient,
+            idsAndAmounts,
+            additionalCommitmentAmounts,
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            context
+        );
+
+        // Verify claim is authorized
+        assertTrue(allocator.isClaimAuthorized(claimHash, address(0), address(0), 0, 0, new uint256[2][](0), ''));
+
+        // Verify recipient has total balance
+        assertEq(compact.balanceOf(recipient, id), existingBalance + newDeposit);
     }
 }
