@@ -28,6 +28,7 @@ contract HybridAllocator is IHybridAllocator {
     event OwnerReplacementProposed(address newOwner);
     event OwnerReplaced(address oldOwner, address newOwner);
     event AllocatorInitialized(address compact, address owner, uint96 allocatorId);
+    event AttestationAuthorized(uint256 nonce);
 
     /// @dev The typehash for the HybridAllocationContext:
     ///      keccak256('HybridAllocationContext(bytes32 claimHash,Lock[] additionalCommitments)Lock(bytes12 lockTag,address token,uint256 amount)')
@@ -228,6 +229,7 @@ contract HybridAllocator is IHybridAllocator {
         nonceArray[0] = nonce;
         ITheCompact(AL.THE_COMPACT).consume(nonceArray); // will revert if the nonce was already consumed
 
+        emit AttestationAuthorized(nonce);
         authorized = true;
     }
 
@@ -257,7 +259,7 @@ contract HybridAllocator is IHybridAllocator {
 
             // Return the attest() selector to indicate a successful attestation
             mstore(0x00, 0x1a808f91)
-            return(0x00, 0x04)
+            return(0x1c, 0x04)
         }
     }
 
