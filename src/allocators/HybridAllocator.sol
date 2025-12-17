@@ -34,6 +34,14 @@ contract HybridAllocator is IHybridAllocator {
     bytes32 constant HYBRID_ALLOCATION_CONTEXT_TYPEHASH =
         0x3d88798eb330fca0ab1589827743878b2ccd0cdaa353080dffeb0d3e6fd7a639;
 
+    /// @dev The typehash for the HybridAttestation:
+    ///      keccak256('HybridAttestation(address sponsor,uint256 nonce,uint256 expires,Lock[] commitments)Lock(bytes12 lockTag,address token,uint256 amount)')
+    bytes32 constant HYBRID_ATTESTATION_TYPEHASH = 0x85026382d0d24de6e57b7ed908c072c32612034a2cadacd54e95239975408a7f;
+
+    /// @dev The slot for the attestation in transient storage
+    ///      bytes4(keccak256('ATTESTATION_SLOT_SEED'))
+    bytes4 constant ATTESTATION_SLOT_SEED = 0xd32d8248;
+
     /// @notice The unique identifier for this allocator within The Compact protocol
     uint96 public immutable ALLOCATOR_ID;
     uint256 private immutable _INITIAL_CHAIN_ID;
@@ -149,13 +157,108 @@ contract HybridAllocator is IHybridAllocator {
         emit OwnerReplaced(previousOwner, msg.sender);
     }
 
+    /// @inheritdoc IHybridAllocator
+    function authorizeAttestation(
+        address sponsor,
+        uint256 nonce,
+        uint256 expires,
+        Lock[] calldata commitments,
+        bytes calldata allocatorSignature
+    ) external returns (bool authorized) {
+        // Verify expiration
+        if (expires <= block.timestamp) {
+            revert AttestationExpired();
+        }
+        // Verify the provided nonce
+        AL.verifyNonce(nonce, AL.OFF_CHAIN_NONCE, sponsor);
+
+        bytes32 hybridAttestationHash;
+        // Store the attestation in transient storage and create the hybrid attestation hash
+        assembly ("memory-safe") {
+            let m := mload(0x40)
+            mstore(m, LOCK_TYPEHASH) // prestore the lock typehash for the commitmentsHash creation
+
+            mstore(0x00, or(ATTESTATION_SLOT_SEED, sponsor)) // Store a combination of the slot seed and the sponsor address
+            for { let i := 0 } lt(i, commitments.length) { i := add(i, 1) } {
+                // Continue creating the transient slot hash
+                let commitmentOffset := add(commitments.offset, mul(i, 0x60))
+                let lockTag := calldataload(commitmentOffset)
+                let token := calldataload(add(commitmentOffset, 0x20))
+                let amount := calldataload(add(commitmentOffset, 0x40))
+
+                mstore(0x20, or(lockTag, token)) // token id
+                let slot := keccak256(0x00, 0x40) // create the slot out of the attestation slot seed, sponsor and token id
+
+                // Store the amount authorized for transfer
+                /// @dev This will override a previous attestation for the same Lock.
+                ///      Make sure to design the commitment structure in a non repetitive way.
+                tstore(slot, amount)
+
+                // Create the commitment hash
+                mstore(add(m, 0x20), lockTag)
+                mstore(add(m, 0x40), token)
+                mstore(add(m, 0x60), amount)
+                let commitmentHash := keccak256(m, 0x80)
+                // Store the commitment hash
+                mstore(add(m, add(0x80, mul(i, 0x20))), commitmentHash)
+            }
+            let commitmentsHash := keccak256(add(m, 0x80), mul(commitments.length, 0x20))
+
+            // Create the hybrid attestation hash
+            mstore(m, HYBRID_ATTESTATION_TYPEHASH)
+            mstore(add(m, 0x20), sponsor)
+            mstore(add(m, 0x40), nonce)
+            mstore(add(m, 0x60), expires)
+            mstore(add(m, 0x80), commitmentsHash)
+            hybridAttestationHash := keccak256(m, 0xa0)
+        }
+
+        // Verify signature
+        bytes32 digest = _deriveDigest(hybridAttestationHash, _COMPACT_DOMAIN_SEPARATOR);
+        if (block.chainid != _INITIAL_CHAIN_ID) {
+            // If the chain was forked, we can not use the cached domain separator
+            digest = _deriveDigest(hybridAttestationHash, ITheCompact(AL.THE_COMPACT).DOMAIN_SEPARATOR());
+        }
+        if (!_checkSignature(digest, allocatorSignature)) {
+            revert InvalidSignature();
+        }
+
+        // Consume the nonce. Use the compacts nonce management
+        uint256[] memory nonceArray = new uint256[](1);
+        nonceArray[0] = nonce;
+        ITheCompact(AL.THE_COMPACT).consume(nonceArray); // will revert if the nonce was already consumed
+
+        authorized = true;
+    }
+
     /// @inheritdoc IAllocator
-    function attest(address, /*operator*/ address, /*from*/ address, /*to*/ uint256, /*id*/ uint256 /*amount*/ )
+    function attest(address, /*operator*/ address sponsor, address, /*to*/ uint256 id, uint256 amount)
         external
-        pure
         returns (bytes4)
     {
-        revert Unsupported();
+        // Verify the caller is the compact
+        if (msg.sender != AL.THE_COMPACT) {
+            revert InvalidCaller(msg.sender, AL.THE_COMPACT);
+        }
+
+        assembly ("memory-safe") {
+            mstore(0x00, or(ATTESTATION_SLOT_SEED, sponsor))
+            mstore(0x20, id)
+            let slot := keccak256(0x00, 0x40)
+            let availableAmount := tload(slot)
+            if lt(availableAmount, amount) {
+                mstore(0x00, 0xc74b9fab) // InsufficientAttestationAmount()
+                mstore(0x20, availableAmount)
+                mstore(0x40, amount)
+                revert(0x1c, 0x44)
+            }
+
+            tstore(slot, sub(availableAmount, amount))
+
+            // Return the attest() selector to indicate a successful attestation
+            mstore(0x00, 0x1a808f91)
+            return(0x00, 0x04)
+        }
     }
 
     /// @inheritdoc IHybridAllocator
@@ -268,6 +371,7 @@ contract HybridAllocator is IHybridAllocator {
         );
     }
 
+    /// @inheritdoc IOnChainAllocation
     function executeAllocation(
         address recipient,
         uint256[2][] calldata idsAndAmounts,

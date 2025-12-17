@@ -25,6 +25,8 @@ interface IHybridAllocator is IOnChainAllocation {
     error InvalidSigner();
     error CallerNotOwner();
     error InvalidValue(uint256 value, uint256 expectedValue);
+    error AttestationExpired();
+    error InsufficientAttestationAmount(uint256 availableAmount, uint256 requestedAmount);
 
     /**
      * @notice Add an offchain signer to the allocator.
@@ -60,6 +62,23 @@ interface IHybridAllocator is IOnChainAllocation {
      * @dev The caller must be the new (pending) owner.
      */
     function acceptOwnerReplacement() external;
+
+    /**
+     * @notice Authorizes an attestation for a subsequent ERC6909 transfer. The attestation is
+     * stored in transient storage and consumed when the corresponding attest function is called.
+     * @param sponsor The address of the sponsor.
+     * @param nonce The nonce of the attestation.
+     * @param expires The expiration time of the attestation.
+     * @param commitments The commitments to authorize.
+     * @param allocatorSignature The signature of the allocator.
+     */
+    function authorizeAttestation(
+        address sponsor,
+        uint256 nonce,
+        uint256 expires,
+        Lock[] calldata commitments,
+        bytes calldata allocatorSignature
+    ) external returns (bool authorized);
 
     /**
      * @notice Create an allocation and a registration on the compact by depositing the relevant tokens to the compact.

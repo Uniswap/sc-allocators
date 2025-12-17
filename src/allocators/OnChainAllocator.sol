@@ -522,7 +522,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         }
 
         nonce = _getAndUpdateNonce(address(0), sponsor); // address(0) as caller allows anyone to relay
-        bytes32 commitmentsHash = AL.getCommitmentsHash(commitments);
+        (bytes32 commitmentsHash,) = AL.getCommitmentsHash(commitments);
         claimHash = AL.getClaimHash(arbiter, sponsor, nonce, expires, commitmentsHash, witness, typehash);
 
         uint256 minResetPeriod = type(uint256).max;
