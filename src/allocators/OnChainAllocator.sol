@@ -161,7 +161,9 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
                 revert InvalidAmount(commitments[i].amount);
             }
 
-            minResetPeriod = _checkInput(commitments[i], recipient, expires, minResetPeriod);
+            minResetPeriod = _checkInput(
+                commitments[i].lockTag, commitments[i].token, commitments[i].amount, recipient, expires, minResetPeriod
+            );
 
             idsAndAmounts[i][0] = AL.toId(commitments[i].lockTag, commitments[i].token);
             idsAndAmounts[i][1] = msg.value;
@@ -178,7 +180,9 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
 
         // Process the rest of the commitments
         for (; i < commitments.length; i++) {
-            minResetPeriod = _checkInput(commitments[i], recipient, expires, minResetPeriod);
+            minResetPeriod = _checkInput(
+                commitments[i].lockTag, commitments[i].token, commitments[i].amount, recipient, expires, minResetPeriod
+            );
 
             address token = commitments[i].token;
             // Safe to cast - _checkInput validated that the value fits the uint224
@@ -243,63 +247,105 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         return commitments;
     }
 
-    /// @inheritdoc IOnChainAllocator
+    /// @inheritdoc IOnChainAllocation
     function permit2Allocation(
         address arbiter,
         address depositor,
         uint256 expires,
         ISignatureTransfer.TokenPermissions[] calldata permitted,
+        uint256[] calldata additionalCommitmentAmounts,
         DepositDetails calldata details,
         bytes32 claimHash,
         string calldata witness,
         bytes32 witnessHash,
-        bytes calldata signature
-    ) external returns (Lock[] memory commitments) {
+        bytes calldata signature,
+        bytes calldata /* context */
+    ) external returns (Lock[] memory) {
         if (expires > type(uint32).max) {
             revert InvalidExpiration(expires, type(uint32).max);
         }
 
-        commitments = AL.permit2Allocation(
-            arbiter, depositor, expires, permitted, details, claimHash, witness, witnessHash, signature
+        (Lock[] memory commitments, uint256[] memory previousBalances, bool containsAdditionalCommitments) = AL
+            .permit2Allocation(
+            arbiter,
+            depositor,
+            expires,
+            permitted,
+            additionalCommitmentAmounts,
+            details,
+            claimHash,
+            witness,
+            witnessHash,
+            signature
         );
+
+        uint256 minResetPeriod = type(uint256).max;
 
         // Allocate the claim
         for (uint256 i = 0; i < commitments.length; i++) {
-            // Check the amount fits in the supported range
-            if (commitments[i].amount > type(uint224).max) {
-                revert InvalidAmount(commitments[i].amount);
+            Lock memory commitment = commitments[i];
+            minResetPeriod = _checkInput(
+                commitment.lockTag, commitment.token, commitment.amount, depositor, uint32(expires), minResetPeriod
+            );
+
+            if (containsAdditionalCommitments) {
+                // Check the unallocated balance of the recipient is sufficient for the additionalCommitmentAmounts
+                bytes32 tokenHash = _getTokenHash(commitment.lockTag, commitment.token, depositor);
+                uint256 allocatedBalance = _allocatedBalance(tokenHash);
+                uint256 requiredBalance = allocatedBalance + additionalCommitmentAmounts[i];
+                if (previousBalances[i] < requiredBalance) {
+                    revert InsufficientBalance(
+                        depositor, AL.toId(commitment.lockTag, commitment.token), previousBalances[i], requiredBalance
+                    );
+                }
             }
 
             _storeAllocation(
-                commitments[i].lockTag,
-                commitments[i].token,
-                uint224(commitments[i].amount),
+                commitment.lockTag,
+                commitment.token,
+                uint224(commitment.amount),
                 depositor,
                 uint32(expires), // expires is verified in the AllocatorLib.permit2Allocation function
                 claimHash
             );
         }
 
+        // Ensure expiration is not bigger then the smallest reset period
+        if (expires >= block.timestamp + minResetPeriod) {
+            revert InvalidExpiration(expires, block.timestamp + minResetPeriod);
+        }
+
         emit Allocated(depositor, commitments, details.nonce, expires, claimHash);
+
+        return commitments;
     }
 
     /// @inheritdoc IOnChainAllocation
     function prepareAllocation(
         address recipient,
         uint256[2][] calldata idsAndAmounts,
+        uint256[] calldata additionalCommitmentAmounts,
         address arbiter,
         uint256 expires,
         bytes32 typehash,
         bytes32 witness,
-        bytes calldata /* orderData */
+        bytes calldata /* context */
     ) external returns (uint256 nonce) {
         if (expires > type(uint32).max) {
             revert InvalidExpiration(expires, type(uint32).max);
         }
         uint32 expiration = uint32(expires);
-        nonce = _getNonce(msg.sender, recipient); // Includes command. AL will handle the command, so we remove it by casting to uint248.
+        nonce = _getNonce(msg.sender, recipient); // Includes command.
         AL.prepareAllocation(
-            uint248(nonce), recipient, idsAndAmounts, arbiter, expiration, typehash, witness, ALLOCATOR_ID
+            nonce,
+            recipient,
+            idsAndAmounts,
+            additionalCommitmentAmounts,
+            arbiter,
+            expiration,
+            typehash,
+            witness,
+            ALLOCATOR_ID
         );
 
         return nonce;
@@ -309,20 +355,22 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
     function executeAllocation(
         address recipient,
         uint256[2][] calldata idsAndAmounts,
+        uint256[] calldata additionalCommitmentAmounts,
         address arbiter,
         uint256 expires,
         bytes32 typehash,
         bytes32 witness,
-        bytes calldata /* orderData */
+        bytes calldata /* context */
     ) external {
         if (expires > type(uint32).max) {
             revert InvalidExpiration(expires, type(uint32).max);
         }
         uint32 expiration = uint32(expires);
-        uint256 nonce = _getAndUpdateNonce(msg.sender, recipient); // Includes command. AL will handle the command, so we remove it by casting to uint248.
+        uint256 nonce = _getAndUpdateNonce(msg.sender, recipient); // Includes command.
 
-        (bytes32 claimHash, Lock[] memory commitments) =
-            _executeAllocation(nonce, recipient, idsAndAmounts, arbiter, expiration, typehash, witness);
+        (bytes32 claimHash, Lock[] memory commitments) = _executeAllocation(
+            nonce, recipient, idsAndAmounts, additionalCommitmentAmounts, arbiter, expiration, typehash, witness
+        );
 
         emit Allocated(recipient, commitments, nonce, expiration, claimHash);
     }
@@ -331,19 +379,40 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         uint256 nonce,
         address recipient,
         uint256[2][] calldata idsAndAmounts,
+        uint256[] calldata additionalCommitmentAmounts,
         address arbiter,
         uint32 expires,
         bytes32 typehash,
         bytes32 witness
     ) private returns (bytes32, Lock[] memory) {
-        (bytes32 claimHash, Lock[] memory commitments,) =
-            AL.executeAllocation(uint248(nonce), recipient, idsAndAmounts, arbiter, expires, typehash, witness);
+        (
+            bytes32 claimHash,
+            Lock[] memory commitments,
+            uint256[] memory previousBalances,
+            bool containsAdditionalCommitments
+        ) = AL.executeAllocation(
+            nonce, recipient, idsAndAmounts, additionalCommitmentAmounts, arbiter, expires, typehash, witness
+        );
+
+        uint256 minResetPeriod = type(uint256).max;
 
         // Allocate the claim
         for (uint256 i = 0; i < commitments.length; i++) {
-            // Check the amount fits in the supported range
-            if (commitments[i].amount > type(uint224).max) {
-                revert InvalidAmount(commitments[i].amount);
+            Lock memory commitment = commitments[i];
+
+            minResetPeriod =
+                _checkInput(commitment.lockTag, commitment.token, commitment.amount, recipient, expires, minResetPeriod);
+
+            if (containsAdditionalCommitments) {
+                // Check the unallocated balance of the recipient is sufficient for the additionalCommitmentAmounts
+                bytes32 tokenHash = _getTokenHash(commitment.lockTag, commitment.token, recipient);
+                uint256 allocatedBalance = _allocatedBalance(tokenHash);
+                uint256 requiredBalance = allocatedBalance + additionalCommitmentAmounts[i];
+                if (previousBalances[i] < requiredBalance) {
+                    revert InsufficientBalance(
+                        recipient, AL.toId(commitment.lockTag, commitment.token), previousBalances[i], requiredBalance
+                    );
+                }
             }
 
             _storeAllocation(
@@ -354,6 +423,11 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
                 expires,
                 claimHash
             );
+        }
+
+        // Ensure expiration is not bigger then the smallest reset period
+        if (expires >= block.timestamp + minResetPeriod) {
+            revert InvalidExpiration(expires, block.timestamp + minResetPeriod);
         }
 
         return (claimHash, commitments);
@@ -453,7 +527,9 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
 
         uint256 minResetPeriod = type(uint256).max;
         for (uint256 i = 0; i < commitments.length; i++) {
-            minResetPeriod = _checkInput(commitments[i], sponsor, expires, minResetPeriod);
+            minResetPeriod = _checkInput(
+                commitments[i].lockTag, commitments[i].token, commitments[i].amount, sponsor, expires, minResetPeriod
+            );
             bytes32 tokenHash = _checkBalance(sponsor, commitments[i]);
 
             // Store the allocation
@@ -468,31 +544,33 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         return (claimHash, nonce);
     }
 
-    function _checkInput(Lock calldata commitment, address sponsor, uint32 expires, uint256 minResetPeriod)
-        internal
-        view
-        returns (uint256)
-    {
+    function _checkInput(
+        bytes12 lockTag,
+        address token,
+        uint256 amount,
+        address sponsor,
+        uint32 expires,
+        uint256 minResetPeriod
+    ) internal view returns (uint256) {
         // Check the allocator id fits this allocator
-        if (AL.splitAllocatorId(commitment.lockTag) != ALLOCATOR_ID) {
-            revert InvalidAllocator(AL.splitAllocatorId(commitment.lockTag), ALLOCATOR_ID);
+        if (AL.splitAllocatorId(lockTag) != ALLOCATOR_ID) {
+            revert InvalidAllocator(AL.splitAllocatorId(lockTag), ALLOCATOR_ID);
         }
 
         // Check the amount fits in the supported range
-        if (commitment.amount > type(uint224).max) {
-            revert InvalidAmount(commitment.amount);
+        if (amount > type(uint224).max) {
+            revert InvalidAmount(amount);
         }
 
         // Get the reset period for the token id
-        uint256 duration = AL.toSeconds(commitment.lockTag);
+        uint256 duration = AL.toSeconds(lockTag);
         if (duration < minResetPeriod) {
             minResetPeriod = duration;
         }
 
         // Ensure no forcedWithdrawal is active for the token id
-        (, uint256 forcedWithdrawal) = ITheCompact(AL.THE_COMPACT).getForcedWithdrawalStatus(
-            sponsor, AL.toId(commitment.lockTag, commitment.token)
-        );
+        (, uint256 forcedWithdrawal) =
+            ITheCompact(AL.THE_COMPACT).getForcedWithdrawalStatus(sponsor, AL.toId(lockTag, token));
         if (forcedWithdrawal != 0 && forcedWithdrawal <= expires) {
             revert ForceWithdrawalAvailable(expires, forcedWithdrawal);
         }

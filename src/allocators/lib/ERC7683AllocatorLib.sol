@@ -161,9 +161,7 @@ library ERC7683AllocatorLib {
 
             // Bounds check: s must be >= 0x20 (points after the first slot) and s + 0x20 within orderData.length
             // Also ensure no overflow on add(s, 0x20)
-            if or(lt(s, 0x20), gt(add(s, 0x20), orderData.length)) {
-                revert(0x00, 0x00)
-            }
+            if or(lt(s, 0x20), gt(add(s, 0x20), orderData.length)) { revert(0x00, 0x00) }
 
             // Compute pointer to nested Order (calldata pointer)
             order := add(orderData.offset, add(s, 0x20))
@@ -238,7 +236,7 @@ library ERC7683AllocatorLib {
     /// @return maxSpent The maximum spent Output array for the order.
     function createMaximumSpent(Fill memory mainFill, uint256 scalingFactor)
         internal
-        view
+        pure
         returns (IOriginSettler.Output[] memory)
     {
         uint256 amount = type(uint256).max;

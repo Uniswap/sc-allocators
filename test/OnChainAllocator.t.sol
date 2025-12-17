@@ -233,6 +233,11 @@ contract OnChainAllocatorTest is Test, TestHelper {
         return uint256(0x03) << 248 | uint256(uint160(sponsor)) << 88 | uint256(freeNonce);
     }
 
+    /// @dev Creates an empty additionalCommitmentAmounts array of the specified length
+    function _emptyAmounts(uint256 length) internal pure returns (uint256[] memory) {
+        return new uint256[](length);
+    }
+
     function _createPermit2Signature(
         ISignatureTransfer.TokenPermissions[] memory permitted,
         DepositDetails memory details,
@@ -1256,7 +1261,14 @@ contract OnChainAllocatorTest is Test, TestHelper {
             abi.encodeWithSelector(AllocatorLib.InvalidAllocatorId.selector, allocatorId, allocator.ALLOCATOR_ID())
         );
         allocator.prepareAllocation(
-            recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+            recipient,
+            idsAndAmounts,
+            _emptyAmounts(1),
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
         );
     }
 
@@ -1266,7 +1278,14 @@ contract OnChainAllocatorTest is Test, TestHelper {
         // call from an arbitrary EOA (caller)
         vm.prank(caller);
         uint256 returnedNonce = allocator.prepareAllocation(
-            recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+            recipient,
+            idsAndAmounts,
+            _emptyAmounts(1),
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
         );
 
         assertEq(returnedNonce, _composeNonceUint(address(0), 1));
@@ -1284,7 +1303,14 @@ contract OnChainAllocatorTest is Test, TestHelper {
             )
         );
         allocator.prepareAllocation(
-            recipient, idsAndAmounts, arbiter, uint256(type(uint32).max) + 1, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+            recipient,
+            idsAndAmounts,
+            _emptyAmounts(1),
+            arbiter,
+            uint256(type(uint32).max) + 1,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
         );
     }
 
@@ -1298,7 +1324,14 @@ contract OnChainAllocatorTest is Test, TestHelper {
             )
         );
         allocator.executeAllocation(
-            recipient, idsAndAmounts, arbiter, uint256(type(uint32).max) + 1, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+            recipient,
+            idsAndAmounts,
+            _emptyAmounts(1),
+            arbiter,
+            uint256(type(uint32).max) + 1,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
         );
     }
 
@@ -1351,13 +1384,27 @@ contract OnChainAllocatorTest is Test, TestHelper {
         // prepare for the recipient using caller 1
         vm.prank(recipient);
         uint256 nonce1 = allocator.prepareAllocation(
-            recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+            recipient,
+            idsAndAmounts,
+            _emptyAmounts(1),
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
         );
 
         // prepare for second recipient - DIFFERENT CALLER TO RECEIVE A DIFFERENT NONCE SLOT
         vm.prank(address(this));
         uint256 nonce2 = allocator.prepareAllocation(
-            recipient, idsAndAmountsCrooked, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+            recipient,
+            idsAndAmountsCrooked,
+            _emptyAmounts(2),
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
         );
 
         assertEq(nonce1, _composeNonceUint(address(0), 1));
@@ -1381,14 +1428,28 @@ contract OnChainAllocatorTest is Test, TestHelper {
         // execute for first allocation
         vm.prank(recipient);
         allocator.executeAllocation(
-            recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+            recipient,
+            idsAndAmounts,
+            _emptyAmounts(1),
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
         );
 
         // execute for second allocation which must fail
         vm.prank(address(this));
         vm.expectRevert(abi.encodeWithSelector(AllocatorLib.InvalidPreparation.selector));
         allocator.executeAllocation(
-            recipient, idsAndAmountsCrooked, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+            recipient,
+            idsAndAmountsCrooked,
+            _emptyAmounts(2),
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
         );
 
         assertTrue(
@@ -1431,13 +1492,27 @@ contract OnChainAllocatorTest is Test, TestHelper {
         // prepare for first recipient
         vm.prank(recipient1);
         uint256 nonce1 = allocator.prepareAllocation(
-            recipient1, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+            recipient1,
+            idsAndAmounts,
+            _emptyAmounts(1),
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
         );
 
         // prepare for second recipient
         vm.prank(recipient2);
         uint256 nonce2 = allocator.prepareAllocation(
-            recipient2, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+            recipient2,
+            idsAndAmounts,
+            _emptyAmounts(1),
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
         );
 
         assertEq(nonce1, _composeNonceUint(address(0), 1));
@@ -1461,14 +1536,28 @@ contract OnChainAllocatorTest is Test, TestHelper {
         // execute for first recipient
         vm.prank(recipient1);
         allocator.executeAllocation(
-            recipient1, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+            recipient1,
+            idsAndAmounts,
+            _emptyAmounts(1),
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
         );
 
         // execute for second recipient
         vm.prank(recipient2);
         vm.expectRevert(abi.encodeWithSelector(AllocatorLib.InvalidPreparation.selector));
         allocator.executeAllocation(
-            recipient2, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+            recipient2,
+            idsAndAmounts,
+            _emptyAmounts(1),
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
         );
 
         assertTrue(
@@ -2407,7 +2496,17 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         // Execute
         Lock[] memory commitments = allocator.permit2Allocation(
-            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            _emptyAmounts(1),
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            signature,
+            ''
         );
         vm.snapshotGasLastCall('onchain_permit2Allocation_singleERC20');
 
@@ -2474,7 +2573,17 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         // Execute
         Lock[] memory commitments = allocator.permit2Allocation(
-            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            _emptyAmounts(2),
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            signature,
+            ''
         );
         vm.snapshotGasLastCall('onchain_permit2Allocation_multipleERC20');
 
@@ -2527,7 +2636,17 @@ contract OnChainAllocatorTest is Test, TestHelper {
         // Should revert with UnauthorizedNonce because command is not PERMIT2_NONCE
         vm.expectRevert(abi.encodeWithSelector(AllocatorLib.UnauthorizedNonce.selector, bytes1(0x01), user));
         allocator.permit2Allocation(
-            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            _emptyAmounts(1),
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            signature,
+            ''
         );
     }
 
@@ -2551,7 +2670,17 @@ contract OnChainAllocatorTest is Test, TestHelper {
             abi.encodeWithSelector(IOnChainAllocator.InvalidExpiration.selector, invalidExpiration, type(uint32).max)
         );
         allocator.permit2Allocation(
-            arbiter, user, invalidExpiration, permitted, details, claimHash, '', bytes32(0), signature
+            arbiter,
+            user,
+            invalidExpiration,
+            permitted,
+            _emptyAmounts(1),
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            signature,
+            ''
         );
     }
 
@@ -2593,7 +2722,17 @@ contract OnChainAllocatorTest is Test, TestHelper {
         // Should revert because amount exceeds uint224 max
         vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidAmount.selector, largeAmount));
         allocator.permit2Allocation(
-            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            _emptyAmounts(1),
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            signature,
+            ''
         );
     }
 
@@ -2630,7 +2769,17 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         // Execute permit2Allocation
         allocator.permit2Allocation(
-            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            _emptyAmounts(1),
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            signature,
+            ''
         );
 
         // Verify claim is authorized
@@ -2703,7 +2852,17 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         // Execute permit2Allocation
         allocator.permit2Allocation(
-            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            _emptyAmounts(1),
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            signature,
+            ''
         );
 
         // Verify claim is authorized before expiration
@@ -2750,7 +2909,17 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         // Execute permit2Allocation
         allocator.permit2Allocation(
-            arbiter, user, defaultExpiration, permitted, details, claimHash, '', bytes32(0), signature
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            _emptyAmounts(1),
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            signature,
+            ''
         );
 
         // Try to transfer - should fail because tokens are allocated
@@ -2770,6 +2939,430 @@ contract OnChainAllocatorTest is Test, TestHelper {
         // Verify transfer succeeded
         assertEq(compact.balanceOf(user, id), 0);
         assertEq(compact.balanceOf(recipient, id), defaultAmount);
+    }
+
+    /* --------------------------------------------------------------------- */
+    /*                   additionalCommitmentAmounts Tests                    */
+    /* --------------------------------------------------------------------- */
+
+    /// @notice Test executeAllocation with additionalCommitmentAmounts using existing balance
+    /// forge-config: default.isolate = false
+    function test_executeAllocation_withAdditionalCommitments() public {
+        uint256 existingBalance = defaultAmount;
+        uint256 newDeposit = defaultAmount;
+        uint256 additionalCommitment = existingBalance / 2; // Use half of existing balance
+        uint256 totalCommitment = newDeposit + additionalCommitment;
+
+        // First, deposit tokens directly to the recipient (existing balance)
+        usdc.mint(user, existingBalance);
+        vm.startPrank(user);
+        usdc.approve(address(compact), existingBalance);
+        bytes12 lockTag = _toLockTag(address(allocator), Scope.Multichain, ResetPeriod.TenMinutes);
+        uint256 id = compact.depositERC20(address(usdc), lockTag, existingBalance, recipient);
+        vm.stopPrank();
+
+        // Verify existing balance
+        assertEq(compact.balanceOf(recipient, id), existingBalance);
+
+        // Now do an allocation with additional commitment from existing balance
+        uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+        idsAndAmounts[0][0] = id;
+        idsAndAmounts[0][1] = newDeposit;
+
+        uint256[] memory additionalCommitmentAmounts = new uint256[](1);
+        additionalCommitmentAmounts[0] = additionalCommitment;
+
+        // Fund and approve from allocationCaller
+        usdc.mint(address(allocationCaller), newDeposit);
+        vm.prank(address(allocationCaller));
+        usdc.approve(address(compact), newDeposit);
+
+        // Prepare allocation
+        vm.prank(address(allocationCaller));
+        uint256 nonce = allocator.prepareAllocation(
+            recipient,
+            idsAndAmounts,
+            additionalCommitmentAmounts,
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
+        );
+
+        // Deposit via Compact from allocationCaller
+        vm.prank(address(allocationCaller));
+        ITheCompact(compact).batchDeposit(idsAndAmounts, recipient);
+
+        // Compute expected claim hash with total commitment
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: totalCommitment});
+        bytes32 claimHash = _createClaimHash(recipient, arbiter, nonce, defaultExpiration, commitments, bytes32(0));
+
+        // Register the claim
+        vm.prank(recipient);
+        ITheCompact(compact).register(claimHash, BATCH_COMPACT_TYPEHASH);
+
+        // Execute allocation
+        vm.prank(address(allocationCaller));
+        allocator.executeAllocation(
+            recipient,
+            idsAndAmounts,
+            additionalCommitmentAmounts,
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
+        );
+
+        // Verify recipient has total balance (existing + new deposit)
+        assertEq(compact.balanceOf(recipient, id), existingBalance + newDeposit);
+
+        // Verify allocation amount is totalCommitment (newDeposit + additionalCommitment)
+        uint256[2][] memory verifyIdsAndAmounts = new uint256[2][](1);
+        verifyIdsAndAmounts[0][0] = id;
+        verifyIdsAndAmounts[0][1] = totalCommitment;
+        assertTrue(
+            allocator.isClaimAuthorized(
+                claimHash, arbiter, recipient, nonce, defaultExpiration, verifyIdsAndAmounts, ''
+            )
+        );
+    }
+
+    /// @notice Test executeAllocation reverts when additionalCommitmentAmounts exceed unallocated balance
+    /// forge-config: default.isolate = false
+    function test_executeAllocation_revert_insufficientUnallocatedBalance() public {
+        uint256 existingBalance = defaultAmount;
+        uint256 newDeposit = defaultAmount;
+        uint256 totalCommitment = newDeposit + existingBalance; // Total commitment = deposit + additional
+
+        // First, deposit tokens directly to the recipient (existing balance)
+        usdc.mint(user, existingBalance);
+        vm.startPrank(user);
+        usdc.approve(address(compact), existingBalance);
+        bytes12 lockTag = _toLockTag(address(allocator), Scope.Multichain, ResetPeriod.TenMinutes);
+        uint256 id = compact.depositERC20(address(usdc), lockTag, existingBalance, recipient);
+        vm.stopPrank();
+
+        // First allocation - allocate all of existing balance
+        Lock[] memory firstCommitments = new Lock[](1);
+        firstCommitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: existingBalance});
+        vm.prank(recipient);
+        allocator.allocate(firstCommitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0));
+
+        // Now try to create a second allocation with additionalCommitmentAmounts from the already-allocated balance
+        uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+        idsAndAmounts[0][0] = id;
+        idsAndAmounts[0][1] = newDeposit;
+
+        uint256[] memory additionalCommitmentAmounts = new uint256[](1);
+        additionalCommitmentAmounts[0] = existingBalance; // Try to use already-allocated balance
+
+        // Fund and approve from allocationCaller
+        usdc.mint(address(allocationCaller), newDeposit);
+        vm.prank(address(allocationCaller));
+        usdc.approve(address(compact), newDeposit);
+
+        // Prepare allocation
+        vm.prank(address(allocationCaller));
+        uint256 nonce = allocator.prepareAllocation(
+            recipient,
+            idsAndAmounts,
+            additionalCommitmentAmounts,
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
+        );
+
+        // Deposit via Compact from allocationCaller
+        vm.prank(address(allocationCaller));
+        ITheCompact(compact).batchDeposit(idsAndAmounts, recipient);
+
+        // Compute claim hash with total commitment and register it
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: totalCommitment});
+        bytes32 claimHash = _createClaimHash(recipient, arbiter, nonce, defaultExpiration, commitments, bytes32(0));
+
+        // Register the claim so we pass registration check and get to balance check
+        vm.prank(recipient);
+        ITheCompact(compact).register(claimHash, BATCH_COMPACT_TYPEHASH);
+
+        // Execute allocation should fail - existing balance is already allocated
+        vm.prank(address(allocationCaller));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IOnChainAllocator.InsufficientBalance.selector,
+                recipient,
+                id,
+                existingBalance, // previousBalance (what was available before the new deposit)
+                existingBalance + additionalCommitmentAmounts[0] // required (allocated + additional)
+            )
+        );
+        allocator.executeAllocation(
+            recipient,
+            idsAndAmounts,
+            additionalCommitmentAmounts,
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
+        );
+    }
+
+    /// @notice Test permit2Allocation with additionalCommitmentAmounts using existing balance
+    function test_permit2Allocation_withAdditionalCommitments() public {
+        uint256 existingBalance = defaultAmount;
+        uint256 newDeposit = defaultAmount;
+        uint256 additionalCommitment = existingBalance / 2;
+        uint256 totalCommitment = newDeposit + additionalCommitment;
+
+        // First, deposit tokens directly to the user (existing balance)
+        usdc.mint(user, existingBalance);
+        vm.startPrank(user);
+        usdc.approve(address(compact), existingBalance);
+        bytes12 lockTag = _getLockTag();
+        uint256 id = compact.depositERC20(address(usdc), lockTag, existingBalance, user);
+        vm.stopPrank();
+
+        // Verify existing balance
+        assertEq(compact.balanceOf(user, id), existingBalance);
+
+        // Now do a permit2 allocation with additional commitment from existing balance
+        uint88 freeNonce = 1;
+        uint256 nonce = _createPermit2Nonce(user, freeNonce);
+
+        // Mint additional tokens for permit2 deposit
+        usdc.mint(user, newDeposit);
+
+        // Prepare token permissions for permit2
+        ISignatureTransfer.TokenPermissions[] memory permitted = _createTokenPermissions(address(usdc), newDeposit);
+
+        // Prepare deposit details
+        DepositDetails memory details = _createDepositDetails(nonce, defaultExpiration, lockTag);
+
+        // Compute claimHash with total commitment amount
+        bytes32[] memory commitmentHashes = new bytes32[](1);
+        commitmentHashes[0] = _computeCommitmentHash(id, totalCommitment);
+
+        bytes32 claimHash = keccak256(
+            abi.encode(
+                BATCH_COMPACT_TYPEHASH,
+                arbiter,
+                user,
+                nonce,
+                defaultExpiration,
+                keccak256(abi.encodePacked(commitmentHashes))
+            )
+        );
+
+        // Create Permit2 signature
+        bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPK);
+
+        // Create additional commitment amounts array
+        uint256[] memory additionalCommitmentAmounts = new uint256[](1);
+        additionalCommitmentAmounts[0] = additionalCommitment;
+
+        // Execute permit2Allocation
+        allocator.permit2Allocation(
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            additionalCommitmentAmounts,
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            signature,
+            ''
+        );
+
+        // Verify claim is authorized with total commitment
+        uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+        idsAndAmounts[0][0] = id;
+        idsAndAmounts[0][1] = totalCommitment;
+        assertTrue(allocator.isClaimAuthorized(claimHash, arbiter, user, nonce, defaultExpiration, idsAndAmounts, ''));
+
+        // Verify user has total balance (existing + new deposit)
+        assertEq(compact.balanceOf(user, id), existingBalance + newDeposit);
+    }
+
+    /// @notice Test permit2Allocation reverts when additionalCommitmentAmounts exceed existing balance
+    function test_permit2Allocation_revert_insufficientBalanceForAdditionalCommitments() public {
+        uint256 existingBalance = defaultAmount;
+        uint256 newDeposit = defaultAmount;
+        uint256 additionalCommitment = existingBalance + 1; // Exceed existing balance
+
+        // First, deposit tokens directly to the user (existing balance)
+        usdc.mint(user, existingBalance);
+        vm.startPrank(user);
+        usdc.approve(address(compact), existingBalance);
+        bytes12 lockTag = _getLockTag();
+        compact.depositERC20(address(usdc), lockTag, existingBalance, user);
+        vm.stopPrank();
+
+        // Now try permit2 allocation with additionalCommitment > existing balance
+        uint88 freeNonce = 1;
+        uint256 nonce = _createPermit2Nonce(user, freeNonce);
+
+        // Mint additional tokens for permit2 deposit
+        usdc.mint(user, newDeposit);
+
+        // Prepare token permissions for permit2
+        ISignatureTransfer.TokenPermissions[] memory permitted = _createTokenPermissions(address(usdc), newDeposit);
+
+        // Prepare deposit details
+        DepositDetails memory details = _createDepositDetails(nonce, defaultExpiration, lockTag);
+
+        // Compute claimHash (doesn't matter, will revert before)
+        uint256 id = AllocatorLib.toId(lockTag, address(usdc));
+        bytes32[] memory commitmentHashes = new bytes32[](1);
+        commitmentHashes[0] = _computeCommitmentHash(id, newDeposit + additionalCommitment);
+
+        bytes32 claimHash = keccak256(
+            abi.encode(
+                BATCH_COMPACT_TYPEHASH,
+                arbiter,
+                user,
+                nonce,
+                defaultExpiration,
+                keccak256(abi.encodePacked(commitmentHashes))
+            )
+        );
+
+        // Create Permit2 signature
+        bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPK);
+
+        // Create additional commitment amounts array
+        uint256[] memory additionalCommitmentAmounts = new uint256[](1);
+        additionalCommitmentAmounts[0] = additionalCommitment;
+
+        // Execute permit2Allocation should revert
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                AllocatorLib.InvalidBalanceForAdditionalCommitments.selector,
+                existingBalance, // available balance
+                additionalCommitment // requested additional commitment
+            )
+        );
+        allocator.permit2Allocation(
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            additionalCommitmentAmounts,
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            signature,
+            ''
+        );
+    }
+
+    /// @notice Test permit2Allocation reverts when additionalCommitmentAmounts exceed unallocated balance
+    function test_permit2Allocation_revert_insufficientUnallocatedBalance() public {
+        uint256 existingBalance = defaultAmount;
+        uint256 newDeposit = defaultAmount;
+        uint256 additionalCommitment = existingBalance; // Use full existing balance
+
+        // First, deposit tokens directly to the user (existing balance)
+        usdc.mint(user, existingBalance);
+        vm.startPrank(user);
+        usdc.approve(address(compact), existingBalance);
+        bytes12 lockTag = _getLockTag();
+        uint256 id = compact.depositERC20(address(usdc), lockTag, existingBalance, user);
+        vm.stopPrank();
+
+        // Allocate the existing balance first
+        Lock[] memory firstCommitments = new Lock[](1);
+        firstCommitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: 1}); // allocate a single token
+        vm.prank(user);
+        allocator.allocate(firstCommitments, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0));
+
+        // Now try permit2 allocation with additionalCommitment from already-allocated balance
+        uint88 freeNonce = 1;
+        uint256 nonce = _createPermit2Nonce(user, freeNonce);
+
+        // Mint additional tokens for permit2 deposit
+        usdc.mint(user, newDeposit);
+
+        // Prepare token permissions for permit2
+        ISignatureTransfer.TokenPermissions[] memory permitted = _createTokenPermissions(address(usdc), newDeposit);
+
+        // Prepare deposit details
+        DepositDetails memory details = _createDepositDetails(nonce, defaultExpiration, lockTag);
+
+        // Compute claimHash
+        bytes32[] memory commitmentHashes = new bytes32[](1);
+        commitmentHashes[0] = _computeCommitmentHash(id, newDeposit + additionalCommitment);
+
+        bytes32 claimHash = keccak256(
+            abi.encode(
+                BATCH_COMPACT_TYPEHASH,
+                arbiter,
+                user,
+                nonce,
+                defaultExpiration,
+                keccak256(abi.encodePacked(commitmentHashes))
+            )
+        );
+
+        // Create Permit2 signature
+        bytes memory signature = _createPermit2Signature(permitted, details, claimHash, userPK);
+
+        // Create additional commitment amounts array
+        uint256[] memory additionalCommitmentAmounts = new uint256[](1);
+        additionalCommitmentAmounts[0] = additionalCommitment;
+
+        // Execute permit2Allocation should revert due to insufficient unallocated balance
+        // The required amount is: first allocation (1 token) + additionalCommitment (1e18) = 1e18 + 1
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IOnChainAllocator.InsufficientBalance.selector,
+                user,
+                id,
+                existingBalance, // previousBalance (before permit2 deposit)
+                1 + additionalCommitment // required (first allocation of 1 + additionalCommitment)
+            )
+        );
+        allocator.permit2Allocation(
+            arbiter,
+            user,
+            defaultExpiration,
+            permitted,
+            additionalCommitmentAmounts,
+            details,
+            claimHash,
+            '',
+            bytes32(0),
+            signature,
+            ''
+        );
+    }
+
+    /// @notice Test additionalCommitmentAmounts array length must match idsAndAmounts length
+    function test_executeAllocation_revert_invalidAdditionalCommitmentsLength() public {
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), defaultAmount);
+
+        // Create additionalCommitmentAmounts with wrong length
+        uint256[] memory additionalCommitmentAmounts = new uint256[](2); // Should be 1
+
+        vm.expectRevert(abi.encodeWithSelector(AllocatorLib.InvalidAdditionalCommitmentsLength.selector, 2, 1));
+        allocator.prepareAllocation(
+            recipient,
+            idsAndAmounts,
+            additionalCommitmentAmounts,
+            arbiter,
+            defaultExpiration,
+            BATCH_COMPACT_TYPEHASH,
+            bytes32(0),
+            ''
+        );
     }
 }
 
@@ -2846,6 +3439,7 @@ contract MaliciousRecipient is IERC1271 {
                 ALLOCATOR.prepareAllocation(
                     reentrantRecipient,
                     reentrantIdsAndAmounts,
+                    new uint256[](reentrantIdsAndAmounts.length),
                     reentrantArbiter,
                     reentrantExpires,
                     reentrantTypehash,
@@ -2858,6 +3452,7 @@ contract MaliciousRecipient is IERC1271 {
                 ALLOCATOR.executeAllocation(
                     reentrantRecipient,
                     reentrantIdsAndAmounts,
+                    new uint256[](reentrantIdsAndAmounts.length),
                     reentrantArbiter,
                     reentrantExpires,
                     reentrantTypehash,

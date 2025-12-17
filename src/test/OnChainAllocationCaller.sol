@@ -23,15 +23,16 @@ contract OnChainAllocationCaller {
         uint8 todo
     ) external {
         uint256 nonce;
+        uint256[] memory emptyAdditionalAmounts = new uint256[](idsAndAmounts.length);
         if (todo == 0) {
             // Correctly deposit and register
-            nonce = ALLOCATOR.prepareAllocation(recipient, idsAndAmounts, arbiter, expires, typehash, witness, '');
+            nonce = ALLOCATOR.prepareAllocation(recipient, idsAndAmounts, emptyAdditionalAmounts, arbiter, expires, typehash, witness, '');
             ITheCompact(COMPACT).batchDepositAndRegisterFor(
                 recipient, idsAndAmounts, arbiter, nonce, expires, typehash, witness
             );
         } else if (todo == 1) {
             // Only deposit, do not register
-            nonce = ALLOCATOR.prepareAllocation(recipient, idsAndAmounts, arbiter, expires, typehash, witness, '');
+            nonce = ALLOCATOR.prepareAllocation(recipient, idsAndAmounts, emptyAdditionalAmounts, arbiter, expires, typehash, witness, '');
             ITheCompact(COMPACT).batchDeposit(idsAndAmounts, recipient);
         } else if (todo == 2) {
             // Do not prepare, but deposit and register
@@ -39,15 +40,15 @@ contract OnChainAllocationCaller {
                 recipient, idsAndAmounts, arbiter, nonce, expires, typehash, witness
             );
         } else if (todo == 3) {
-            nonce = ALLOCATOR.prepareAllocation(recipient, idsAndAmounts, arbiter, expires, typehash, witness, '');
+            nonce = ALLOCATOR.prepareAllocation(recipient, idsAndAmounts, emptyAdditionalAmounts, arbiter, expires, typehash, witness, '');
         } else {
             // Correctly deposit and register
-            nonce = ALLOCATOR.prepareAllocation(recipient, idsAndAmounts, arbiter, expires, typehash, witness, '');
+            nonce = ALLOCATOR.prepareAllocation(recipient, idsAndAmounts, emptyAdditionalAmounts, arbiter, expires, typehash, witness, '');
             ITheCompact(COMPACT).batchDepositAndRegisterFor(
                 recipient, idsAndAmounts, arbiter, nonce, expires, typehash, witness
             );
-            ALLOCATOR.executeAllocation(recipient, idsAndAmounts, arbiter, expires, typehash, witness, '');
+            ALLOCATOR.executeAllocation(recipient, idsAndAmounts, emptyAdditionalAmounts, arbiter, expires, typehash, witness, '');
         }
-        ALLOCATOR.executeAllocation(recipient, idsAndAmounts, arbiter, expires, typehash, witness, '');
+        ALLOCATOR.executeAllocation(recipient, idsAndAmounts, emptyAdditionalAmounts, arbiter, expires, typehash, witness, '');
     }
 }
