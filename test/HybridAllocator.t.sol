@@ -65,11 +65,6 @@ contract HybridAllocatorTest is Test, TestHelper {
     bytes1 constant ON_CHAIN_NONCE = 0x01;
     bytes1 constant OFF_CHAIN_NONCE = 0x02;
 
-    // Attestation typehash
-    string constant HYBRID_ATTESTATION_TYPESTRING =
-        'HybridAttestation(address sponsor,uint256 nonce,uint256 expires,Lock[] commitments)Lock(bytes12 lockTag,address token,uint256 amount)';
-    bytes32 constant HYBRID_ATTESTATION_TYPEHASH = keccak256(bytes(HYBRID_ATTESTATION_TYPESTRING));
-
     // Helper to compose nonces with the command byte
     // For on-chain allocations: address is address(0)
     // For off-chain allocations: address is the sponsor
@@ -2776,7 +2771,7 @@ contract HybridAllocatorTest is Test, TestHelper {
 
         // Create hybrid attestation hash
         bytes32 hybridAttestationHash =
-            keccak256(abi.encode(HYBRID_ATTESTATION_TYPEHASH, sponsor, nonce, expires, commitmentsHash));
+            keccak256(abi.encode(BATCH_COMPACT_TYPEHASH, address(compact), sponsor, nonce, expires, commitmentsHash));
 
         // Create digest with domain separator
         bytes32 domainSeparator = compact.DOMAIN_SEPARATOR();
@@ -3000,6 +2995,47 @@ contract HybridAllocatorTest is Test, TestHelper {
         assertEq(compact.balanceOf(user, daiId), 0);
         assertEq(compact.balanceOf(target, usdcId), defaultAmount);
         assertEq(compact.balanceOf(target, daiId), defaultAmount);
+    }
+
+    /// @notice Test that multiple attestations for the same token accumulate (additive behavior)
+    /// forge-config: default.isolate = false
+    function test_authorizeAttestation_additiveAmounts() public {
+        bytes12 lockTag = _getLockTag();
+        uint256 id = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
+        address target = makeAddr('target');
+
+        // Deposit tokens to user
+        vm.startPrank(user);
+        usdc.approve(address(compact), defaultAmount);
+        compact.depositERC20(address(usdc), lockTag, defaultAmount, user);
+        vm.stopPrank();
+
+        uint256 halfAmount = defaultAmount / 2;
+        uint256 expires = block.timestamp + 1 hours;
+
+        // First attestation: authorize half amount
+        uint88 freeNonce1 = 1;
+        uint256 nonce1 = _composeNonceUint(OFF_CHAIN_NONCE, user, freeNonce1);
+        Lock[] memory commitments1 = new Lock[](1);
+        commitments1[0] = Lock({lockTag: lockTag, token: address(usdc), amount: halfAmount});
+        bytes memory signature1 = _createAttestationSignature(user, nonce1, expires, commitments1, signerPrivateKey);
+        allocator.authorizeAttestation(user, nonce1, expires, commitments1, signature1);
+
+        // Second attestation: authorize another half amount (different nonce)
+        uint88 freeNonce2 = 2;
+        uint256 nonce2 = _composeNonceUint(OFF_CHAIN_NONCE, user, freeNonce2);
+        Lock[] memory commitments2 = new Lock[](1);
+        commitments2[0] = Lock({lockTag: lockTag, token: address(usdc), amount: halfAmount});
+        bytes memory signature2 = _createAttestationSignature(user, nonce2, expires, commitments2, signerPrivateKey);
+        allocator.authorizeAttestation(user, nonce2, expires, commitments2, signature2);
+
+        // Transfer full amount should succeed (half + half = full)
+        vm.prank(user);
+        compact.transfer(target, id, defaultAmount);
+
+        // Verify transfer succeeded
+        assertEq(compact.balanceOf(user, id), 0);
+        assertEq(compact.balanceOf(target, id), defaultAmount);
     }
 
     /// @notice Test that transfer fails when attestation amount is insufficient

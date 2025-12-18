@@ -3,7 +3,7 @@
 pragma solidity ^0.8.27;
 
 import {SafeTransferLib} from '@solady/utils/SafeTransferLib.sol';
-import {LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
+import {BATCH_COMPACT_TYPEHASH, LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
 import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 
@@ -19,6 +19,9 @@ import {ISignatureTransfer} from 'permit2/src/interfaces/ISignatureTransfer.sol'
 import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 
 /// @title HybridAllocator
+/// @author mgretzke (mgretzke.eth)
+/// @custom:coauthor 0age (0age.eth)
+/// @custom:coauthor ccashwell (ccashwell.eth)
 /// @notice Hybrid allocator for The Compact supporting both on-chain and off-chain allocation authorization mechanisms
 /// @dev Combines direct deposit functionality with signature-based off-chain authorization through multiple authorized signers
 /// @custom:security-contact security@uniswap.org
@@ -34,10 +37,6 @@ contract HybridAllocator is IHybridAllocator {
     ///      keccak256('HybridAllocationContext(bytes32 claimHash,Lock[] additionalCommitments)Lock(bytes12 lockTag,address token,uint256 amount)')
     bytes32 constant HYBRID_ALLOCATION_CONTEXT_TYPEHASH =
         0x3d88798eb330fca0ab1589827743878b2ccd0cdaa353080dffeb0d3e6fd7a639;
-
-    /// @dev The typehash for the HybridAttestation:
-    ///      keccak256('HybridAttestation(address sponsor,uint256 nonce,uint256 expires,Lock[] commitments)Lock(bytes12 lockTag,address token,uint256 amount)')
-    bytes32 constant HYBRID_ATTESTATION_TYPEHASH = 0x85026382d0d24de6e57b7ed908c072c32612034a2cadacd54e95239975408a7f;
 
     /// @dev The slot for the attestation in transient storage
     ///      bytes4(keccak256('ATTESTATION_SLOT_SEED'))
@@ -173,6 +172,8 @@ contract HybridAllocator is IHybridAllocator {
         // Verify the provided nonce
         AL.verifyNonce(nonce, AL.OFF_CHAIN_NONCE, sponsor);
 
+        address theCompact = AL.THE_COMPACT;
+
         bytes32 hybridAttestationHash;
         // Store the attestation in transient storage and create the hybrid attestation hash
         assembly ("memory-safe") {
@@ -210,12 +211,13 @@ contract HybridAllocator is IHybridAllocator {
             let commitmentsHash := keccak256(add(m, 0x80), mul(commitments.length, 0x20))
 
             // Create the hybrid attestation hash
-            mstore(m, HYBRID_ATTESTATION_TYPEHASH)
-            mstore(add(m, 0x20), sponsor)
-            mstore(add(m, 0x40), nonce)
-            mstore(add(m, 0x60), expires)
-            mstore(add(m, 0x80), commitmentsHash)
-            hybridAttestationHash := keccak256(m, 0xa0)
+            mstore(m, BATCH_COMPACT_TYPEHASH)
+            mstore(add(m, 0x20), theCompact)
+            mstore(add(m, 0x40), sponsor)
+            mstore(add(m, 0x60), nonce)
+            mstore(add(m, 0x80), expires)
+            mstore(add(m, 0xa0), commitmentsHash)
+            hybridAttestationHash := keccak256(m, 0xc0)
         }
 
         // Verify signature
