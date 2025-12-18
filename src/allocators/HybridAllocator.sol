@@ -190,10 +190,14 @@ contract HybridAllocator is IHybridAllocator {
                 mstore(0x20, or(lockTag, token)) // token id
                 let slot := keccak256(0x00, 0x40) // create the slot out of the attestation slot seed, sponsor and token id
 
-                // Store the amount authorized for transfer
-                /// @dev This will override a previous attestation for the same Lock.
-                ///      Make sure to design the commitment structure in a non repetitive way.
-                tstore(slot, amount)
+                // Load the currently available amount for this token and sponsor
+                let availableAmount := tload(slot)
+
+                // Add the amount to the currently available authorized amount. This allows to use multiple attestations for a single token transaction.
+                /// @dev This can overflow if the amounts an off chain signer is trying to allocate are more then uint256.max tokens.
+                ///      We skip a check on this, since this contracts trusts the off chain signer. Additionally, the worst case
+                ///      scenario is that a smaller amount then allocated for this purpose will be available.
+                tstore(slot, add(availableAmount, amount))
 
                 // Create the commitment hash
                 mstore(add(m, 0x20), lockTag)
