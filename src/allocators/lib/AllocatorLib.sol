@@ -549,9 +549,9 @@ library AllocatorLib {
     function getCommitmentsHash(Lock[] calldata commitments, bytes32 typehash)
         internal
         pure
-        returns (bytes32 commitmentsHash)
+        returns (bytes32 commitmentsHash, bytes32[] memory commitmentsHashes)
     {
-        bytes32[] memory commitmentsHashes = new bytes32[](commitments.length);
+        commitmentsHashes = new bytes32[](commitments.length);
 
         assembly ("memory-safe") {
             let memoryPointer := mload(0x40)
@@ -570,7 +570,7 @@ library AllocatorLib {
         }
     }
 
-    function getCommitmentsHash(Lock[] calldata commitments) internal pure returns (bytes32) {
+    function getCommitmentsHash(Lock[] calldata commitments) internal pure returns (bytes32, bytes32[] memory) {
         return getCommitmentsHash(commitments, LOCK_TYPEHASH);
     }
 

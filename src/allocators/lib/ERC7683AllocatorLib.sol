@@ -346,6 +346,8 @@ library ERC7683AllocatorLib {
 
         RecipientCallback calldata callback = recipientCallback[0];
 
+        (bytes32 commitmentsHash,) = AL.getCommitmentsHash(callback.compact.commitments, MANDATE_LOCK_TYPEHASH);
+
         return keccak256(
             abi.encodePacked(
                 keccak256(
@@ -357,7 +359,7 @@ library ERC7683AllocatorLib {
                             callback.compact.sponsor,
                             callback.compact.nonce,
                             callback.compact.expires,
-                            AL.getCommitmentsHash(callback.compact.commitments, MANDATE_LOCK_TYPEHASH),
+                            commitmentsHash,
                             callback.mandateHash,
                             MANDATE_BATCH_COMPACT_TYPEHASH
                         ),

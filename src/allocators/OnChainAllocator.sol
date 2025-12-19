@@ -20,6 +20,10 @@ import {Utility} from '@uniswap/the-compact/utility/Utility.sol';
 import {ISignatureTransfer} from 'permit2/src/interfaces/ISignatureTransfer.sol';
 
 /// @title OnChainAllocator
+/// @notice DISCLAIMER: This contract is a work in progress and is not audited. Use at your own risk.
+/// @author mgretzke (mgretzke.eth)
+/// @custom:coauthor 0age (0age.eth)
+/// @custom:coauthor ccashwell (ccashwell.eth)
 /// @notice Allocates tokens deposited into the compact.
 /// @dev The contract ensures tokens can not be double spent by a user in a fully decentralized manner.
 /// @dev Users can open orders for themselves or for others by providing a signature or the tokens directly.
@@ -522,7 +526,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         }
 
         nonce = _getAndUpdateNonce(address(0), sponsor); // address(0) as caller allows anyone to relay
-        bytes32 commitmentsHash = AL.getCommitmentsHash(commitments);
+        (bytes32 commitmentsHash,) = AL.getCommitmentsHash(commitments);
         claimHash = AL.getClaimHash(arbiter, sponsor, nonce, expires, commitmentsHash, witness, typehash);
 
         uint256 minResetPeriod = type(uint256).max;

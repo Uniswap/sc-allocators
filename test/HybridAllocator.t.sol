@@ -987,17 +987,18 @@ contract HybridAllocatorTest is Test, TestHelper {
         );
     }
 
-    function test_attest_revert_Unsupported() public {
+    function test_attest_revert_InvalidCaller() public {
         uint256 id = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
         address target = makeAddr('target');
 
-        assertEq(usdc.balanceOf(user), 10 ether); // setUp mints 10 ether
-
-        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.Unsupported.selector));
+        // attest should only be callable by TheCompact
+        vm.expectRevert(
+            abi.encodeWithSelector(IHybridAllocator.InvalidCaller.selector, address(this), address(compact))
+        );
         allocator.attest(signer, user, target, id, defaultAmount);
     }
 
-    function test_attest_revert_transferFailed() public {
+    function test_attest_revert_InsufficientAttestationAmount() public {
         uint256 id = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
         address target = makeAddr('target');
 
@@ -1006,7 +1007,11 @@ contract HybridAllocatorTest is Test, TestHelper {
         usdc.approve(address(compact), defaultAmount);
         compact.depositERC20(address(usdc), bytes12(bytes32(id)), defaultAmount, user);
 
-        vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.Unsupported.selector), address(allocator));
+        // Transfer without prior authorizeAttestation should fail with InsufficientAttestationAmount
+        vm.expectRevert(
+            abi.encodeWithSelector(IHybridAllocator.InsufficientAttestationAmount.selector, 0, defaultAmount),
+            address(allocator)
+        );
         compact.transfer(target, id, defaultAmount);
         vm.stopPrank();
     }
@@ -2743,5 +2748,329 @@ contract HybridAllocatorTest is Test, TestHelper {
 
         // Verify recipient has total balance
         assertEq(compact.balanceOf(recipient, id), existingBalance + newDeposit);
+    }
+
+    // ==================== Attestation Tests ====================
+
+    /// @dev Helper to create an attestation signature
+    function _createAttestationSignature(
+        address sponsor,
+        uint256 nonce,
+        uint256 expires,
+        Lock[] memory commitments,
+        uint256 signerPk
+    ) internal view returns (bytes memory) {
+        // Create commitment hashes
+        bytes32[] memory commitmentHashes = new bytes32[](commitments.length);
+        for (uint256 i = 0; i < commitments.length; i++) {
+            commitmentHashes[i] = keccak256(
+                abi.encode(LOCK_TYPEHASH, commitments[i].lockTag, commitments[i].token, commitments[i].amount)
+            );
+        }
+        bytes32 commitmentsHash = keccak256(abi.encodePacked(commitmentHashes));
+
+        // Create hybrid attestation hash
+        bytes32 hybridAttestationHash =
+            keccak256(abi.encode(BATCH_COMPACT_TYPEHASH, address(compact), sponsor, nonce, expires, commitmentsHash));
+
+        // Create digest with domain separator
+        bytes32 domainSeparator = compact.DOMAIN_SEPARATOR();
+        bytes32 digest = keccak256(abi.encodePacked(bytes2(0x1901), domainSeparator, hybridAttestationHash));
+
+        // Sign with compact signature
+        (bytes32 r, bytes32 vs) = vm.signCompact(signerPk, digest);
+        return abi.encodePacked(r, vs);
+    }
+
+    /// @notice Test successful authorizeAttestation
+    function test_authorizeAttestation_success() public {
+        bytes12 lockTag = _getLockTag();
+
+        // Create attestation parameters
+        uint88 freeNonce = 1;
+        uint256 nonce = _composeNonceUint(OFF_CHAIN_NONCE, user, freeNonce);
+        uint256 expires = block.timestamp + 1 hours;
+
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: defaultAmount});
+
+        // Create signature
+        bytes memory signature = _createAttestationSignature(user, nonce, expires, commitments, signerPrivateKey);
+
+        // Authorize attestation
+        bool authorized = allocator.authorizeAttestation(user, nonce, expires, commitments, signature);
+        assertTrue(authorized);
+    }
+
+    /// @notice Test authorizeAttestation reverts when expired
+    function test_authorizeAttestation_revert_AttestationExpired() public {
+        bytes12 lockTag = _getLockTag();
+
+        // Create attestation parameters with expired timestamp
+        uint88 freeNonce = 1;
+        uint256 nonce = _composeNonceUint(OFF_CHAIN_NONCE, user, freeNonce);
+        uint256 expires = block.timestamp; // Already expired (expires <= block.timestamp)
+
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: defaultAmount});
+
+        bytes memory signature = _createAttestationSignature(user, nonce, expires, commitments, signerPrivateKey);
+
+        vm.expectRevert(IHybridAllocator.AttestationExpired.selector);
+        allocator.authorizeAttestation(user, nonce, expires, commitments, signature);
+    }
+
+    /// @notice Test authorizeAttestation reverts with invalid signature
+    function test_authorizeAttestation_revert_InvalidSignature() public {
+        bytes12 lockTag = _getLockTag();
+
+        uint88 freeNonce = 1;
+        uint256 nonce = _composeNonceUint(OFF_CHAIN_NONCE, user, freeNonce);
+        uint256 expires = block.timestamp + 1 hours;
+
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: defaultAmount});
+
+        // Create signature with wrong key (userPrivateKey instead of signerPrivateKey)
+        bytes memory wrongSignature = _createAttestationSignature(user, nonce, expires, commitments, userPrivateKey);
+
+        vm.expectRevert(IHybridAllocator.InvalidSignature.selector);
+        allocator.authorizeAttestation(user, nonce, expires, commitments, wrongSignature);
+    }
+
+    /// @notice Test authorizeAttestation reverts with invalid nonce command
+    function test_authorizeAttestation_revert_InvalidNonceCommand() public {
+        bytes12 lockTag = _getLockTag();
+
+        // Use ON_CHAIN_NONCE instead of OFF_CHAIN_NONCE
+        uint88 freeNonce = 1;
+        uint256 nonce = _composeNonceUint(ON_CHAIN_NONCE, address(0), freeNonce);
+        uint256 expires = block.timestamp + 1 hours;
+
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: defaultAmount});
+
+        bytes memory signature = _createAttestationSignature(user, nonce, expires, commitments, signerPrivateKey);
+
+        vm.expectRevert(); // Will revert in verifyNonce
+        allocator.authorizeAttestation(user, nonce, expires, commitments, signature);
+    }
+
+    /// @notice Test authorizeAttestation reverts when nonce already consumed
+    function test_authorizeAttestation_revert_NonceAlreadyConsumed() public {
+        bytes12 lockTag = _getLockTag();
+
+        uint88 freeNonce = 1;
+        uint256 nonce = _composeNonceUint(OFF_CHAIN_NONCE, user, freeNonce);
+        uint256 expires = block.timestamp + 1 hours;
+
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: defaultAmount});
+
+        bytes memory signature = _createAttestationSignature(user, nonce, expires, commitments, signerPrivateKey);
+
+        // First authorization succeeds
+        allocator.authorizeAttestation(user, nonce, expires, commitments, signature);
+
+        // Second authorization with same nonce should fail
+        vm.expectRevert(); // Nonce already consumed by TheCompact
+        allocator.authorizeAttestation(user, nonce, expires, commitments, signature);
+    }
+
+    /// @notice Test full attestation flow: authorizeAttestation then transfer
+    /// forge-config: default.isolate = false
+    function test_transfer_success_withAttestation() public {
+        bytes12 lockTag = _getLockTag();
+        uint256 id = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
+        address target = makeAddr('target');
+
+        // Deposit tokens to user
+        vm.startPrank(user);
+        usdc.approve(address(compact), defaultAmount);
+        compact.depositERC20(address(usdc), lockTag, defaultAmount, user);
+        vm.stopPrank();
+
+        // Verify user has balance
+        assertEq(compact.balanceOf(user, id), defaultAmount);
+
+        // Create attestation parameters
+        uint88 freeNonce = 1;
+        uint256 nonce = _composeNonceUint(OFF_CHAIN_NONCE, user, freeNonce);
+        uint256 expires = block.timestamp + 1 hours;
+
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: defaultAmount});
+
+        // Create signature and authorize attestation
+        bytes memory signature = _createAttestationSignature(user, nonce, expires, commitments, signerPrivateKey);
+        allocator.authorizeAttestation(user, nonce, expires, commitments, signature);
+
+        // Now transfer should succeed
+        vm.prank(user);
+        compact.transfer(target, id, defaultAmount);
+
+        // Verify transfer succeeded
+        assertEq(compact.balanceOf(user, id), 0);
+        assertEq(compact.balanceOf(target, id), defaultAmount);
+    }
+
+    /// @notice Test partial attestation: authorize more than transferred
+    /// forge-config: default.isolate = false
+    function test_transfer_success_partialAttestation() public {
+        bytes12 lockTag = _getLockTag();
+        uint256 id = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
+        address target = makeAddr('target');
+
+        // Deposit tokens to user
+        vm.startPrank(user);
+        usdc.approve(address(compact), defaultAmount);
+        compact.depositERC20(address(usdc), lockTag, defaultAmount, user);
+        vm.stopPrank();
+
+        // Authorize full amount
+        uint88 freeNonce = 1;
+        uint256 nonce = _composeNonceUint(OFF_CHAIN_NONCE, user, freeNonce);
+        uint256 expires = block.timestamp + 1 hours;
+
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: defaultAmount});
+
+        bytes memory signature = _createAttestationSignature(user, nonce, expires, commitments, signerPrivateKey);
+        allocator.authorizeAttestation(user, nonce, expires, commitments, signature);
+
+        // Transfer only half
+        uint256 halfAmount = defaultAmount / 2;
+        vm.prank(user);
+        compact.transfer(target, id, halfAmount);
+
+        // Verify partial transfer
+        assertEq(compact.balanceOf(user, id), defaultAmount - halfAmount);
+        assertEq(compact.balanceOf(target, id), halfAmount);
+
+        // Transfer remaining should also work (within same transaction for transient storage)
+        vm.prank(user);
+        compact.transfer(target, id, halfAmount);
+
+        assertEq(compact.balanceOf(user, id), 0);
+        assertEq(compact.balanceOf(target, id), defaultAmount);
+    }
+
+    /// @notice Test attestation with multiple commitments
+    /// forge-config: default.isolate = false
+    function test_authorizeAttestation_multipleCommitments() public {
+        // Both tokens use the same lockTag (same allocator, scope, resetPeriod)
+        bytes12 lockTag = _getLockTag();
+        uint256 usdcId = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
+        uint256 daiId = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(dai));
+        address target = makeAddr('target');
+
+        // Deposit both tokens (using the same lockTag for both)
+        vm.startPrank(user);
+        usdc.approve(address(compact), defaultAmount);
+        dai.approve(address(compact), defaultAmount);
+        compact.depositERC20(address(usdc), lockTag, defaultAmount, user);
+        compact.depositERC20(address(dai), lockTag, defaultAmount, user);
+        vm.stopPrank();
+
+        // Create attestation for both tokens
+        uint88 freeNonce = 1;
+        uint256 nonce = _composeNonceUint(OFF_CHAIN_NONCE, user, freeNonce);
+        uint256 expires = block.timestamp + 1 hours;
+
+        Lock[] memory commitments = new Lock[](2);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: defaultAmount});
+        commitments[1] = Lock({lockTag: lockTag, token: address(dai), amount: defaultAmount});
+
+        bytes memory signature = _createAttestationSignature(user, nonce, expires, commitments, signerPrivateKey);
+        allocator.authorizeAttestation(user, nonce, expires, commitments, signature);
+
+        // Transfer both tokens
+        vm.startPrank(user);
+        compact.transfer(target, usdcId, defaultAmount);
+        compact.transfer(target, daiId, defaultAmount);
+        vm.stopPrank();
+
+        // Verify both transfers
+        assertEq(compact.balanceOf(user, usdcId), 0);
+        assertEq(compact.balanceOf(user, daiId), 0);
+        assertEq(compact.balanceOf(target, usdcId), defaultAmount);
+        assertEq(compact.balanceOf(target, daiId), defaultAmount);
+    }
+
+    /// @notice Test that multiple attestations for the same token accumulate (additive behavior)
+    /// forge-config: default.isolate = false
+    function test_authorizeAttestation_additiveAmounts() public {
+        bytes12 lockTag = _getLockTag();
+        uint256 id = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
+        address target = makeAddr('target');
+
+        // Deposit tokens to user
+        vm.startPrank(user);
+        usdc.approve(address(compact), defaultAmount);
+        compact.depositERC20(address(usdc), lockTag, defaultAmount, user);
+        vm.stopPrank();
+
+        uint256 halfAmount = defaultAmount / 2;
+        uint256 expires = block.timestamp + 1 hours;
+
+        // First attestation: authorize half amount
+        uint88 freeNonce1 = 1;
+        uint256 nonce1 = _composeNonceUint(OFF_CHAIN_NONCE, user, freeNonce1);
+        Lock[] memory commitments1 = new Lock[](1);
+        commitments1[0] = Lock({lockTag: lockTag, token: address(usdc), amount: halfAmount});
+        bytes memory signature1 = _createAttestationSignature(user, nonce1, expires, commitments1, signerPrivateKey);
+        allocator.authorizeAttestation(user, nonce1, expires, commitments1, signature1);
+
+        // Second attestation: authorize another half amount (different nonce)
+        uint88 freeNonce2 = 2;
+        uint256 nonce2 = _composeNonceUint(OFF_CHAIN_NONCE, user, freeNonce2);
+        Lock[] memory commitments2 = new Lock[](1);
+        commitments2[0] = Lock({lockTag: lockTag, token: address(usdc), amount: halfAmount});
+        bytes memory signature2 = _createAttestationSignature(user, nonce2, expires, commitments2, signerPrivateKey);
+        allocator.authorizeAttestation(user, nonce2, expires, commitments2, signature2);
+
+        // Transfer full amount should succeed (half + half = full)
+        vm.prank(user);
+        compact.transfer(target, id, defaultAmount);
+
+        // Verify transfer succeeded
+        assertEq(compact.balanceOf(user, id), 0);
+        assertEq(compact.balanceOf(target, id), defaultAmount);
+    }
+
+    /// @notice Test that transfer fails when attestation amount is insufficient
+    /// forge-config: default.isolate = false
+    function test_transfer_revert_InsufficientAttestationAmount() public {
+        bytes12 lockTag = _getLockTag();
+        uint256 id = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(usdc));
+        address target = makeAddr('target');
+
+        // Deposit tokens to user
+        vm.startPrank(user);
+        usdc.approve(address(compact), defaultAmount);
+        compact.depositERC20(address(usdc), lockTag, defaultAmount, user);
+        vm.stopPrank();
+
+        // Authorize only half amount
+        uint256 reducedAmount = defaultAmount - 1;
+        uint88 freeNonce = 1;
+        uint256 nonce = _composeNonceUint(OFF_CHAIN_NONCE, user, freeNonce);
+        uint256 expires = block.timestamp + 1 hours;
+
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: reducedAmount});
+
+        bytes memory signature = _createAttestationSignature(user, nonce, expires, commitments, signerPrivateKey);
+        allocator.authorizeAttestation(user, nonce, expires, commitments, signature);
+
+        // Try to transfer full amount should fail
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IHybridAllocator.InsufficientAttestationAmount.selector, reducedAmount, defaultAmount
+            ),
+            address(allocator)
+        );
+        compact.transfer(target, id, defaultAmount);
     }
 }
