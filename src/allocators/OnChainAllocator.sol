@@ -20,6 +20,7 @@ import {Utility} from '@uniswap/the-compact/utility/Utility.sol';
 import {ISignatureTransfer} from 'permit2/src/interfaces/ISignatureTransfer.sol';
 
 /// @title OnChainAllocator
+/// @notice DISCLAIMER: This contract is a work in progress and is not audited. Use at your own risk.
 /// @author mgretzke (mgretzke.eth)
 /// @custom:coauthor 0age (0age.eth)
 /// @custom:coauthor ccashwell (ccashwell.eth)
