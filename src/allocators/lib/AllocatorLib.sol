@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {ERC6909} from '@solady/tokens/ERC6909.sol';
-
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
@@ -15,7 +13,7 @@ library AllocatorLib {
 
     /// @notice Function selector for the prepareAllocation function, used as part of transient storage key derivation
     /// @dev bytes4(keccak256('prepareAllocation(address,uint256[2][],address,uint256,bytes32,bytes32,bytes)'))
-    bytes4 public constant PREPARE_ALLOCATION_SELECTOR = 0x7ef6597a;
+    bytes4 private constant PREPARE_ALLOCATION_SELECTOR = 0x7ef6597a;
 
     /// @notice Function selector for the exttload function that gets called on the compact
     /// @dev bytes4(keccak256('exttload(bytes32)'))
@@ -172,16 +170,14 @@ library AllocatorLib {
                 // Store the offset for the commitment in the Lock array
                 mstore(commitmentOffset, commitmentContent) // lockTag
                 // Store the actual Lock struct
-                mstore(add(commitmentContent, 0x00), id) // lockTag
+                mstore(commitmentContent, id) // lockTag
                 mstore(add(commitmentContent, 0x20), id) // token
                 mstore(add(commitmentContent, 0x0c), 0x00) // empty word to separate lockTag and token
                 mstore(add(commitmentContent, 0x40), diffBalance) // amount
 
                 // Create the commitment hash
-                mstore(add(freeSlots, 0x20), id) // lockTag
-                mstore(add(freeSlots, 0x40), id) // token
-                mstore(add(freeSlots, 0x2c), 0) // empty word to separate lockTag and token
-                mstore(add(freeSlots, 0x60), diffBalance) // amount
+                mcopy(add(freeSlots, 0x20), commitmentContent, 0x60) // Copy lockTag, token and amount to free slots
+
                 mstore(add(add(commitmentHashes, 0x20 /* skip length */ ), mul(i, 0x20)), keccak256(freeSlots, 0x80))
             }
 

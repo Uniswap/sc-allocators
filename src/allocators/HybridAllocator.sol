@@ -25,7 +25,7 @@ contract HybridAllocator is IHybridAllocator {
     event SignerRemoved(address signer);
     event SignerReplacementProposed(address oldSigner, address newSigner);
     event SignerReplaced(address oldSigner, address newSigner);
-    event AllocatorInitialized(address compact, address initialSigner, uint96 allocatorId);
+    event AllocatorInitialized(address initialSigner, uint96 allocatorId);
 
     /// @notice The unique identifier for this allocator within The Compact protocol
     uint96 public immutable ALLOCATOR_ID;
@@ -85,7 +85,7 @@ contract HybridAllocator is IHybridAllocator {
         signers[signer_] = true;
         signerCount++;
 
-        emit AllocatorInitialized(AL.THE_COMPACT, signer_, ALLOCATOR_ID);
+        emit AllocatorInitialized(signer_, ALLOCATOR_ID);
         emit SignerAdded(signer_);
     }
 
