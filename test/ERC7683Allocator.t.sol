@@ -38,6 +38,7 @@ import {IERC7683Allocator} from 'src/interfaces/IERC7683Allocator.sol';
 import {IOnChainAllocator} from 'src/interfaces/IOnChainAllocator.sol';
 
 import {ERC20Mock} from 'src/test/ERC20Mock.sol';
+import {DeployTheCompact} from 'test/util/DeployTheCompact.sol';
 
 import {
     CompactData,
@@ -50,8 +51,10 @@ contract MockAllocator is GaslessCrossChainOrderData, OnChainCrossChainOrderData
     ERC7683Allocator erc7683Allocator;
 
     function setUp() public virtual override(GaslessCrossChainOrderData, OnChainCrossChainOrderData) {
-        TheCompact compactContract_ = new TheCompact();
-        erc7683Allocator = new ERC7683Allocator(address(compactContract_));
+        TheCompact compactContract_ = DeployTheCompact(new DeployTheCompact()).deployTheCompact();
+        assertEq(address(compactContract_), address(0x00000000000000171ede64904551eeDF3C6C9788));
+
+        erc7683Allocator = new ERC7683Allocator();
         _setUp(address(erc7683Allocator), compactContract_, _composeNonceUint(user, 1));
         super.setUp();
     }

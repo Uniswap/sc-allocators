@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {ERC6909} from '@solady/tokens/ERC6909.sol';
-
 import {ITheCompact} from '@uniswap/the-compact/interfaces/ITheCompact.sol';
 import {LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 
@@ -11,17 +9,26 @@ import {LOCK_TYPEHASH, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 /// @dev Implements prepare-execute pattern for ensuring token balance changes match expected allocations
 /// @custom:security-contact security@uniswap.org
 library AllocatorLib {
+    address internal constant THE_COMPACT = 0x00000000000000171ede64904551eeDF3C6C9788;
+
     /// @notice Function selector for the prepareAllocation function, used as part of transient storage key derivation
     /// @dev bytes4(keccak256('prepareAllocation(address,uint256[2][],address,uint256,bytes32,bytes32,bytes)'))
-    bytes4 public constant PREPARE_ALLOCATION_SELECTOR = 0x7ef6597a;
+    bytes4 private constant PREPARE_ALLOCATION_SELECTOR = 0x7ef6597a;
+
+    /// @notice Function selector for the exttload function that gets called on the compact
+    /// @dev bytes4(keccak256('exttload(bytes32)'))
+    uint256 private constant EXTTLOAD_SELECTOR = 0xf135baaa;
+
+    /// @notice Transient storage slot for the reentrancy guard within the compact
+    uint256 private constant REENTRANCY_GUARD_SLOT = 0x929eee149b4bd21268;
 
     error InvalidBalanceChange(uint256 newBalance, uint256 oldBalance);
     error InvalidPreparation();
     error InvalidAllocatorId(uint96 providedId, uint96 allocatorId);
     error InvalidRegistration(address recipient, bytes32 claimHash, bytes32 typehash);
+    error CompactReentrancyGuardActive();
 
     function prepareAllocation(
-        address compactContract,
         uint256 nonce,
         address recipient,
         uint256[2][] calldata idsAndAmounts,
@@ -31,6 +38,9 @@ library AllocatorLib {
         bytes32 witness,
         uint96 allocatorId
     ) internal {
+        // Before preparing the allocation, check if the compact's reentrancy guard is active
+        checkCompactReentrancyGuardAndRevert();
+
         assembly ("memory-safe") {
             // identifier = keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));
             let memoryPointer := mload(0x40)
@@ -64,7 +74,7 @@ library AllocatorLib {
                         mload(0x20),
                         and( // The arguments of `and` are evaluated from right to left.
                             gt(returndatasize(), 0x1f), // At least 32 bytes returned.
-                            staticcall(gas(), compactContract, 0x10, 0x44, 0x20, 0x20)
+                            staticcall(gas(), THE_COMPACT, 0x10, 0x44, 0x20, 0x20)
                         )
                     )
                 mstore(0x00, PREPARE_ALLOCATION_SELECTOR)
@@ -88,7 +98,6 @@ library AllocatorLib {
     }
 
     function executeAllocation(
-        address compactContract,
         uint256 nonce,
         address recipient,
         uint256[2][] calldata idsAndAmounts,
@@ -101,6 +110,9 @@ library AllocatorLib {
         Lock[] memory commitments = new Lock[](idsAndAmounts.length);
         bytes32 commitmentsHash;
         uint256 storedNonce;
+
+        // Before executing the allocation, check if the compact's reentrancy guard is active
+        checkCompactReentrancyGuardAndRevert();
 
         assembly ("memory-safe") {
             // identifier = keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));
@@ -132,7 +144,7 @@ library AllocatorLib {
                         mload(0x20),
                         and( // The arguments of `and` are evaluated from right to left.
                             gt(returndatasize(), 0x1f), // At least 32 bytes returned.
-                            staticcall(gas(), compactContract, 0x10, 0x44, 0x20, 0x20)
+                            staticcall(gas(), THE_COMPACT, 0x10, 0x44, 0x20, 0x20)
                         )
                     )
                 mstore(0x00, PREPARE_ALLOCATION_SELECTOR)
@@ -158,16 +170,14 @@ library AllocatorLib {
                 // Store the offset for the commitment in the Lock array
                 mstore(commitmentOffset, commitmentContent) // lockTag
                 // Store the actual Lock struct
-                mstore(add(commitmentContent, 0x00), id) // lockTag
+                mstore(commitmentContent, id) // lockTag
                 mstore(add(commitmentContent, 0x20), id) // token
                 mstore(add(commitmentContent, 0x0c), 0x00) // empty word to separate lockTag and token
                 mstore(add(commitmentContent, 0x40), diffBalance) // amount
 
                 // Create the commitment hash
-                mstore(add(freeSlots, 0x20), id) // lockTag
-                mstore(add(freeSlots, 0x40), id) // token
-                mstore(add(freeSlots, 0x2c), 0) // empty word to separate lockTag and token
-                mstore(add(freeSlots, 0x60), diffBalance) // amount
+                mcopy(add(freeSlots, 0x20), commitmentContent, 0x60) // Copy lockTag, token and amount to free slots
+
                 mstore(add(add(commitmentHashes, 0x20 /* skip length */ ), mul(i, 0x20)), keccak256(freeSlots, 0x80))
             }
 
@@ -190,10 +200,36 @@ library AllocatorLib {
 
         // Check for a valid registration with the actual data
         claimHash = getClaimHash(arbiter, recipient, storedNonce, expires, commitmentsHash, witness, typehash);
-        if (!ITheCompact(compactContract).isRegistered(recipient, claimHash, typehash)) {
+        if (!ITheCompact(THE_COMPACT).isRegistered(recipient, claimHash, typehash)) {
             revert InvalidRegistration(recipient, claimHash, typehash);
         }
         return (claimHash, commitments);
+    }
+
+    function checkCompactReentrancyGuardAndRevert() internal view {
+        assembly ("memory-safe") {
+            mstore(0x00, EXTTLOAD_SELECTOR)
+            mstore(0x20, REENTRANCY_GUARD_SLOT)
+            if gt(
+                or( // The arguments of `or` are evaluated from right to left.
+                    mload(0x20),
+                    mul(
+                        2, // will end up as zero if the call is successful, else the 2 will trigger the revert.
+                        iszero(
+                            and(
+                                gt(returndatasize(), 0x1f), // At least 32 bytes returned.
+                                staticcall(gas(), THE_COMPACT, 0x1c, 0x24, 0x20, 0x20)
+                            )
+                        )
+                    )
+                ),
+                1 // A failing call or a successful call with a value of 1 will trigger the revert.
+            ) {
+                // revert CompactReentrancyGuardActive()
+                mstore(0, 0x87621186)
+                revert(0x1c, 0x04)
+            }
+        }
     }
 
     function getCommitmentsHash(Lock[] calldata commitments, bytes32 typehash)

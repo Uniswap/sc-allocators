@@ -46,6 +46,8 @@ import {
     OnChainCrossChainOrderData
 } from 'test/util/ERC7683TestHelper.sol';
 
+import {DeployTheCompact} from 'test/util/DeployTheCompact.sol';
+
 contract MockAllocator is GaslessCrossChainOrderData, OnChainCrossChainOrderData {
     HybridERC7683 hybridERC7683Allocator;
     address signer;
@@ -53,8 +55,10 @@ contract MockAllocator is GaslessCrossChainOrderData, OnChainCrossChainOrderData
 
     function setUp() public virtual override(GaslessCrossChainOrderData, OnChainCrossChainOrderData) {
         (signer, signerPK) = makeAddrAndKey('signer');
-        TheCompact compactContract_ = new TheCompact();
-        hybridERC7683Allocator = new HybridERC7683(address(compactContract_), signer);
+        TheCompact compactContract_ = DeployTheCompact(new DeployTheCompact()).deployTheCompact();
+        assertEq(address(compactContract_), address(0x00000000000000171ede64904551eeDF3C6C9788));
+
+        hybridERC7683Allocator = new HybridERC7683(signer);
         _setUp(address(hybridERC7683Allocator), compactContract_, 1 /* defaultNonce */ );
         super.setUp();
     }

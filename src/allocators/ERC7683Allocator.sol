@@ -5,6 +5,7 @@ pragma solidity ^0.8.27;
 import {IOriginSettler} from '../interfaces/ERC7683/IOriginSettler.sol';
 import {IERC7683Allocator} from '../interfaces/IERC7683Allocator.sol';
 import {OnChainAllocator} from './OnChainAllocator.sol';
+import {AllocatorLib as AL} from './lib/AllocatorLib.sol';
 import {ERC7683AllocatorLib as ERC7683AL} from './lib/ERC7683AllocatorLib.sol';
 
 import {Tribunal} from '@uniswap/tribunal/Tribunal.sol';
@@ -30,8 +31,6 @@ import {BatchCompact, Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 /// @dev Users can open orders for themselves or for others by providing a signature or the tokens directly.
 /// @custom:security-contact security@uniswap.org
 contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
-    constructor(address compact) OnChainAllocator(compact) {}
-
     /// @inheritdoc IOriginSettler
     function openFor(GaslessCrossChainOrder calldata order, bytes calldata sponsorSignature, bytes calldata) external {
         (
@@ -92,7 +91,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
             allocate(orderData.commitments, orderData.arbiter, expires, COMPACT_TYPEHASH_WITH_MANDATE, mandateHash);
 
         // Ensure a registration exists before opening the order
-        if (!ITheCompact(COMPACT_CONTRACT).isRegistered(msg.sender, claimHash, COMPACT_TYPEHASH_WITH_MANDATE)) {
+        if (!ITheCompact(AL.THE_COMPACT).isRegistered(msg.sender, claimHash, COMPACT_TYPEHASH_WITH_MANDATE)) {
             revert InvalidRegistration(msg.sender, claimHash);
         }
 

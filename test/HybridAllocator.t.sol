@@ -20,10 +20,11 @@ import {BATCH_COMPACT_WITNESS_TYPEHASH} from 'src/allocators/lib/TypeHashes.sol'
 import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 import {ERC20Mock} from 'src/test/ERC20Mock.sol';
 import {OnChainAllocationCaller} from 'src/test/OnChainAllocationCaller.sol';
+import {DeployTheCompact} from 'test/util/DeployTheCompact.sol';
 
 contract HybridAllocatorFactory {
-    function deploy(bytes32 salt, address compact, address signer) external returns (address) {
-        return address(new HybridAllocator{salt: salt}(compact, signer));
+    function deploy(bytes32 salt, address signer) external returns (address) {
+        return address(new HybridAllocator{salt: salt}(signer));
     }
 }
 
@@ -44,10 +45,12 @@ contract HybridAllocatorTest is Test, TestHelper {
     BatchCompact batchCompact;
 
     function setUp() public {
-        compact = new TheCompact();
+        compact = DeployTheCompact(new DeployTheCompact()).deployTheCompact();
+        assertEq(address(compact), address(0x00000000000000171ede64904551eeDF3C6C9788));
+
         arbiter = makeAddr('arbiter');
         (signer, signerPrivateKey) = makeAddrAndKey('signer');
-        allocator = new HybridAllocator(address(compact), signer);
+        allocator = new HybridAllocator(signer);
         usdc = new ERC20Mock('USDC', 'USDC');
         (user, userPrivateKey) = makeAddrAndKey('user');
         deal(user, 1 ether);
@@ -83,7 +86,7 @@ contract HybridAllocatorTest is Test, TestHelper {
 
     function test_constructor_revert_signerIsAddressZero() public {
         vm.expectRevert(abi.encodeWithSelector(IHybridAllocator.InvalidSigner.selector));
-        new HybridAllocator(address(compact), address(0));
+        new HybridAllocator(address(0));
     }
 
     function test_checkAllocatorId() public view {
@@ -1254,8 +1257,8 @@ contract HybridAllocatorTest is Test, TestHelper {
         HybridAllocatorFactory factory = new HybridAllocatorFactory();
 
         bytes32 salt = keccak256('hybrid-allocator-pre-registered');
-        bytes memory initCode =
-            abi.encodePacked(type(HybridAllocator).creationCode, abi.encode(address(compact), signer));
+        // initCode must match what the factory deploys: creationCode + abi.encode(signer)
+        bytes memory initCode = abi.encodePacked(type(HybridAllocator).creationCode, abi.encode(signer));
         bytes32 initCodeHash = keccak256(initCode);
 
         address expected =
@@ -1266,7 +1269,7 @@ contract HybridAllocatorTest is Test, TestHelper {
         uint96 preId = compact.__registerAllocator(expected, proof);
         assertEq(_toAllocatorId(expected), preId);
 
-        address deployed = HybridAllocatorFactory(address(factory)).deploy(salt, address(compact), signer);
+        address deployed = HybridAllocatorFactory(address(factory)).deploy(salt, signer);
         assertEq(deployed, expected);
 
         HybridAllocator newAllocator = HybridAllocator(deployed);

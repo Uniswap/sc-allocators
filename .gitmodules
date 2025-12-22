@@ -16,7 +16,7 @@
 [submodule "lib/the-compact"]
 	path = lib/the-compact
 	url = https://github.com/Uniswap/the-compact
-	branch = v1
+	branch = utility-lib
 [submodule "lib/tribunal"]
 	path = lib/tribunal
 	url = https://github.com/Uniswap/tribunal
