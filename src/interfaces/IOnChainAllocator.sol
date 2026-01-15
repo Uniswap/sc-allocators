@@ -44,6 +44,9 @@ interface IOnChainAllocator is IOnChainAllocation {
     /// @notice Thrown if the provided commitments are empty
     error InvalidCommitments();
 
+    /// @notice Thrown if the provided allocatorData is invalid
+    error InvalidHint(uint256 allocatorDataLength, uint256 expectedAllocatorDataLength);
+
     /// @notice Registers an allocation for a set of tokens
     /// @param commitments The commitments of the allocations
     /// @param arbiter The arbiter of the allocation

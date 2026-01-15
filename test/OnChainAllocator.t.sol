@@ -887,6 +887,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         // call from Compact contract address
         vm.prank(address(compact));
         bytes4 sel = allocator.authorizeClaim(claimHash, arbiter, user, 1, defaultExpiration, idsAndAmounts, '');
+        vm.snapshotGasLastCall('authorizeClaim_success_single_allocation');
         assertEq(sel, IAllocator.authorizeClaim.selector);
 
         // check deletion of the allocation

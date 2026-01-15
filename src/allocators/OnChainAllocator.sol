@@ -32,6 +32,16 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
 
     mapping(bytes32 tokenHash => Allocation[] allocations) internal _allocations;
 
+    struct BalanceExpiration {
+        uint32 nextExpiration;
+        uint224 amount;
+    }
+
+    mapping(bytes32 tokenHash => uint32 nextExpiration) internal _nextExpirationPointer;
+    /// @notice Similar to mapping(bytes32 tokenHash => mapping(uint32 expiration => BalanceExpiration balances)).
+    mapping(bytes32 TokenHashWithExpiration => BalanceExpiration balances) internal _balancesByExpiration;
+    mapping(bytes32 claimHash => uint32 normalizedExpiration) internal _allocatedClaims;
+
     /// @notice Mapping of user addresses to their current nonce for replay protection.
     /// @dev The actual nonce will be a combination of the next free nonce and the user address.
     mapping(address user => uint96 nonce) public nonces;
@@ -228,6 +238,8 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         uint32 expires,
         bytes32 claimHash
     ) private returns (Lock[] memory) {
+        // External allocation requires to normalize the expiration time
+        expires = _normalizeExpiration(expires);
         // Store the allocation
         for (uint256 i = 0; i < registeredAmounts.length; i++) {
             // Update the allocations with the actual registered amounts
@@ -235,8 +247,11 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
             commitments[i].amount = amount;
 
             // Store the allocation
-            _storeAllocation(commitments[i].lockTag, commitments[i].token, amount, recipient, expires, claimHash);
+            _storeAllocatedBalance(commitments[i].lockTag, commitments[i].token, recipient, amount, expires);
         }
+
+        // Store the claim
+        _storeClaim(claimHash, expires);
 
         return commitments;
     }
@@ -296,6 +311,9 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         (bytes32 claimHash, Lock[] memory commitments) =
             AL.executeAllocation(nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
 
+        // External allocation requires to normalize the expiration time
+        expires = _normalizeExpiration(expires);
+
         // Allocate the claim
         for (uint256 i = 0; i < commitments.length; i++) {
             // Check the amount fits in the supported range
@@ -303,15 +321,13 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
                 revert InvalidAmount(commitments[i].amount);
             }
 
-            _storeAllocation(
-                commitments[i].lockTag,
-                commitments[i].token,
-                uint224(commitments[i].amount),
-                recipient,
-                expires,
-                claimHash
+            // Store the allocation
+            _storeAllocatedBalance(
+                commitments[i].lockTag, commitments[i].token, recipient, uint224(commitments[i].amount), expires
             );
         }
+        // Store the claim
+        _storeClaim(claimHash, expires);
 
         return (claimHash, commitments);
     }
@@ -325,7 +341,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
 
         // Check unlocked balance
         bytes32 tokenHash = _getTokenHash(id_, from_);
-        uint256 allocatedBalance = _allocatedBalance(tokenHash);
+        (uint256 allocatedBalance,,) = _readAllocatedBalance(tokenHash, type(uint32).max, false);
         uint256 fullAmount = amount_ + allocatedBalance;
 
         if (balance < fullAmount) {
@@ -343,18 +359,34 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         uint256, /*nonce*/ // A parameter to enforce replay protection, scoped to allocator.
         uint256, /*expires*/ // The time at which the claim expires.
         uint256[2][] calldata idsAndAmounts, // The allocated token IDs and amounts.
-        bytes calldata /*allocatorData*/ // Arbitrary data provided by the arbiter.
+        bytes calldata allocatorData // Arbitrary data provided by the arbiter.
     ) external virtual onlyCompact returns (bytes4) {
+        // TODO: Allow allocatorData to be used to submit the previous expiration pointer
+        (bool verified, uint32 normalizedExpiration) = _verifyClaim(claimHash);
+        if (!verified) {
+            revert InvalidClaim(claimHash);
+        }
+
+        // Delete the claim
+        delete _allocatedClaims[claimHash];
+
+        // If allocatorData is provided, ensure the length matches the expectation
+        if (allocatorData.length != 0 && allocatorData.length != 32 * idsAndAmounts.length) {
+            revert InvalidHint(allocatorData.length, 32 * idsAndAmounts.length);
+        }
+
+        // Delete the allocations
         for (uint256 i = 0; i < idsAndAmounts.length; i++) {
             bytes32 tokenHash = _getTokenHash(idsAndAmounts[i][0], sponsor);
 
-            if (_verifyClaim(tokenHash, claimHash)) {
-                // Continue even if the claim is already verified to delete the other allocations.
-                continue;
+            uint32 hint = 0;
+            if (allocatorData.length != 0) {
+                assembly ("memory-safe") {
+                    hint := shr(224, calldataload(add(allocatorData.offset, mul(i, 4 /* uint32 */ ))))
+                }
             }
-
-            // claim could not be verified
-            revert InvalidClaim(claimHash);
+            // The amount is at this point verified to be within the range of uint224.max
+            _deleteAllocatedBalance(tokenHash, normalizedExpiration, uint224(idsAndAmounts[i][1]), hint);
         }
 
         return this.authorizeClaim.selector;
@@ -364,7 +396,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
     function isClaimAuthorized(
         bytes32 claimHash,
         address, /*arbiter*/ // The account tasked with verifying and submitting the claim.
-        address sponsor, // The account sponsoring the claim.
+        address, /*sponsor*/ // The account sponsoring the claim.
         uint256, /*nonce*/ // A parameter to enforce replay protection, scoped to allocator.
         uint256 expires, // The time at which the claim expires.
         uint256[2][] calldata idsAndAmounts, // The allocated token IDs and amounts.
@@ -378,15 +410,9 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         if (idsAndAmounts.length == 0) {
             return false;
         }
-        bytes32 tokenHash = _getTokenHash(idsAndAmounts[0][0], sponsor);
-        Allocation[] memory allocations = _allocations[tokenHash];
-        for (uint256 j = 0; j < allocations.length; j++) {
-            if (allocations[j].claimHash == claimHash) {
-                return true;
-            }
-        }
+        (bool verified,) = _verifyClaim(claimHash);
 
-        return false;
+        return verified;
     }
 
     function _allocate(
@@ -411,16 +437,20 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         uint256 minResetPeriod = type(uint256).max;
         for (uint256 i = 0; i < commitments.length; i++) {
             minResetPeriod = _checkInput(commitments[i], sponsor, expires, minResetPeriod);
-            bytes32 tokenHash = _checkBalance(sponsor, commitments[i]);
+            (bytes32 tokenHash, uint32 previousExpirationPointer, uint32 nextExpirationPointer) =
+                _checkBalance(sponsor, commitments[i], expires);
 
             // Store the allocation
             uint224 amount = uint224(commitments[i].amount);
-            _storeAllocation(tokenHash, amount, expires, claimHash);
+            _storeAllocatedBalance(tokenHash, amount, expires, previousExpirationPointer, nextExpirationPointer);
         }
         // Ensure expiration is not bigger then the smallest reset period
         if (expires >= block.timestamp + minResetPeriod) {
             revert InvalidExpiration(expires, block.timestamp + minResetPeriod);
         }
+
+        // Store the claim
+        _storeClaim(claimHash, expires);
 
         return (claimHash, nonce);
     }
@@ -457,11 +487,16 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         return minResetPeriod;
     }
 
-    function _checkBalance(address sponsor, Lock calldata commitment) private returns (bytes32 tokenHash) {
+    function _checkBalance(address sponsor, Lock calldata commitment, uint32 expires)
+        private
+        returns (bytes32 tokenHash, uint32 previousExpirationPointer, uint32 nextExpirationPointer)
+    {
         // Check the balance of the recipient is sufficient
         tokenHash = _getTokenHash(commitment.lockTag, commitment.token, sponsor);
         uint256 balance = settledBalanceOf(sponsor, AL.toId(commitment.lockTag, commitment.token));
-        uint256 allocatedBalance = _allocatedBalance(tokenHash);
+        uint256 allocatedBalance;
+        (allocatedBalance, previousExpirationPointer, nextExpirationPointer) =
+            _readAllocatedBalance(tokenHash, expires, false);
         uint256 requiredBalance = allocatedBalance + commitment.amount;
         if (requiredBalance > balance) {
             revert InsufficientBalance(
@@ -470,23 +505,201 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         }
     }
 
-    function _storeAllocation(
+    function _normalizeExpiration(uint32 expires) private view returns (uint32 normalizedExpires) {
+        uint256 timeRemaining = expires - block.timestamp;
+        if (timeRemaining < 10 minutes) {
+            // No rounding - max size of 600 unique expirations
+            normalizedExpires = expires;
+        } else if (timeRemaining < 1 hours + 5 minutes) {
+            // total of 55 minutes
+            // Round up to the nearest 10 seconds - max size of 330 unique expirations
+            normalizedExpires = (expires / 10 seconds) * 10 seconds + 10 seconds;
+        } else if (timeRemaining < 1 days) {
+            // total of 1,375 minutes
+            // Round up to the nearest minute - max size of 1375 unique expirations
+            normalizedExpires = (expires / 1 minutes) * 1 minutes + 1 minutes;
+        } else if (timeRemaining < 1 weeks + 1 hours) {
+            // total of 8,700 minutes
+            // Round up to the nearest 10 minutes - max size of 870 unique expirations
+            normalizedExpires = (expires / 10 minutes) * 10 minutes + 10 minutes;
+        } else {
+            // < 30 days - total of 33,060 minutes
+            // Round up to the nearest hour - max size of 551 unique expirations
+            normalizedExpires = (expires / 1 hours) * 1 hours + 1 hours;
+        }
+        // Total max of 3,726 unique expirations => 7,824,600 max gas costs for cold storage reads
+    }
+
+    function _storeClaim(bytes32 claimHash, uint32 normalizedExpiration) private {
+        uint256 currentExpiration = _allocatedClaims[claimHash];
+        if (currentExpiration > 0) {
+            revert InvalidClaim(claimHash);
+        }
+        _allocatedClaims[claimHash] = normalizedExpiration;
+    }
+
+    function _readAllocatedBalance(bytes32 tokenHash, uint32 normalizedExpiration, bool onlyReturnPointers)
+        private
+        returns (uint256 allocatedBalance, uint32 previousExpirationPointer, uint32 nextExpirationPointer)
+    {
+        uint32 nextExpiration = _nextExpirationPointer[tokenHash];
+        if (nextExpiration == 0) {
+            // No allocated balance detected
+            allocatedBalance = 0;
+            previousExpirationPointer = 0;
+            nextExpirationPointer = type(uint32).max;
+            return (allocatedBalance, previousExpirationPointer, nextExpirationPointer);
+        } else {
+            // Other allocated balances detected. Accumulate non expired balances.
+
+            // Loop through the expired balances and remove them
+            while (nextExpiration <= block.timestamp) {
+                // Found expired balance, remove it
+                bytes32 pointer = _generatePointer(tokenHash, nextExpiration);
+                nextExpiration = _balancesByExpiration[pointer].nextExpiration;
+                delete _balancesByExpiration[pointer];
+            }
+
+            // Read the balances that expire before the ongoing allocation
+            while (normalizedExpiration > nextExpiration) {
+                // Cache the previous expiration pointer
+                previousExpirationPointer = nextExpiration;
+
+                bytes32 pointer = _generatePointer(tokenHash, nextExpiration);
+                BalanceExpiration memory balance = _balancesByExpiration[pointer];
+                allocatedBalance += balance.amount;
+                nextExpiration = balance.nextExpiration;
+            }
+
+            // Cache the next expiration pointer
+            nextExpirationPointer = nextExpiration;
+
+            if (onlyReturnPointers) {
+                // Return the pointers early without an accurate allocation balance.
+                return (type(uint256).max, previousExpirationPointer, nextExpirationPointer);
+            }
+
+            // Read the balances that expire after the ongoing allocation
+            while (nextExpiration < type(uint32).max) {
+                bytes32 pointer = _generatePointer(tokenHash, nextExpiration);
+                BalanceExpiration memory balance = _balancesByExpiration[pointer];
+                allocatedBalance += balance.amount;
+                nextExpiration = balance.nextExpiration;
+            }
+
+            // nextExpiration of uint32.max indicates the end of the list
+        }
+    }
+
+    function _storeAllocatedBalance(
         bytes12 lockTag,
         address token,
-        uint224 amount,
         address recipient,
-        uint32 expires,
-        bytes32 claimHash
+        uint224 amount,
+        uint32 normalizedExpiration
     ) private {
         bytes32 tokenHash = _getTokenHash(lockTag, token, recipient);
-        _storeAllocation(tokenHash, amount, expires, claimHash);
+        (, uint32 previousExpirationPointer, uint32 nextExpirationPointer) =
+            _readAllocatedBalance(tokenHash, normalizedExpiration, true);
+        _storeAllocatedBalance(
+            tokenHash, amount, normalizedExpiration, previousExpirationPointer, nextExpirationPointer
+        );
     }
 
-    function _storeAllocation(bytes32 tokenHash, uint224 amount, uint32 expires, bytes32 claimHash) private {
-        Allocation memory allocation = Allocation({expires: expires, amount: amount, claimHash: claimHash});
-        _allocations[tokenHash].push(allocation);
+    function _storeAllocatedBalance(
+        bytes32 tokenHash,
+        uint224 amount,
+        uint32 normalizedExpiration,
+        uint32 previousExpirationPointer,
+        uint32 nextExpirationPointer
+    ) private {
+        bytes32 pointer = _generatePointer(tokenHash, normalizedExpiration);
+
+        // Check if if there is already an allocation for the same expiration
+        if (normalizedExpiration == nextExpirationPointer) {
+            // Update the amount of the existing allocation
+            _balancesByExpiration[pointer].amount += amount; // Will overflow if amount becomes greater than uint224.max
+            return;
+        }
+
+        // Check if there are any balances expiring earlier than the new allocation
+        if (previousExpirationPointer == 0) {
+            // Update the _nextExpirationPointer pointer to the new allocation
+            _nextExpirationPointer[tokenHash] = normalizedExpiration;
+        }
+
+        // Create the new allocation
+        _balancesByExpiration[pointer] = BalanceExpiration({nextExpiration: nextExpirationPointer, amount: amount});
     }
 
+    function _generatePointer(bytes32 tokenHash, uint32 expiration) private pure returns (bytes32 pointer) {
+        // Make sure the expiration is the most significant 32 bits
+        assembly ("memory-safe") {
+            pointer := or(shl(32, tokenHash), expiration)
+        }
+    }
+
+    function _verifyClaim(bytes32 claimHash) private view returns (bool verified, uint32 normalizedExpiration) {
+        // Check if the claim is allocated
+        normalizedExpiration = _allocatedClaims[claimHash];
+        return (normalizedExpiration != 0, normalizedExpiration);
+    }
+
+    function _deleteAllocatedBalance(bytes32 tokenHash, uint32 normalizedExpiration, uint224 amount, uint32 hint)
+        private
+    {
+        bytes32 pointer = _generatePointer(tokenHash, normalizedExpiration);
+        BalanceExpiration memory balance = _balancesByExpiration[pointer];
+
+        // Check if there is more allocated balance at the expiration than the amount to delete
+        if (balance.amount > amount) {
+            _balancesByExpiration[pointer].amount -= amount;
+            return;
+        }
+
+        // Delete the full allocation
+        delete _balancesByExpiration[pointer];
+
+        // Find the previous expiration to update the pointers
+
+        uint32 previousExpirationPointer = _nextExpirationPointer[tokenHash];
+
+        // Check if the allocation is the earliest expiring
+        if (previousExpirationPointer == normalizedExpiration) {
+            // TODO: CHANGE THIS TO BRANCHLESS ASSEMBLY CODE BY MULTIPLYING
+            // Check if another allocation exists after this one
+            if (balance.nextExpiration == type(uint32).max) {
+                // Earliest and latest allocation: delete the pointer
+                delete _nextExpirationPointer[tokenHash];
+            } else {
+                // Update the pointer to the next expiration
+                _nextExpirationPointer[tokenHash] = balance.nextExpiration;
+            }
+
+            return;
+        }
+
+        // Check if a valid position hint was provided
+        if (hint != 0) {
+            pointer = _generatePointer(tokenHash, hint);
+            // Verify the hint is valid
+            if (_balancesByExpiration[pointer].nextExpiration == normalizedExpiration) {
+                // Valid hint detected. Skip the detection loop.
+                previousExpirationPointer = normalizedExpiration;
+            }
+        }
+
+        // Loop through the previously expiring balances to find the previous pointer
+        while (previousExpirationPointer < normalizedExpiration) {
+            pointer = _generatePointer(tokenHash, previousExpirationPointer);
+            previousExpirationPointer = _balancesByExpiration[pointer].nextExpiration;
+        }
+
+        // Update the next expiration pointer of the previous expiration
+        _balancesByExpiration[pointer].nextExpiration = balance.nextExpiration;
+    }
+
+    /*
     function _allocatedBalance(bytes32 tokenHash) private returns (uint256 allocatedBalance) {
         // using assembly to only read the allocated balance + expiration slot and skipping the claimHash slot
         assembly ("memory-safe") {
@@ -577,6 +790,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
             }
         }
     }
+    */
 
     function _getAndUpdateNonce(address calling, address sponsor) internal returns (uint256 nonce) {
         assembly ("memory-safe") {
