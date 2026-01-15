@@ -8,10 +8,9 @@ import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 /// @title IOnChainAllocator
 /// @notice Interface for the on-chain token allocator that prevents double-spending in a fully decentralized manner
 interface IOnChainAllocator is IOnChainAllocation {
-    struct Allocation {
-        uint32 expires;
+    struct BalanceExpiration {
+        uint32 nextExpiration;
         uint224 amount;
-        bytes32 claimHash;
     }
 
     /// @notice Thrown if the allocator is not successfully registered

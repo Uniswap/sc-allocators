@@ -30,13 +30,6 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
     /// @notice The unique identifier for this allocator within The Compact protocol
     uint96 public immutable ALLOCATOR_ID;
 
-    mapping(bytes32 tokenHash => Allocation[] allocations) internal _allocations;
-
-    struct BalanceExpiration {
-        uint32 nextExpiration;
-        uint224 amount;
-    }
-
     mapping(bytes32 tokenHash => uint32 nextExpiration) internal _nextExpirationPointer;
     /// @notice Similar to mapping(bytes32 tokenHash => mapping(uint32 expiration => BalanceExpiration balances)).
     mapping(bytes32 TokenHashWithExpiration => BalanceExpiration balances) internal _balancesByExpiration;
@@ -531,7 +524,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
     }
 
     function _storeClaim(bytes32 claimHash, uint32 normalizedExpiration) private {
-        uint256 currentExpiration = _allocatedClaims[claimHash];
+        uint32 currentExpiration = _allocatedClaims[claimHash];
         if (currentExpiration > 0) {
             revert InvalidClaim(claimHash);
         }
@@ -542,14 +535,15 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         private
         returns (uint256 allocatedBalance, uint32 previousExpirationPointer, uint32 nextExpirationPointer)
     {
-        uint32 nextExpiration = _nextExpirationPointer[tokenHash];
-        if (nextExpiration == 0) {
+        uint32 originalNextExpiration = _nextExpirationPointer[tokenHash];
+        if (originalNextExpiration == 0) {
             // No allocated balance detected
             allocatedBalance = 0;
             previousExpirationPointer = 0;
             nextExpirationPointer = type(uint32).max;
             return (allocatedBalance, previousExpirationPointer, nextExpirationPointer);
         } else {
+            uint32 nextExpiration = originalNextExpiration;
             // Other allocated balances detected. Accumulate non expired balances.
 
             // Loop through the expired balances and remove them
@@ -558,6 +552,18 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
                 bytes32 pointer = _generatePointer(tokenHash, nextExpiration);
                 nextExpiration = _balancesByExpiration[pointer].nextExpiration;
                 delete _balancesByExpiration[pointer];
+            }
+            // Check if the next expiration pointer has changed during the loop. If so, update the pointer.
+            if (nextExpiration != originalNextExpiration) {
+                assembly ("memory-safe") {
+                    // Set nextExpiration to 0 if this was the last allocation (nextExpiration == type(uint32).max)
+                    let p := mul(nextExpiration, lt(nextExpiration, 0xffffffff))
+                    // Store p in _nextExpirationPointer[tokenHash]
+                    mstore(0x00, tokenHash)
+                    mstore(0x20, _nextExpirationPointer.slot)
+                    let pointer := keccak256(0x00, 0x40)
+                    sstore(pointer, p)
+                }
             }
 
             // Read the balances that expire before the ongoing allocation
@@ -698,99 +704,6 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         // Update the next expiration pointer of the previous expiration
         _balancesByExpiration[pointer].nextExpiration = balance.nextExpiration;
     }
-
-    /*
-    function _allocatedBalance(bytes32 tokenHash) private returns (uint256 allocatedBalance) {
-        // using assembly to only read the allocated balance + expiration slot and skipping the claimHash slot
-        assembly ("memory-safe") {
-            // no previous cached balance, calculate the allocated balance
-            mstore(0x00, tokenHash)
-            mstore(0x20, _allocations.slot)
-            // retrieve the array length slot
-            let arrayLengthSlot := keccak256(0x00, 0x40)
-            let origLength := sload(arrayLengthSlot)
-            let length := origLength
-            // retrieve the arrays content slot
-            mstore(0x00, arrayLengthSlot)
-            let contentSlot := keccak256(0x00, 0x20)
-            for { let i := 0 } lt(i, length) {} {
-                let slot := add(contentSlot, mul(i, 2)) // 0x40 to skip the claimHash slot
-                let content := sload(slot)
-                let expiration := shr(224, shl(224, content))
-                if lt(expiration, timestamp()) {
-                    // allocation expired, remove it
-                    let lastSlot := add(contentSlot, mul(sub(length, 1), 2))
-                    if iszero(eq(slot, lastSlot)) {
-                        // is not the last allocation of the array
-                        let contentLast1 := sload(lastSlot)
-                        let contentLast2 := sload(add(lastSlot, 1))
-                        sstore(slot, contentLast1)
-                        sstore(add(slot, 1), contentLast2)
-                    }
-                    // remove the last allocation
-                    length := sub(length, 1)
-                    sstore(lastSlot, 0)
-                    sstore(add(lastSlot, 1), 0)
-
-                    // repeat the loop at the same index
-                    continue
-                }
-
-                let amount := shr(32, content)
-                allocatedBalance := add(allocatedBalance, amount)
-
-                // jump to the next allocation
-                i := add(i, 1)
-            }
-
-            if lt(length, origLength) {
-                // update the array length
-                sstore(arrayLengthSlot, length)
-            }
-        }
-    }
-
-    function _verifyClaim(bytes32 tokenHash, bytes32 claimHash) private returns (bool verified) {
-        // using assembly to only read the claimHash slot and skip the expires/amount slot
-        assembly ("memory-safe") {
-            mstore(0x00, tokenHash)
-            mstore(0x20, _allocations.slot)
-            let lengthSlot := keccak256(0x00, 0x40)
-            let length := sload(lengthSlot)
-            mstore(0x00, lengthSlot)
-            let contentSlot := keccak256(0x00, 0x20)
-            for { let i := 0 } lt(i, length) { i := add(i, 1) } {
-                // Each allocation occupies two consecutive slots:
-                // first: packed expires/amount; second: claimHash
-                let first := add(contentSlot, mul(i, 2))
-                let second := add(first, 1)
-                if eq(sload(second), claimHash) {
-                    // Swap-and-pop delete
-                    let lastFirst := add(contentSlot, mul(sub(length, 1), 2))
-                    let lastSecond := add(lastFirst, 1)
-                    if iszero(eq(first, lastFirst)) {
-                        let contentLast1 := sload(lastFirst)
-                        let contentLast2 := sload(lastSecond)
-                        sstore(first, contentLast1)
-                        sstore(second, contentLast2)
-                    }
-
-                    sstore(lastFirst, 0)
-                    sstore(lastSecond, 0)
-
-                    // update the array length
-                    sstore(lengthSlot, sub(length, 1))
-
-                    // We return at the first match, no matter if the allocated amounts match.
-                    // If the claim includes the same token multiple times (amounts mismatch),
-                    // we will enter this function again until all entries are deleted.
-                    verified := 1
-                    break
-                }
-            }
-        }
-    }
-    */
 
     function _getAndUpdateNonce(address calling, address sponsor) internal returns (uint256 nonce) {
         assembly ("memory-safe") {
