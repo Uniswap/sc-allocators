@@ -354,7 +354,6 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         uint256[2][] calldata idsAndAmounts, // The allocated token IDs and amounts.
         bytes calldata allocatorData // Arbitrary data provided by the arbiter.
     ) external virtual onlyCompact returns (bytes4) {
-        // TODO: Allow allocatorData to be used to submit the previous expiration pointer
         (bool verified, uint32 normalizedExpiration) = _verifyClaim(claimHash);
         if (!verified) {
             revert InvalidClaim(claimHash);
@@ -364,8 +363,8 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         delete _allocatedClaims[claimHash];
 
         // If allocatorData is provided, ensure the length matches the expectation
-        if (allocatorData.length != 0 && allocatorData.length != 32 * idsAndAmounts.length) {
-            revert InvalidHint(allocatorData.length, 32 * idsAndAmounts.length);
+        if (allocatorData.length != 0 && allocatorData.length != 4 * idsAndAmounts.length) {
+            revert InvalidHint(allocatorData.length, 4 * idsAndAmounts.length);
         }
 
         // Delete the allocations
@@ -632,6 +631,9 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         if (previousExpirationPointer == 0) {
             // Update the _nextExpirationPointer pointer to the new allocation
             _nextExpirationPointer[tokenHash] = normalizedExpiration;
+        } else {
+            bytes32 previousPointer = _generatePointer(tokenHash, previousExpirationPointer);
+            _balancesByExpiration[previousPointer].nextExpiration = normalizedExpiration;
         }
 
         // Create the new allocation
