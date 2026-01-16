@@ -97,4 +97,9 @@ interface IOnChainAllocator is IOnChainAllocation {
         bytes32 typehash,
         bytes32 witness
     ) external payable returns (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce);
+
+    /// @notice Returns the normalized expiration for a claim
+    /// @param claimHash The hash of the claim
+    /// @return normalizedExpiration The normalized expiration for the claim
+    function getNormalizedExpirationForClaim(bytes32 claimHash) external view returns (uint32 normalizedExpiration);
 }

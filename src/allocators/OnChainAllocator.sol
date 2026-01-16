@@ -407,6 +407,12 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         return verified;
     }
 
+    /// @inheritdoc IOnChainAllocator
+    function getNormalizedExpirationForClaim(bytes32 claimHash) external view returns (uint32 normalizedExpiration) {
+        normalizedExpiration = _allocatedClaims[claimHash];
+        return normalizedExpiration;
+    }
+
     function _allocate(
         address sponsor,
         Lock[] calldata commitments,

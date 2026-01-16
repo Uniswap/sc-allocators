@@ -30,6 +30,7 @@ import {BatchClaimComponent, Component} from '@uniswap/the-compact/types/Compone
 import {AllocatorLib} from 'src/allocators/lib/AllocatorLib.sol';
 import {OnChainAllocationCaller} from 'src/test/OnChainAllocationCaller.sol';
 
+import {console} from 'forge-std/console.sol';
 import {DeployTheCompact} from 'test/util/DeployTheCompact.sol';
 import {TestHelper} from 'test/util/TestHelper.sol';
 
@@ -2174,6 +2175,280 @@ contract OnChainAllocatorTest is Test, TestHelper {
             defaultAmount,
             'Malicious recipient should still have his balance in TheCompact'
         );
+    }
+
+    /* --------------------------------------------------------------------- */
+    /*                    Allocation Bombing Protection Tests                */
+    /* --------------------------------------------------------------------- */
+
+    /**
+     * @notice Comprehensive test for allocation bombing mitigation.
+     * @dev The vulnerability was:
+     *      - Attacker creates ~66k allocations on behalf of a user with unique expirations
+     *      - Operations loop through all allocations, exceeding block gas limit (DoS)
+     *
+     *      The fix:
+     *      - External allocations have expiration normalized (rounded up to buckets)
+     *      - Max ~3,726 unique expirations possible
+     *      - Amounts accumulate per bucket, not per allocation
+     *
+     *      This test verifies all critical operations remain usable after worst-case attack:
+     *      1. attest() - reads allocated balance (traverses list)
+     *      2. allocate() with late expiration - inserts at end (traverses full list)
+     *      3. authorizeClaim() - deletes allocation (traverses to find previous pointer)
+     *      4. allocate() with early expiration - inserts at beginning (O(1))
+     */
+    /// forge-config: default.isolate = false
+    function test_allocationBombing_comprehensive() public {
+        // Setup: Create a victim with deposited funds
+        address victim = makeAddr('victim');
+        uint256 depositAmount = 1000 ether;
+        usdc.mint(victim, depositAmount);
+
+        vm.startPrank(victim);
+        usdc.approve(address(compact), depositAmount);
+        bytes12 lockTag = _toLockTag(address(allocator), Scope.Multichain, ResetPeriod.OneDay);
+        uint256 id = compact.depositERC20(address(usdc), lockTag, depositAmount, victim);
+        vm.stopPrank();
+
+        // =========================================================================
+        // PHASE 1: Simulate attack with 66k allocations
+        // =========================================================================
+        // We use pauseGasMetering to simulate a real-world attack where allocations
+        // are created across many transactions (bypassing single-tx gas limits)
+        uint256 numAllocations = 66_000;
+        uint256 amountPerAllocation = 1;
+        bytes32 lastClaimHash;
+
+        vm.pauseGasMetering();
+
+        for (uint256 i = 0; i < numAllocations; i++) {
+            // Each allocation 1 second apart, spanning ~18 hours
+            // Without normalization: 66k unique entries (DoS)
+            // With normalization: ~2388 buckets
+            uint32 expiration = uint32(block.timestamp + 1 hours + i);
+
+            uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+            idsAndAmounts[0][0] = id;
+            idsAndAmounts[0][1] = amountPerAllocation;
+
+            usdc.mint(address(allocationCaller), amountPerAllocation);
+            vm.prank(address(allocationCaller));
+            usdc.approve(address(compact), amountPerAllocation);
+
+            lastClaimHash = allocationCaller.onChainAllocation(
+                victim, idsAndAmounts, arbiter, expiration, BATCH_COMPACT_TYPEHASH, bytes32(0), 0
+            );
+        }
+
+        vm.resumeGasMetering();
+
+        // =========================================================================
+        // PHASE 2: Test attest() - must traverse list to read allocated balance
+        // =========================================================================
+        uint256 gasBefore = gasleft();
+        bytes4 result = allocator.attest(address(0), victim, address(0), id, 0);
+        uint256 attestGas = gasBefore - gasleft();
+
+        assertEq(result, allocator.attest.selector, 'attest should succeed');
+        console.log('Gas: attest() with 66k allocations', attestGas);
+        assertLt(attestGas, 10_000_000, 'attest gas should be under 10M');
+
+        // =========================================================================
+        // PHASE 3: Test allocate() with LATE expiration - must traverse to insert at end
+        // =========================================================================
+        // This is the worst case: inserting after all existing allocations
+        // requires traversing the entire linked list to find insertion point
+        Lock[] memory lateCommitments = new Lock[](1);
+        lateCommitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: 1 ether});
+        // Expiration after all existing allocations (1 hour + 66k seconds + buffer)
+        uint32 lateExpiration = uint32(block.timestamp + 1 hours + numAllocations + 1000);
+
+        vm.startPrank(victim);
+        gasBefore = gasleft();
+        (bytes32 lateClaimHash,) =
+            allocator.allocate(lateCommitments, arbiter, lateExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0));
+        uint256 allocateLateGas = gasBefore - gasleft();
+        vm.stopPrank();
+
+        console.log('Gas: allocate() late expiration (insert at end)', allocateLateGas);
+        assertLt(allocateLateGas, 10_000_000, 'allocate late gas should be under 10M');
+
+        // =========================================================================
+        // PHASE 4: Test authorizeClaim() - must traverse to delete late allocation
+        // =========================================================================
+        // Deleting an allocation at the end requires traversing to find the previous pointer
+        uint256[2][] memory claimIdsAndAmounts = new uint256[2][](1);
+        claimIdsAndAmounts[0][0] = id;
+        claimIdsAndAmounts[0][1] = 1 ether;
+
+        // Build the allocator data hint (0 = no hint, force full traversal)
+        bytes memory noHint = new bytes(4);
+
+        gasBefore = gasleft();
+        vm.prank(address(compact));
+        allocator.authorizeClaim(lateClaimHash, arbiter, victim, 0, lateExpiration, claimIdsAndAmounts, noHint);
+        uint256 authorizeClaimGas = gasBefore - gasleft();
+
+        console.log('Gas: authorizeClaim() delete late allocation', authorizeClaimGas);
+        assertLt(authorizeClaimGas, 10_000_000, 'authorizeClaim gas should be under 10M');
+
+        // =========================================================================
+        // PHASE 5: Test allocate() with EARLY expiration - should be O(1)
+        // =========================================================================
+        // This is the best case: inserting at the beginning of the list
+        Lock[] memory earlyCommitments = new Lock[](1);
+        earlyCommitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: 1 ether});
+        // Expiration before all existing allocations
+        uint32 earlyExpiration = uint32(block.timestamp + 11 minutes);
+
+        vm.startPrank(victim);
+        gasBefore = gasleft();
+        allocator.allocate(earlyCommitments, arbiter, earlyExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0));
+        uint256 allocateEarlyGas = gasBefore - gasleft();
+        vm.stopPrank();
+
+        console.log('Gas: allocate() early expiration (insert at beginning)', allocateEarlyGas);
+        // Both early and late allocations need to traverse the full list to sum allocated balance
+        // (for _checkBalance), so they have similar gas costs. The key is both are under block limit.
+        assertLt(allocateEarlyGas, 10_000_000, 'allocate early gas should be under 10M');
+
+        // =========================================================================
+        // PHASE 6: Test authorizeClaim() with late expiration and hint
+        // =========================================================================
+        // This should be O(1) because the hint is provided
+
+        vm.prank(victim);
+        (lateClaimHash,) =
+            allocator.allocate(lateCommitments, arbiter, lateExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0));
+
+        // Build the allocator data hint (0 = no hint, force full traversal)
+        uint32 lastAllocationBombingExpiration = allocator.getNormalizedExpirationForClaim(lastClaimHash);
+        assertGt(lastAllocationBombingExpiration, 0, 'Last allocation bombing expiration should be greater than 0');
+        bytes memory hint = new bytes(4);
+        assembly ("memory-safe") {
+            mstore(add(hint, 0x20), shl(224, lastAllocationBombingExpiration))
+        }
+
+        gasBefore = gasleft();
+        vm.prank(address(compact));
+        allocator.authorizeClaim(lateClaimHash, arbiter, victim, 0, lateExpiration, claimIdsAndAmounts, hint);
+        uint256 authorizeClaimWithHintGas = gasBefore - gasleft();
+
+        console.log('Gas: authorizeClaim() delete late allocation with hint', authorizeClaimWithHintGas);
+        assertLt(authorizeClaimWithHintGas, 1_000_000, 'authorizeClaim with hint gas should be under 1M');
+
+        // =========================================================================
+        // Summary: All operations completed within reasonable gas limits
+        // =========================================================================
+        console.log('');
+        console.log('=== Allocation Bombing Protection Summary ===');
+        console.log('Total allocations created', numAllocations);
+        console.log('attest() gas', attestGas);
+        console.log('allocate() late (worst case) gas', allocateLateGas);
+        console.log('authorizeClaim() delete late gas', authorizeClaimGas);
+        console.log('allocate() early (best case) gas', allocateEarlyGas);
+        console.log('authorizeClaim() delete late with hint gas', authorizeClaimWithHintGas);
+    }
+
+    /**
+     * @notice Test that allocations with same normalized expiration accumulate amounts.
+     * @dev Verifies that multiple allocations bucketed to the same expiration
+     *      don't create separate entries but instead accumulate in one entry.
+     */
+    /// forge-config: default.isolate = false
+    function test_allocationBombing_amountsAccumulate() public {
+        address victim = makeAddr('victim2');
+        uint256 depositAmount = 100 ether;
+        usdc.mint(victim, depositAmount);
+
+        vm.startPrank(victim);
+        usdc.approve(address(compact), depositAmount);
+        bytes12 lockTag = _toLockTag(address(allocator), Scope.Multichain, ResetPeriod.OneDay);
+        uint256 id = compact.depositERC20(address(usdc), lockTag, depositAmount, victim);
+        vm.stopPrank();
+
+        // Create multiple allocations that will normalize to the same expiration
+        // Expirations within 10-second window (in the 10min-1h range) bucket together
+        uint256 numAllocations = 5;
+        uint256 amountPerAllocation = 1 ether;
+        uint32 baseExpiration = uint32(block.timestamp + 30 minutes);
+
+        for (uint256 i = 0; i < numAllocations; i++) {
+            // All within same 10-second bucket
+            uint32 expiration = baseExpiration + uint32(i * 2); // 0, 2, 4, 6, 8 seconds apart
+
+            uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+            idsAndAmounts[0][0] = id;
+            idsAndAmounts[0][1] = amountPerAllocation;
+
+            usdc.mint(address(allocationCaller), amountPerAllocation);
+            vm.prank(address(allocationCaller));
+            usdc.approve(address(compact), amountPerAllocation);
+
+            allocationCaller.onChainAllocation(
+                victim, idsAndAmounts, arbiter, expiration, BATCH_COMPACT_TYPEHASH, bytes32(0), 0
+            );
+        }
+
+        // Now try to transfer more than available (should fail)
+        // Total allocated: 5 * 1 ether = 5 ether
+        // Note: batchDepositAndRegisterFor also deposits 1 ether per allocation to victim's balance
+        // Balance: 100 (initial) + 5 (from allocations) = 105 ether
+        // Available: 105 - 5 = 100 ether
+        uint256 attemptTransfer = 101 ether; // More than available
+
+        vm.expectRevert();
+        allocator.attest(address(0), victim, address(0), id, attemptTransfer);
+
+        // But transferring up to 100 ether should work
+        uint256 validTransfer = 100 ether;
+        bytes4 result = allocator.attest(address(0), victim, address(0), id, validTransfer);
+        assertEq(result, allocator.attest.selector, 'Valid transfer should succeed');
+    }
+
+    /**
+     * @notice Test that expired allocations are cleaned up during reads.
+     * @dev Verifies the lazy cleanup mechanism works correctly.
+     */
+    /// forge-config: default.isolate = false
+    function test_allocationBombing_expiredAllocationsCleanedUp() public {
+        address victim = makeAddr('victim3');
+        uint256 depositAmount = 100 ether;
+        usdc.mint(victim, depositAmount);
+
+        vm.startPrank(victim);
+        usdc.approve(address(compact), depositAmount);
+        bytes12 lockTag = _toLockTag(address(allocator), Scope.Multichain, ResetPeriod.OneDay);
+        uint256 id = compact.depositERC20(address(usdc), lockTag, depositAmount, victim);
+        vm.stopPrank();
+
+        // Create allocation that expires soon
+        uint32 shortExpiration = uint32(block.timestamp + 5 minutes);
+        uint256 allocatedAmount = 50 ether;
+
+        uint256[2][] memory idsAndAmounts = new uint256[2][](1);
+        idsAndAmounts[0][0] = id;
+        idsAndAmounts[0][1] = allocatedAmount;
+
+        usdc.mint(address(allocationCaller), allocatedAmount);
+        vm.prank(address(allocationCaller));
+        usdc.approve(address(compact), allocatedAmount);
+
+        allocationCaller.onChainAllocation(
+            victim, idsAndAmounts, arbiter, shortExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), 0
+        );
+
+        // Before expiration: can only transfer 50 ether
+        bytes4 result = allocator.attest(address(0), victim, address(0), id, 50 ether);
+        assertEq(result, allocator.attest.selector);
+
+        // Warp past expiration
+        vm.warp(shortExpiration + 1);
+
+        // After expiration: can transfer full 100 ether (allocation cleaned up)
+        result = allocator.attest(address(0), victim, address(0), id, 100 ether);
+        assertEq(result, allocator.attest.selector, 'Should be able to transfer full amount after expiration');
     }
 }
 
