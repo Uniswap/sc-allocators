@@ -2352,6 +2352,89 @@ contract OnChainAllocatorTest is Test, TestHelper {
     }
 
     /**
+     * @notice Test that BalanceExpiration struct is stored in a single storage slot.
+     * @dev The struct contains:
+     *      - uint32 nextExpiration (4 bytes)
+     *      - uint224 amount (28 bytes)
+     *      Total: 32 bytes = 1 slot
+     *
+     *      Storage layout (from forge inspect):
+     *      - _balancesByExpiration is at slot 1
+     *      - For mapping(bytes32 => struct), slot = keccak256(key, baseSlot)
+     *
+     *      Struct packing in storage (right-aligned):
+     *      - Bits 0-31: nextExpiration (uint32)
+     *      - Bits 32-255: amount (uint224)
+     */
+    function test_balanceExpirationFitsInSingleSlot() public {
+        // Create an allocation within 10 minutes (no normalization)
+        usdc.mint(user, 10 ether);
+        vm.startPrank(user);
+        usdc.approve(address(compact), 10 ether);
+        bytes12 lockTag = _toLockTag(address(allocator), Scope.Multichain, ResetPeriod.OneDay);
+        compact.depositERC20(address(usdc), lockTag, 10 ether, user);
+
+        Lock[] memory commitments = new Lock[](1);
+        uint224 allocatedAmount = 1 ether;
+        commitments[0] = Lock({lockTag: lockTag, token: address(usdc), amount: allocatedAmount});
+
+        // Use expiration within 10 minutes to avoid normalization
+        uint32 expiration = uint32(block.timestamp + 5 minutes);
+        allocator.allocate(commitments, arbiter, expiration, BATCH_COMPACT_TYPEHASH, bytes32(0));
+        vm.stopPrank();
+
+        // Compute tokenHash using same logic as _getTokenHash(lockTag, token, sponsor)
+        // Memory layout: lockTag(12) || token(20) || zeros(12) || sponsor(20) = 64 bytes
+        address token = address(usdc);
+        address sponsor = user;
+        bytes28 tokenHash;
+        assembly ("memory-safe") {
+            let ptr := mload(0x40)
+            mstore(ptr, lockTag)
+            mstore(add(ptr, 0x0c), shl(96, token))
+            mstore(add(ptr, 0x20), sponsor)
+            // Mask to keep only high 28 bytes (clear low 4 bytes)
+            tokenHash := and(keccak256(ptr, 0x40), 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000)
+        }
+
+        // Compute pointer: tokenHash | expiration
+        // tokenHash is bytes28 (left-aligned with 4 zero bytes on right)
+        // expiration is uint32 (right-aligned)
+        bytes32 pointer;
+        assembly ("memory-safe") {
+            pointer := or(tokenHash, expiration)
+        }
+
+        // Compute storage slot: keccak256(pointer, baseSlot)
+        // _balancesByExpiration is at slot 1
+        bytes32 storageSlot;
+        assembly ("memory-safe") {
+            mstore(0x00, pointer)
+            mstore(0x20, 1) // slot 1
+            storageSlot := keccak256(0x00, 0x40)
+        }
+
+        // Read the raw storage slot
+        bytes32 slotValue = vm.load(address(allocator), storageSlot);
+
+        // Verify struct packing:
+        // - Low 32 bits (4 bytes): nextExpiration
+        // - High 224 bits (28 bytes): amount
+        uint32 storedNextExpiration = uint32(uint256(slotValue));
+        uint224 storedAmount = uint224(uint256(slotValue) >> 32);
+
+        // nextExpiration should be type(uint32).max (end of list marker)
+        assertEq(storedNextExpiration, type(uint32).max, 'nextExpiration should be max (end of list)');
+
+        // amount should match what we allocated
+        assertEq(storedAmount, allocatedAmount, 'amount should match allocated amount');
+
+        // Verify both values are in the same slot by checking the combined value
+        uint256 expectedSlotValue = (uint256(allocatedAmount) << 32) | uint256(type(uint32).max);
+        assertEq(uint256(slotValue), expectedSlotValue, 'Both fields should be packed in single slot');
+    }
+
+    /**
      * @notice Test that allocations with same normalized expiration accumulate amounts.
      * @dev Verifies that multiple allocations bucketed to the same expiration
      *      don't create separate entries but instead accumulate in one entry.
