@@ -23,6 +23,9 @@ import {Utility} from '@uniswap/the-compact/utility/Utility.sol';
 /// @dev Users can open orders for themselves or for others by providing a signature or the tokens directly.
 /// @custom:security-contact security@uniswap.org
 contract OnChainAllocator is IOnChainAllocator, Utility {
+    uint32 private constant _UINT32_MAX = 0xffffffff;
+    bytes28 private constant _BYTES28_SELECTOR = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
+
     /// @notice The chain id at the time of deployment
     uint256 private immutable _INITIAL_CHAIN_ID;
     /// @notice The EIP-712 domain separator for The Compact protocol, used for signature verification
@@ -526,6 +529,11 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
             normalizedExpires = (expires / 1 hours) * 1 hours + 1 hours;
         }
         // Total max of 3,726 unique expirations => 7,824,600 max gas costs for cold storage reads
+
+        // Sanitize expiration
+        assembly ("memory-safe") {
+            normalizedExpires := and(normalizedExpires, _UINT32_MAX)
+        }
     }
 
     function _storeClaim(bytes32 claimHash, uint32 normalizedExpiration) private {
@@ -536,6 +544,133 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         _allocatedClaims[claimHash] = normalizedExpiration;
     }
 
+    function _readAllocatedBalance(bytes28 tokenHash, uint32 normalizedExpiration, bool onlyReturnPointers)
+        private
+        returns (uint256 allocatedBalance, uint32 previousExpirationPointer, uint32 nextExpirationPointer)
+    {
+        assembly ("memory-safe") {
+            mstore(0x00, tokenHash)
+            mstore(0x20, _nextExpirationPointer.slot)
+            let _nextExpirationPointerSlot := keccak256(0x00, 0x40)
+            let originalNextExpiration := sload(_nextExpirationPointerSlot)
+            // Check if there are any allocated balances
+            if iszero(originalNextExpiration) {
+                // No allocated balance detected
+                nextExpirationPointer := _UINT32_MAX
+            }
+            if iszero(nextExpirationPointer) {
+                // Other allocated balances detected. Accumulate non expired balances
+                let nextExpiration := originalNextExpiration
+
+                // Store _balancesByExpiration.slot in advance to skip repeating calls in loops
+                mstore(0x20, _balancesByExpiration.slot)
+
+                // Loop through the expired balances and remove them
+                for {} iszero(gt(nextExpiration, timestamp())) {} {
+                    // Found expired balance, remove it
+                    mstore(0x00, or(tokenHash, nextExpiration))
+                    // Previously stored _balancesByExpiration.slot in 0x20
+                    let pointer := keccak256(0x00, 0x40)
+                    nextExpiration := and(sload(pointer), _UINT32_MAX)
+                    // Delete
+                    sstore(pointer, 0)
+                }
+                // Check if the next expiration pointer has changed during the loop. If so, update the pointer.
+                if iszero(eq(nextExpiration, originalNextExpiration)) {
+                    // Set nextExpiration to 0 if this was the last allocation (nextExpiration == type(uint32).max)
+                    let nextExpirationFixed := mul(nextExpiration, lt(nextExpiration, _UINT32_MAX))
+                    // Store nextExpirationFixed in _nextExpirationPointer[tokenHash]
+                    sstore(_nextExpirationPointerSlot, nextExpirationFixed)
+                }
+
+                // Read the balances that expire before the ongoing allocation
+                for {} gt(normalizedExpiration, nextExpiration) {} {
+                    // Cache the previous expiration pointer
+                    previousExpirationPointer := nextExpiration
+                    mstore(0x00, or(tokenHash, nextExpiration))
+                    // Previously stored _balancesByExpiration.slot in 0x20
+                    let balanceStruct := sload(keccak256(0x00, 0x40))
+                    allocatedBalance := add(allocatedBalance, shr(32, balanceStruct))
+                    nextExpiration := and(balanceStruct, _UINT32_MAX)
+                }
+                // Cache the next expiration pointer
+                nextExpirationPointer := nextExpiration
+
+                // Check if not only the pointers are requested
+                if iszero(onlyReturnPointers) {
+                    for {} lt(nextExpiration, _UINT32_MAX) {} {
+                        mstore(0x00, or(tokenHash, nextExpiration))
+                        // Previously stored _balancesByExpiration.slot in 0x20
+                        let balanceStruct := sload(keccak256(0x00, 0x40))
+                        allocatedBalance := add(allocatedBalance, shr(32, balanceStruct))
+                        nextExpiration := and(balanceStruct, _UINT32_MAX)
+                    }
+                }
+            }
+        }
+
+        return (allocatedBalance, previousExpirationPointer, nextExpirationPointer);
+    }
+
+    function _storeAllocatedBalance(
+        bytes28 tokenHash,
+        uint224 amount,
+        uint32 normalizedExpiration,
+        uint32 previousExpirationPointer,
+        uint32 nextExpirationPointer
+    ) private {
+        assembly ("memory-safe") {
+            for {} true {} {
+                // Check if if there is already an allocation for the same expiration
+                if eq(normalizedExpiration, nextExpirationPointer) {
+                    // Update the amount of the existing allocation and exit
+                    mstore(0x00, or(tokenHash, normalizedExpiration))
+                    mstore(0x20, _balancesByExpiration.slot)
+                    let pointer := keccak256(0x00, 0x40)
+                    let balanceStruct := sload(pointer)
+                    let currentAllocation := shr(32, balanceStruct)
+                    let newAllocatedAmount := add(currentAllocation, amount)
+                    if lt(newAllocatedAmount, currentAllocation) {
+                        // Revert for overflow
+                        revert(0x00, 0x00)
+                    }
+                    let balanceStructWithoutAmount := and(balanceStruct, _UINT32_MAX)
+                    sstore(pointer, or(shl(32, newAllocatedAmount), balanceStructWithoutAmount))
+
+                    break
+                }
+
+                // Create and store the new allocation
+                mstore(0x00, or(tokenHash, normalizedExpiration))
+                mstore(0x20, _balancesByExpiration.slot)
+                sstore(keccak256(0x00, 0x40), or(shl(32, amount), nextExpirationPointer))
+
+                // Check if there are any balances expiring earlier than the new allocation
+                if previousExpirationPointer {
+                    // Insert the allocation into the linked list by updating the pointer of the earlier expiring allocation
+                    mstore(0x00, or(tokenHash, previousExpirationPointer))
+                    // Previously stored _balancesByExpiration.slot in 0x20
+                    let pointer := keccak256(0x00, 0x40)
+                    let balanceStructWithoutExpiration := and(sload(pointer), _BYTES28_SELECTOR)
+                    // Write the updated struct to storage
+                    sstore(pointer, or(balanceStructWithoutExpiration, normalizedExpiration))
+
+                    break
+                }
+
+                // At this point, there must not be any balances expiring earlier than the new allocation
+
+                // Update the _nextExpirationPointer pointer to the new allocation
+                mstore(0x00, tokenHash)
+                mstore(0x20, _nextExpirationPointer.slot)
+                sstore(keccak256(0x00, 0x40), normalizedExpiration)
+
+                break
+            }
+        }
+    }
+
+    /*
     function _readAllocatedBalance(bytes28 tokenHash, uint32 normalizedExpiration, bool onlyReturnPointers)
         private
         returns (uint256 allocatedBalance, uint32 previousExpirationPointer, uint32 nextExpirationPointer)
@@ -604,6 +739,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
 
         // nextExpiration of uint32.max indicates the end of the list
     }
+    */
 
     function _storeAllocatedBalance(
         bytes12 lockTag,
@@ -625,7 +761,8 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         uint224 amount,
         uint32 normalizedExpiration,
         uint32 previousExpirationPointer,
-        uint32 nextExpirationPointer
+        uint32 nextExpirationPointer,
+        bool deleteThis
     ) private {
         bytes32 pointer = _generatePointer(tokenHash, normalizedExpiration);
 
