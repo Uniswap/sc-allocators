@@ -4,7 +4,7 @@
   "allocate_erc20": "129567",
   "allocate_native": "129327",
   "allocate_second_erc20": "97822",
-  "authorizeClaim_success_single_allocation": "32584",
+  "authorizeClaim_success_single_allocation": "32255",
   "onchain_execute_double": "324623",
   "onchain_execute_single": "220449"
 }

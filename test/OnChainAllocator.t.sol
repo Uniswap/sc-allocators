@@ -2216,7 +2216,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         // =========================================================================
         // We use pauseGasMetering to simulate a real-world attack where allocations
         // are created across many transactions (bypassing single-tx gas limits)
-        uint256 numAllocations = 100;
+        uint256 numAllocations = 66_000;
         uint256 amountPerAllocation = 1;
         bytes32 lastClaimHash;
 
