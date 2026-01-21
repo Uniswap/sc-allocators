@@ -670,77 +670,6 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         }
     }
 
-    /*
-    function _readAllocatedBalance(bytes28 tokenHash, uint32 normalizedExpiration, bool onlyReturnPointers)
-        private
-        returns (uint256 allocatedBalance, uint32 previousExpirationPointer, uint32 nextExpirationPointer)
-    {
-        uint32 originalNextExpiration = _nextExpirationPointer[tokenHash];
-
-        // Check if there are any allocated balances
-        if (originalNextExpiration == 0) {
-            // No allocated balance detected
-            allocatedBalance = 0;
-            previousExpirationPointer = 0;
-            nextExpirationPointer = type(uint32).max;
-
-            return (allocatedBalance, previousExpirationPointer, nextExpirationPointer);
-        }
-
-        uint32 nextExpiration = originalNextExpiration;
-        // Other allocated balances detected. Accumulate non expired balances.
-
-        // Loop through the expired balances and remove them
-        while (nextExpiration <= block.timestamp) {
-            // Found expired balance, remove it
-            bytes32 pointer = _generatePointer(tokenHash, nextExpiration);
-            nextExpiration = _balancesByExpiration[pointer].nextExpiration;
-            delete _balancesByExpiration[pointer];
-        }
-        // Check if the next expiration pointer has changed during the loop. If so, update the pointer.
-        if (nextExpiration != originalNextExpiration) {
-            assembly ("memory-safe") {
-                // Set nextExpiration to 0 if this was the last allocation (nextExpiration == type(uint32).max)
-                let p := mul(nextExpiration, lt(nextExpiration, 0xffffffff))
-                // Store p in _nextExpirationPointer[tokenHash]
-                mstore(0x00, tokenHash)
-                mstore(0x20, _nextExpirationPointer.slot)
-                let pointer := keccak256(0x00, 0x40)
-                sstore(pointer, p)
-            }
-        }
-
-        // Read the balances that expire before the ongoing allocation
-        while (normalizedExpiration > nextExpiration) {
-            // Cache the previous expiration pointer
-            previousExpirationPointer = nextExpiration;
-
-            bytes32 pointer = _generatePointer(tokenHash, nextExpiration);
-            BalanceExpiration memory balance = _balancesByExpiration[pointer];
-            allocatedBalance += balance.amount;
-            nextExpiration = balance.nextExpiration;
-        }
-
-        // Cache the next expiration pointer
-        nextExpirationPointer = nextExpiration;
-
-        if (onlyReturnPointers) {
-            // Return the pointers early without an accurate allocation balance.
-            return (type(uint256).max, previousExpirationPointer, nextExpirationPointer);
-        }
-
-        // Read the balances that expire after the ongoing allocation
-        while (nextExpiration < type(uint32).max) {
-            bytes32 pointer = _generatePointer(tokenHash, nextExpiration);
-            BalanceExpiration memory balance = _balancesByExpiration[pointer];
-            allocatedBalance += balance.amount;
-            nextExpiration = balance.nextExpiration;
-        }
-
-        // nextExpiration of uint32.max indicates the end of the list
-    }
-    */
-
     function _storeAllocatedBalance(
         bytes12 lockTag,
         address token,
@@ -755,38 +684,6 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
             tokenHash, amount, normalizedExpiration, previousExpirationPointer, nextExpirationPointer
         );
     }
-
-    /*
-    function _storeAllocatedBalance(
-        bytes28 tokenHash,
-        uint224 amount,
-        uint32 normalizedExpiration,
-        uint32 previousExpirationPointer,
-        uint32 nextExpirationPointer,
-        bool deleteThis
-    ) private {
-        bytes32 pointer = _generatePointer(tokenHash, normalizedExpiration);
-
-        // Check if if there is already an allocation for the same expiration
-        if (normalizedExpiration == nextExpirationPointer) {
-            // Update the amount of the existing allocation
-            _balancesByExpiration[pointer].amount += amount; // Will overflow if amount becomes greater than uint224.max
-            return;
-        }
-
-        // Check if there are any balances expiring earlier than the new allocation
-        if (previousExpirationPointer == 0) {
-            // Update the _nextExpirationPointer pointer to the new allocation
-            _nextExpirationPointer[tokenHash] = normalizedExpiration;
-        } else {
-            bytes32 previousPointer = _generatePointer(tokenHash, previousExpirationPointer);
-            _balancesByExpiration[previousPointer].nextExpiration = normalizedExpiration;
-        }
-
-        // Create the new allocation
-        _balancesByExpiration[pointer] = BalanceExpiration({nextExpiration: nextExpirationPointer, amount: amount});
-    }
-    */
 
     function _generatePointer(bytes28 tokenHash, uint32 expiration) private pure returns (bytes32 pointer) {
         // Make sure the expiration is the most significant 32 bits
@@ -869,65 +766,6 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
             }
         }
     }
-
-    /*
-    function _deleteAllocatedBalance(
-        bytes28 tokenHash,
-        uint32 normalizedExpiration,
-        uint224 amount,
-        uint32 hint
-    ) private {
-        bytes32 pointer = _generatePointer(tokenHash, normalizedExpiration);
-        BalanceExpiration memory balance = _balancesByExpiration[pointer];
-
-        // Check if there is more allocated balance at the expiration than the amount to delete
-        if (balance.amount > amount) {
-            _balancesByExpiration[pointer].amount -= amount;
-            return;
-        }
-
-        // Delete the full allocation
-        delete _balancesByExpiration[pointer];
-
-        // Find the previous expiration to update the pointers
-
-        uint32 previousExpirationPointer = _nextExpirationPointer[tokenHash];
-
-        // Check if the allocation is the earliest expiring
-        if (previousExpirationPointer == normalizedExpiration) {
-            // TODO: CHANGE THIS TO BRANCHLESS ASSEMBLY CODE BY MULTIPLYING
-            // Check if another allocation exists after this one
-            if (balance.nextExpiration == type(uint32).max) {
-                // Earliest and latest allocation: delete the pointer
-                delete _nextExpirationPointer[tokenHash];
-            } else {
-                // Update the pointer to the next expiration
-                _nextExpirationPointer[tokenHash] = balance.nextExpiration;
-            }
-
-            return;
-        }
-
-        // Check if a valid position hint was provided
-        if (hint != 0) {
-            pointer = _generatePointer(tokenHash, hint);
-            // Verify the hint is valid
-            if (_balancesByExpiration[pointer].nextExpiration == normalizedExpiration) {
-                // Valid hint detected. Skip the detection loop.
-                previousExpirationPointer = normalizedExpiration;
-            }
-        }
-
-        // Loop through the previously expiring balances to find the previous pointer
-        while (previousExpirationPointer < normalizedExpiration) {
-            pointer = _generatePointer(tokenHash, previousExpirationPointer);
-            previousExpirationPointer = _balancesByExpiration[pointer].nextExpiration;
-        }
-
-        // Update the next expiration pointer of the previous expiration
-        _balancesByExpiration[pointer].nextExpiration = balance.nextExpiration;
-    }
-    */
 
     function _getAndUpdateNonce(address calling, address sponsor) internal returns (uint256 nonce) {
         assembly ("memory-safe") {
