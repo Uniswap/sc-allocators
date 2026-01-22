@@ -544,6 +544,9 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         _allocatedClaims[claimHash] = normalizedExpiration;
     }
 
+    // TODO: Think about if the users expirations MUST also be normalized to protect fillers
+    // TODO: Think about if the hint can still be used, if the nextExpiration retrieved from it is smaller then the target expiration
+
     function _readAllocatedBalance(bytes28 tokenHash, uint32 normalizedExpiration, bool onlyReturnPointers)
         private
         returns (uint256 allocatedBalance, uint32 previousExpirationPointer, uint32 nextExpirationPointer)
@@ -741,13 +744,19 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
                     mstore(0x00, or(tokenHash, and(hint, _UINT32_MAX))) // sanitizes hint
                     balancesByExpirationPointer := keccak256(0x00, 0x40)
                     previousBalanceStruct := sload(balancesByExpirationPointer)
-                    // Verify the hint is valid
-                    let validHint := eq(normalizedExpiration, and(previousBalanceStruct, _UINT32_MAX))
+                    let hintNextExpiration := and(previousBalanceStruct, _UINT32_MAX)
+                    // Verify the hints next pointer is valid.
+                    // It must be greater then the head pointer, as well as smaller or equal to the target expiration.
+                    // Ideally the hints next pointer is equal to the target expiration. This will skip the next loop completely
+                    let validHint :=
+                        and(
+                            gt(hintNextExpiration, previousExpiration), iszero(gt(hintNextExpiration, normalizedExpiration))
+                        )
 
-                    // Branchless: validHint ? normalizedExpiration : previousExpiration
+                    // Branchless: validHint ? hintNextExpiration : previousExpiration
                     // Setting previousExpiration = normalizedExpiration makes loop condition false, skipping it
                     previousExpiration :=
-                        or(mul(previousExpiration, iszero(validHint)), mul(normalizedExpiration, validHint))
+                        or(mul(previousExpiration, iszero(validHint)), mul(hintNextExpiration, validHint))
                 }
 
                 // Loop through the previously expiring balances to find the previous pointer
