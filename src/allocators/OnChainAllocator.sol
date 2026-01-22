@@ -431,6 +431,8 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
             revert InvalidExpiration(expires, block.timestamp);
         }
 
+        uint32 normalizedExpiration = _normalizeExpiration(expires);
+
         nonce = _getAndUpdateNonce(address(0), sponsor); // address(0) as caller allows anyone to relay
         bytes32 commitmentsHash = AL.getCommitmentsHash(commitments);
         claimHash = AL.getClaimHash(arbiter, sponsor, nonce, expires, commitmentsHash, witness, typehash);
@@ -439,11 +441,13 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         for (uint256 i = 0; i < commitments.length; i++) {
             minResetPeriod = _checkInput(commitments[i], sponsor, expires, minResetPeriod);
             (bytes28 tokenHash, uint32 previousExpirationPointer, uint32 nextExpirationPointer) =
-                _checkBalance(sponsor, commitments[i], expires);
+                _checkBalance(sponsor, commitments[i], normalizedExpiration);
 
             // Store the allocation
             uint224 amount = uint224(commitments[i].amount);
-            _storeAllocatedBalance(tokenHash, amount, expires, previousExpirationPointer, nextExpirationPointer);
+            _storeAllocatedBalance(
+                tokenHash, amount, normalizedExpiration, previousExpirationPointer, nextExpirationPointer
+            );
         }
         // Ensure expiration is not bigger then the smallest reset period
         if (expires >= block.timestamp + minResetPeriod) {
@@ -451,7 +455,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         }
 
         // Store the claim
-        _storeClaim(claimHash, expires);
+        _storeClaim(claimHash, normalizedExpiration);
 
         return (claimHash, nonce);
     }
@@ -543,9 +547,6 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         }
         _allocatedClaims[claimHash] = normalizedExpiration;
     }
-
-    // TODO: Think about if the users expirations MUST also be normalized to protect fillers
-    // TODO: Think about if the hint can still be used, if the nextExpiration retrieved from it is smaller then the target expiration
 
     function _readAllocatedBalance(bytes28 tokenHash, uint32 normalizedExpiration, bool onlyReturnPointers)
         private
