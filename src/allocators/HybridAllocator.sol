@@ -21,11 +21,11 @@ import {IHybridAllocator} from 'src/interfaces/IHybridAllocator.sol';
 /// @dev Combines direct deposit functionality with signature-based off-chain authorization through multiple authorized signers
 /// @custom:security-contact security@uniswap.org
 contract HybridAllocator is IHybridAllocator {
-    event SignerAdded(address signer);
-    event SignerRemoved(address signer);
-    event SignerReplacementProposed(address oldSigner, address newSigner);
-    event SignerReplaced(address oldSigner, address newSigner);
-    event AllocatorInitialized(address initialSigner, uint96 allocatorId);
+    event SignerAdded(address indexed signer);
+    event SignerRemoved(address indexed signer);
+    event SignerReplacementProposed(address indexed oldSigner, address indexed newSigner);
+    event SignerReplaced(address indexed oldSigner, address indexed newSigner);
+    event AllocatorInitialized(address initialSigner, uint96 indexed allocatorId);
 
     /// @notice The unique identifier for this allocator within The Compact protocol
     uint96 public immutable ALLOCATOR_ID;
