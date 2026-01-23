@@ -27,6 +27,7 @@ library AllocatorLib {
     error InvalidAllocatorId(uint96 providedId, uint96 allocatorId);
     error InvalidRegistration(address recipient, bytes32 claimHash, bytes32 typehash);
     error CompactReentrancyGuardActive();
+    error InvalidCall();
 
     function prepareAllocation(
         uint256 nonce,
@@ -41,12 +42,10 @@ library AllocatorLib {
         // Before preparing the allocation, check if the compact's reentrancy guard is active
         checkCompactReentrancyGuardAndRevert();
 
-        // Revert if there are no ids and amounts provided
-        if (idsAndAmounts.length == 0) {
-            revert InvalidBalanceChange(0, 0);
-        }
-
         assembly ("memory-safe") {
+            // Error buffer - revert if any of the balance calls are invalid or the array is empty
+            let errorBuffer := iszero(idsAndAmounts.length)
+
             // identifier = keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));
             let memoryPointer := mload(0x40)
             mstore(add(memoryPointer, 0x00), PREPARE_ALLOCATION_SELECTOR)
@@ -74,14 +73,12 @@ library AllocatorLib {
                 mstore(0x14, recipient) // Store the `owner` argument.
                 mstore(0x34, id)
                 mstore(0x00, 0x00fdd58e000000000000000000000000) // `balanceOf(address,uint256)`.
-                let currentBalance :=
-                    mul( // The arguments of `mul` are evaluated from right to left.
-                        mload(0x20),
-                        and( // The arguments of `and` are evaluated from right to left.
-                            gt(returndatasize(), 0x1f), // At least 32 bytes returned.
-                            staticcall(gas(), THE_COMPACT, 0x10, 0x44, 0x20, 0x20)
-                        )
+                errorBuffer :=
+                    or( // The arguments of `or` are evaluated from right to left.
+                        errorBuffer,
+                        iszero(and(gt(returndatasize(), 0x1f), staticcall(gas(), THE_COMPACT, 0x10, 0x44, 0x20, 0x20)))
                     )
+                let currentBalance := mload(0x20)
                 mstore(0x00, PREPARE_ALLOCATION_SELECTOR)
                 mstore(0x20, recipient)
                 mstore(0x40, id)
@@ -90,6 +87,11 @@ library AllocatorLib {
 
                 // store the id for the identifier creation
                 mstore(add(add(memoryPointer, 0x100), mul(i, 0x20)), id)
+            }
+
+            if errorBuffer {
+                mstore(0x00, 0xae962d4e) // InvalidCall()
+                revert(0x1c, 0x04)
             }
 
             // Derive the identifier for the transient storage slot to store the nonce

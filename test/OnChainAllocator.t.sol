@@ -1063,7 +1063,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
     function test_prepareAllocation_revert_EmptyIdsAndAmounts() public {
         uint256[2][] memory idsAndAmounts = new uint256[2][](0);
 
-        vm.expectRevert(abi.encodeWithSelector(AllocatorLib.InvalidBalanceChange.selector, 0, 0));
+        vm.expectRevert(abi.encodeWithSelector(AllocatorLib.InvalidCall.selector));
         allocator.prepareAllocation(
             recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
         );
