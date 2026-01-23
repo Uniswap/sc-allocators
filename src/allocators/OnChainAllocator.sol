@@ -213,7 +213,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         }
 
         // Ensure expiration is less then the smallest reset period
-        if (expires >= block.timestamp + minResetPeriod) {
+        if (expires > block.timestamp + minResetPeriod) {
             revert InvalidExpiration(expires, block.timestamp + minResetPeriod);
         }
 
@@ -400,7 +400,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
             );
         }
         // Ensure expiration is not bigger then the smallest reset period
-        if (expires >= block.timestamp + minResetPeriod) {
+        if (expires > block.timestamp + minResetPeriod) {
             revert InvalidExpiration(expires, block.timestamp + minResetPeriod);
         }
 
@@ -432,7 +432,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         }
 
         // Ensure expiration is not bigger then the smallest reset period
-        if (expires >= block.timestamp + minResetPeriod) {
+        if (expires > block.timestamp + minResetPeriod) {
             revert InvalidExpiration(expires, block.timestamp + minResetPeriod);
         }
 

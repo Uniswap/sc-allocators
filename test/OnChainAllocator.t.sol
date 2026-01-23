@@ -225,10 +225,14 @@ contract OnChainAllocatorTest is Test, TestHelper {
         vm.prank(user);
         compact.depositNative{value: defaultAmount}(lockTag, user);
 
-        uint256 expiration = vm.getBlockTimestamp() + 600; // 10 min reset period
+        uint256 expiration = vm.getBlockTimestamp() + 600 + 1; // 10 min reset period + 1 second
 
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IOnChainAllocator.InvalidExpiration.selector, expiration, expiration));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IOnChainAllocator.InvalidExpiration.selector, expiration, vm.getBlockTimestamp() + 600
+            )
+        );
         allocator.allocate(commitments, arbiter, uint32(expiration), BATCH_COMPACT_TYPEHASH, bytes32(0));
     }
 
@@ -1024,7 +1028,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         // Fund allocator with tokens
         usdc.mint(address(allocator), defaultAmount);
 
-        uint256 expiration = block.timestamp + 600;
+        uint256 expiration = block.timestamp + 600 + 1; // 10 min reset period + 1 second
         vm.prank(caller);
         vm.expectRevert(
             abi.encodeWithSelector(IOnChainAllocator.InvalidExpiration.selector, expiration, block.timestamp + 600)
@@ -1169,7 +1173,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
     function test_executeAllocation_revert_InvalidExpiration() public {
         uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(0), defaultAmount);
 
-        uint256 invalidExpiration = block.timestamp + 10 minutes;
+        uint256 invalidExpiration = block.timestamp + 10 minutes + 1; // 10 min reset period + 1 second
 
         uint256 nonce = allocator.prepareAllocation(
             recipient, idsAndAmounts, arbiter, invalidExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
@@ -1190,7 +1194,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                IOnChainAllocator.InvalidExpiration.selector, block.timestamp + 10 minutes, invalidExpiration
+                IOnChainAllocator.InvalidExpiration.selector, invalidExpiration, invalidExpiration - 1
             )
         );
         allocator.executeAllocation(
