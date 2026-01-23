@@ -1060,6 +1060,15 @@ contract OnChainAllocatorTest is Test, TestHelper {
         idsAndAmounts[1][1] = amountB;
     }
 
+    function test_prepareAllocation_revert_EmptyIdsAndAmounts() public {
+        uint256[2][] memory idsAndAmounts = new uint256[2][](0);
+
+        vm.expectRevert(abi.encodeWithSelector(AllocatorLib.InvalidBalanceChange.selector, 0, 0));
+        allocator.prepareAllocation(
+            recipient, idsAndAmounts, arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+    }
+
     function test_prepareAllocation_revert_InvalidAllocatorId() public {
         uint256[2][] memory idsAndAmounts = new uint256[2][](1);
         idsAndAmounts[0][0] = _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(this), address(usdc));

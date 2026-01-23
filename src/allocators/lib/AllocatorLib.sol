@@ -41,6 +41,11 @@ library AllocatorLib {
         // Before preparing the allocation, check if the compact's reentrancy guard is active
         checkCompactReentrancyGuardAndRevert();
 
+        // Revert if there are no ids and amounts provided
+        if (idsAndAmounts.length == 0) {
+            revert InvalidBalanceChange(0, 0);
+        }
+
         assembly ("memory-safe") {
             // identifier = keccak256(abi.encode(PREPARE_ALLOCATION_SELECTOR, recipient, ids, arbiter, expires, typehash, witness));
             let memoryPointer := mload(0x40)
