@@ -39,6 +39,8 @@ library AllocatorLib {
         bytes32 witness,
         uint96 allocatorId
     ) internal {
+        // Reusing the same id multiple times in the idsAndAmounts array can lead to unexpected behavior and is not recommended.
+
         // Before preparing the allocation, check if the compact's reentrancy guard is active
         checkCompactReentrancyGuardAndRevert();
 
