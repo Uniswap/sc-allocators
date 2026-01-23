@@ -21,12 +21,12 @@ contract OnChainAllocationCaller {
         bytes32 typehash,
         bytes32 witness,
         uint8 todo
-    ) external {
+    ) external returns (bytes32 claimHash) {
         uint256 nonce;
         if (todo == 0) {
             // Correctly deposit and register
             nonce = ALLOCATOR.prepareAllocation(recipient, idsAndAmounts, arbiter, expires, typehash, witness, '');
-            ITheCompact(COMPACT).batchDepositAndRegisterFor(
+            (claimHash,) = ITheCompact(COMPACT).batchDepositAndRegisterFor(
                 recipient, idsAndAmounts, arbiter, nonce, expires, typehash, witness
             );
         } else if (todo == 1) {
@@ -35,7 +35,7 @@ contract OnChainAllocationCaller {
             ITheCompact(COMPACT).batchDeposit(idsAndAmounts, recipient);
         } else if (todo == 2) {
             // Do not prepare, but deposit and register
-            ITheCompact(COMPACT).batchDepositAndRegisterFor(
+            (claimHash,) = ITheCompact(COMPACT).batchDepositAndRegisterFor(
                 recipient, idsAndAmounts, arbiter, nonce, expires, typehash, witness
             );
         } else if (todo == 3) {
@@ -43,7 +43,7 @@ contract OnChainAllocationCaller {
         } else {
             // Correctly deposit and register
             nonce = ALLOCATOR.prepareAllocation(recipient, idsAndAmounts, arbiter, expires, typehash, witness, '');
-            ITheCompact(COMPACT).batchDepositAndRegisterFor(
+            (claimHash,) = ITheCompact(COMPACT).batchDepositAndRegisterFor(
                 recipient, idsAndAmounts, arbiter, nonce, expires, typehash, witness
             );
             ALLOCATOR.executeAllocation(recipient, idsAndAmounts, arbiter, expires, typehash, witness, '');

@@ -8,10 +8,9 @@ import {Lock} from '@uniswap/the-compact/types/EIP712Types.sol';
 /// @title IOnChainAllocator
 /// @notice Interface for the on-chain token allocator that prevents double-spending in a fully decentralized manner
 interface IOnChainAllocator is IOnChainAllocation {
-    struct Allocation {
-        uint32 expires;
+    struct BalanceExpiration {
+        uint32 nextExpiration;
         uint224 amount;
-        bytes32 claimHash;
     }
 
     /// @notice Thrown if the allocator is not successfully registered
@@ -43,6 +42,9 @@ interface IOnChainAllocator is IOnChainAllocation {
 
     /// @notice Thrown if the provided commitments are empty
     error InvalidCommitments();
+
+    /// @notice Thrown if the provided allocatorData is invalid
+    error InvalidHint(uint256 allocatorDataLength, uint256 expectedAllocatorDataLength);
 
     /// @notice Registers an allocation for a set of tokens
     /// @param commitments The commitments of the allocations
@@ -95,4 +97,9 @@ interface IOnChainAllocator is IOnChainAllocation {
         bytes32 typehash,
         bytes32 witness
     ) external payable returns (bytes32 claimHash, uint256[] memory registeredAmounts, uint256 nonce);
+
+    /// @notice Returns the normalized expiration for a claim
+    /// @param claimHash The hash of the claim
+    /// @return normalizedExpiration The normalized expiration for the claim
+    function getNormalizedExpirationForClaim(bytes32 claimHash) external view returns (uint32 normalizedExpiration);
 }
