@@ -227,31 +227,6 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         return (claimHash, registeredAmounts, nonce);
     }
 
-    function _updateCommitmentsAndStoreAllocation(
-        address recipient,
-        uint256[] memory registeredAmounts,
-        Lock[] memory commitments,
-        uint32 expires,
-        bytes32 claimHash
-    ) private returns (Lock[] memory) {
-        // External allocation requires to normalize the expiration time
-        expires = _normalizeExpiration(expires);
-        // Store the allocation
-        for (uint256 i = 0; i < registeredAmounts.length; i++) {
-            // Update the allocations with the actual registered amounts
-            uint224 amount = uint224(registeredAmounts[i]);
-            commitments[i].amount = amount;
-
-            // Store the allocation
-            _storeAllocatedBalance(commitments[i].lockTag, commitments[i].token, recipient, amount, expires);
-        }
-
-        // Store the claim
-        _storeClaim(claimHash, expires);
-
-        return commitments;
-    }
-
     /// @inheritdoc IOnChainAllocation
     function prepareAllocation(
         address recipient,
@@ -293,39 +268,6 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
             _executeAllocation(nonce, recipient, idsAndAmounts, arbiter, expiration, typehash, witness);
 
         emit Allocated(recipient, commitments, nonce, expiration, claimHash);
-    }
-
-    function _executeAllocation(
-        uint256 nonce,
-        address recipient,
-        uint256[2][] calldata idsAndAmounts,
-        address arbiter,
-        uint32 expires,
-        bytes32 typehash,
-        bytes32 witness
-    ) private returns (bytes32, Lock[] memory) {
-        (bytes32 claimHash, Lock[] memory commitments) =
-            AL.executeAllocation(nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
-
-        // External allocation requires to normalize the expiration time
-        expires = _normalizeExpiration(expires);
-
-        // Allocate the claim
-        for (uint256 i = 0; i < commitments.length; i++) {
-            // Check the amount fits in the supported range
-            if (commitments[i].amount > type(uint224).max) {
-                revert InvalidAmount(commitments[i].amount);
-            }
-
-            // Store the allocation
-            _storeAllocatedBalance(
-                commitments[i].lockTag, commitments[i].token, recipient, uint224(commitments[i].amount), expires
-            );
-        }
-        // Store the claim
-        _storeClaim(claimHash, expires);
-
-        return (claimHash, commitments);
     }
 
     /// @inheritdoc IAllocator
@@ -460,36 +402,62 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         return (claimHash, nonce);
     }
 
-    function _checkInput(Lock calldata commitment, address sponsor, uint32 expires, uint256 minResetPeriod)
-        internal
-        view
-        returns (uint256)
-    {
-        // Check the allocator id fits this allocator
-        if (AL.splitAllocatorId(commitment.lockTag) != ALLOCATOR_ID) {
-            revert InvalidAllocator(AL.splitAllocatorId(commitment.lockTag), ALLOCATOR_ID);
+    function _executeAllocation(
+        uint256 nonce,
+        address recipient,
+        uint256[2][] calldata idsAndAmounts,
+        address arbiter,
+        uint32 expires,
+        bytes32 typehash,
+        bytes32 witness
+    ) private returns (bytes32, Lock[] memory) {
+        (bytes32 claimHash, Lock[] memory commitments) =
+            AL.executeAllocation(nonce, recipient, idsAndAmounts, arbiter, expires, typehash, witness);
+
+        // External allocation requires to normalize the expiration time
+        expires = _normalizeExpiration(expires);
+
+        // Allocate the claim
+        for (uint256 i = 0; i < commitments.length; i++) {
+            // Check the amount fits in the supported range
+            if (commitments[i].amount > type(uint224).max) {
+                revert InvalidAmount(commitments[i].amount);
+            }
+
+            // Store the allocation
+            _storeAllocatedBalance(
+                commitments[i].lockTag, commitments[i].token, recipient, uint224(commitments[i].amount), expires
+            );
+        }
+        // Store the claim
+        _storeClaim(claimHash, expires);
+
+        return (claimHash, commitments);
+    }
+
+    function _updateCommitmentsAndStoreAllocation(
+        address recipient,
+        uint256[] memory registeredAmounts,
+        Lock[] memory commitments,
+        uint32 expires,
+        bytes32 claimHash
+    ) private returns (Lock[] memory) {
+        // External allocation requires to normalize the expiration time
+        expires = _normalizeExpiration(expires);
+        // Store the allocation
+        for (uint256 i = 0; i < registeredAmounts.length; i++) {
+            // Update the allocations with the actual registered amounts
+            uint224 amount = uint224(registeredAmounts[i]);
+            commitments[i].amount = amount;
+
+            // Store the allocation
+            _storeAllocatedBalance(commitments[i].lockTag, commitments[i].token, recipient, amount, expires);
         }
 
-        // Check the amount fits in the supported range
-        if (commitment.amount > type(uint224).max) {
-            revert InvalidAmount(commitment.amount);
-        }
+        // Store the claim
+        _storeClaim(claimHash, expires);
 
-        // Get the reset period for the token id
-        uint256 duration = AL.toSeconds(commitment.lockTag);
-        if (duration < minResetPeriod) {
-            minResetPeriod = duration;
-        }
-
-        // Ensure no forcedWithdrawal is active for the token id
-        (, uint256 forcedWithdrawal) = ITheCompact(AL.THE_COMPACT).getForcedWithdrawalStatus(
-            sponsor, AL.toId(commitment.lockTag, commitment.token)
-        );
-        if (forcedWithdrawal != 0 && forcedWithdrawal <= expires) {
-            revert ForceWithdrawalAvailable(expires, forcedWithdrawal);
-        }
-
-        return minResetPeriod;
+        return commitments;
     }
 
     function _checkBalance(address sponsor, Lock calldata commitment, uint32 expires)
@@ -507,36 +475,6 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
             revert InsufficientBalance(
                 sponsor, AL.toId(commitment.lockTag, commitment.token), balance - allocatedBalance, commitment.amount
             );
-        }
-    }
-
-    function _normalizeExpiration(uint32 expires) private view returns (uint32 normalizedExpires) {
-        uint256 timeRemaining = expires - block.timestamp;
-        if (timeRemaining < 10 minutes) {
-            // No rounding - max size of 600 unique expirations
-            normalizedExpires = expires;
-        } else if (timeRemaining < 1 hours + 5 minutes) {
-            // total of 55 minutes
-            // Round up to the nearest 10 seconds - max size of 330 unique expirations
-            normalizedExpires = (expires / 10 seconds) * 10 seconds + 10 seconds;
-        } else if (timeRemaining < 1 days) {
-            // total of 1,375 minutes
-            // Round up to the nearest minute - max size of 1375 unique expirations
-            normalizedExpires = (expires / 1 minutes) * 1 minutes + 1 minutes;
-        } else if (timeRemaining < 1 weeks + 1 hours) {
-            // total of 8,700 minutes
-            // Round up to the nearest 10 minutes - max size of 870 unique expirations
-            normalizedExpires = (expires / 10 minutes) * 10 minutes + 10 minutes;
-        } else {
-            // < 30 days - total of 33,060 minutes
-            // Round up to the nearest hour - max size of 551 unique expirations
-            normalizedExpires = (expires / 1 hours) * 1 hours + 1 hours;
-        }
-        // Total max of 3,726 unique expirations => 7,824,600 max gas costs for cold storage reads
-
-        // Sanitize expiration
-        assembly ("memory-safe") {
-            normalizedExpires := and(normalizedExpires, _UINT32_MAX)
         }
     }
 
@@ -689,19 +627,6 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         );
     }
 
-    function _generatePointer(bytes28 tokenHash, uint32 expiration) private pure returns (bytes32 pointer) {
-        // Make sure the expiration is the most significant 32 bits
-        assembly ("memory-safe") {
-            pointer := or(tokenHash, expiration)
-        }
-    }
-
-    function _verifyClaim(bytes32 claimHash) private view returns (bool verified, uint32 normalizedExpiration) {
-        // Check if the claim is allocated
-        normalizedExpiration = _allocatedClaims[claimHash];
-        return (normalizedExpiration != 0, normalizedExpiration);
-    }
-
     function _deleteAllocatedBalance(bytes28 tokenHash, uint32 normalizedExpiration, uint224 amount, uint32 hint)
         private
     {
@@ -797,6 +722,81 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
             let nonceSlot := keccak256(0x00, 0x40)
             let nonce96 := sload(nonceSlot)
             nonce := or(shl(96, sponsor), add(nonce96, 1))
+        }
+    }
+
+    function _checkInput(Lock calldata commitment, address sponsor, uint32 expires, uint256 minResetPeriod)
+        internal
+        view
+        returns (uint256)
+    {
+        // Check the allocator id fits this allocator
+        if (AL.splitAllocatorId(commitment.lockTag) != ALLOCATOR_ID) {
+            revert InvalidAllocator(AL.splitAllocatorId(commitment.lockTag), ALLOCATOR_ID);
+        }
+
+        // Check the amount fits in the supported range
+        if (commitment.amount > type(uint224).max) {
+            revert InvalidAmount(commitment.amount);
+        }
+
+        // Get the reset period for the token id
+        uint256 duration = AL.toSeconds(commitment.lockTag);
+        if (duration < minResetPeriod) {
+            minResetPeriod = duration;
+        }
+
+        // Ensure no forcedWithdrawal is active for the token id
+        (, uint256 forcedWithdrawal) = ITheCompact(AL.THE_COMPACT).getForcedWithdrawalStatus(
+            sponsor, AL.toId(commitment.lockTag, commitment.token)
+        );
+        if (forcedWithdrawal != 0 && forcedWithdrawal <= expires) {
+            revert ForceWithdrawalAvailable(expires, forcedWithdrawal);
+        }
+
+        return minResetPeriod;
+    }
+
+    function _verifyClaim(bytes32 claimHash) private view returns (bool verified, uint32 normalizedExpiration) {
+        // Check if the claim is allocated
+        normalizedExpiration = _allocatedClaims[claimHash];
+        return (normalizedExpiration != 0, normalizedExpiration);
+    }
+
+    function _normalizeExpiration(uint32 expires) private view returns (uint32 normalizedExpires) {
+        uint256 timeRemaining = expires - block.timestamp;
+        if (timeRemaining < 10 minutes) {
+            // No rounding - max size of 600 unique expirations
+            normalizedExpires = expires;
+        } else if (timeRemaining < 1 hours + 5 minutes) {
+            // total of 55 minutes
+            // Round up to the nearest 10 seconds - max size of 330 unique expirations
+            normalizedExpires = (expires / 10 seconds) * 10 seconds + 10 seconds;
+        } else if (timeRemaining < 1 days) {
+            // total of 1,375 minutes
+            // Round up to the nearest minute - max size of 1375 unique expirations
+            normalizedExpires = (expires / 1 minutes) * 1 minutes + 1 minutes;
+        } else if (timeRemaining < 1 weeks + 1 hours) {
+            // total of 8,700 minutes
+            // Round up to the nearest 10 minutes - max size of 870 unique expirations
+            normalizedExpires = (expires / 10 minutes) * 10 minutes + 10 minutes;
+        } else {
+            // < 30 days - total of 33,060 minutes
+            // Round up to the nearest hour - max size of 551 unique expirations
+            normalizedExpires = (expires / 1 hours) * 1 hours + 1 hours;
+        }
+        // Total max of 3,726 unique expirations => 7,824,600 max gas costs for cold storage reads
+
+        // Sanitize expiration
+        assembly ("memory-safe") {
+            normalizedExpires := and(normalizedExpires, _UINT32_MAX)
+        }
+    }
+
+    function _generatePointer(bytes28 tokenHash, uint32 expiration) private pure returns (bytes32 pointer) {
+        // Make sure the expiration is the most significant 32 bits
+        assembly ("memory-safe") {
+            pointer := or(tokenHash, expiration)
         }
     }
 
