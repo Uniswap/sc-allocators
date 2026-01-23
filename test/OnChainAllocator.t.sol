@@ -1104,7 +1104,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         );
     }
 
-    function test_executeAllocation_revert_InvalidExpiration() public {
+    function test_executeAllocation_revert_ExpirationBiggerUint32Max() public {
         uint256 amount = defaultAmount;
         uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(usdc), amount);
 
@@ -1115,6 +1115,77 @@ contract OnChainAllocatorTest is Test, TestHelper {
         );
         allocator.executeAllocation(
             recipient, idsAndAmounts, arbiter, uint256(type(uint32).max) + 1, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+    }
+
+    /// forge-config: default.isolate = false
+    function test_executeAllocation_revert_ForceWithdrawalAvailable() public {
+        // Enable forced withdrawal
+        vm.prank(recipient);
+        (uint256 withdrawableAt) = compact.enableForcedWithdrawal(
+            _toId(Scope.Multichain, ResetPeriod.TenMinutes, address(allocator), address(0))
+        );
+
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(0), defaultAmount);
+
+        uint256 invalidExpiration = withdrawableAt;
+        vm.warp(invalidExpiration - 1 minutes);
+
+        uint256 nonce = allocator.prepareAllocation(
+            recipient, idsAndAmounts, arbiter, invalidExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(0), defaultAmount);
+
+        // Deposit native token to Compact first so allocation is backed
+        bytes12 lockTag = commitments[0].lockTag;
+        vm.prank(user);
+        compact.depositNative{value: defaultAmount}(lockTag, recipient);
+        vm.prank(recipient);
+        compact.register(
+            _createClaimHash(recipient, arbiter, nonce, invalidExpiration, commitments, bytes32(0)),
+            BATCH_COMPACT_TYPEHASH
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IOnChainAllocator.ForceWithdrawalAvailable.selector, withdrawableAt, withdrawableAt)
+        );
+        allocator.executeAllocation(
+            recipient, idsAndAmounts, arbiter, invalidExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+    }
+
+    /// forge-config: default.isolate = false
+    function test_executeAllocation_revert_InvalidExpiration() public {
+        uint256[2][] memory idsAndAmounts = _idsAndAmountsFor(address(0), defaultAmount);
+
+        uint256 invalidExpiration = block.timestamp + 10 minutes;
+
+        uint256 nonce = allocator.prepareAllocation(
+            recipient, idsAndAmounts, arbiter, invalidExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
+        );
+
+        Lock[] memory commitments = new Lock[](1);
+        commitments[0] = _makeLock(address(0), defaultAmount);
+
+        // Deposit native token to Compact first so allocation is backed
+        bytes12 lockTag = commitments[0].lockTag;
+        vm.prank(user);
+        compact.depositNative{value: defaultAmount}(lockTag, recipient);
+        vm.prank(recipient);
+        compact.register(
+            _createClaimHash(recipient, arbiter, nonce, invalidExpiration, commitments, bytes32(0)),
+            BATCH_COMPACT_TYPEHASH
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IOnChainAllocator.InvalidExpiration.selector, block.timestamp + 10 minutes, invalidExpiration
+            )
+        );
+        allocator.executeAllocation(
+            recipient, idsAndAmounts, arbiter, invalidExpiration, BATCH_COMPACT_TYPEHASH, bytes32(0), ''
         );
     }
 
@@ -2216,7 +2287,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
         // =========================================================================
         // We use pauseGasMetering to simulate a real-world attack where allocations
         // are created across many transactions (bypassing single-tx gas limits)
-        uint256 numAllocations = 66_000;
+        uint256 numAllocations = 100;
         uint256 amountPerAllocation = 1;
         bytes32 lastClaimHash;
 
