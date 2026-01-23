@@ -857,7 +857,7 @@ contract OnChainAllocatorTest is Test, TestHelper {
 
         vm.warp(defaultExpiration);
         vm.prank(user);
-        assertTrue(allocator.isClaimAuthorized(claimHash, arbiter, user, nonce, defaultExpiration, idsAndAmounts, ''));
+        assertFalse(allocator.isClaimAuthorized(claimHash, arbiter, user, nonce, defaultExpiration, idsAndAmounts, ''));
     }
 
     /* --------------------------------------------------------------------- */

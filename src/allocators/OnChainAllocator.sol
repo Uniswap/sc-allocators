@@ -345,7 +345,7 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
         uint256[2][] calldata idsAndAmounts, // The allocated token IDs and amounts.
         bytes calldata /*allocatorData*/ // Arbitrary data provided by the arbiter.
     ) external view virtual returns (bool) {
-        if (expires < block.timestamp) {
+        if (expires <= block.timestamp) {
             return false;
         }
 
