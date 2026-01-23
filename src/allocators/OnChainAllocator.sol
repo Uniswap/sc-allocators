@@ -198,6 +198,8 @@ contract OnChainAllocator is IOnChainAllocator, Utility {
                 // Check the amount fits in the supported range
                 if (balance > type(uint224).max) {
                     revert InvalidAmount(balance);
+                    // The balance limit of uint224.max might lead to unexpected behavior if an amount > type(uint224).max was previously deposited into the contract by a third party.
+                    // To resolve this, allocate and register this token by providing the actual amount in the commitment.
                 }
                 amount = uint224(balance);
             }
