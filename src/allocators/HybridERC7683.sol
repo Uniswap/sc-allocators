@@ -5,7 +5,10 @@ pragma solidity ^0.8.27;
 import {ERC7683AllocatorLib as ERC7683AL} from './lib/ERC7683AllocatorLib.sol';
 import {LibBytes} from '@solady/utils/LibBytes.sol';
 
-import {COMPACT_TYPEHASH_WITH_MANDATE, COMPACT_WITH_MANDATE_TYPESTRING} from '@uniswap/tribunal/types/TribunalTypeHashes.sol';
+import {
+    COMPACT_TYPEHASH_WITH_MANDATE,
+    COMPACT_WITH_MANDATE_TYPESTRING
+} from '@uniswap/tribunal/types/TribunalTypeHashes.sol';
 import {HybridAllocator} from 'src/allocators/HybridAllocator.sol';
 import {IERC7683Allocator} from 'src/interfaces/IERC7683Allocator.sol';
 
@@ -24,12 +27,12 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
     function openFor(GaslessCrossChainOrder calldata order, bytes calldata sponsorSignature, bytes calldata) external {
         (
             IERC7683Allocator.Order calldata orderData,
-            uint32 deposit,
+            bool deposit,
             bytes32 mandateHash,
             IOriginSettler.ResolvedCrossChainOrder memory resolvedOrder
         ) = ERC7683AL.openForPreparation(order, sponsorSignature);
 
-        if (deposit == 0) {
+        if (!deposit) {
             // Hybrid Allocator requires a deposit
             revert OnlyDepositsAllowed();
         } else {
@@ -55,7 +58,7 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
 
             // Update the resolved order with the registered amounts
             resolvedOrder = ERC7683AL.updateMinimumReceived(
-                resolvedOrder, registeredAmounts, orderData.mandate.fills[0].scalingFactor
+                resolvedOrder, nonce, registeredAmounts, orderData.mandate.fills[0].scalingFactor
             );
 
             // Emit an open event
@@ -83,8 +86,9 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
             ERC7683AL.resolveOrder(msg.sender, nonce, expires, fillHashes, orderData, LibBytes.emptyCalldata());
 
         // Update the resolved order with the registered amounts
-        resolvedOrder =
-            ERC7683AL.updateMinimumReceived(resolvedOrder, registeredAmounts, orderData.mandate.fills[0].scalingFactor);
+        resolvedOrder = ERC7683AL.updateMinimumReceived(
+            resolvedOrder, nonce, registeredAmounts, orderData.mandate.fills[0].scalingFactor
+        );
 
         // Emit an open event
         emit Open(bytes32(nonce), resolvedOrder);
@@ -96,10 +100,10 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
         view
         returns (ResolvedCrossChainOrder memory)
     {
-        (, uint32 deposit,, IOriginSettler.ResolvedCrossChainOrder memory resolvedOrder) =
+        (, bool deposit,, IOriginSettler.ResolvedCrossChainOrder memory resolvedOrder) =
             ERC7683AL.openForPreparation(order, LibBytes.emptyCalldata());
 
-        if (deposit == 0) {
+        if (!deposit) {
             // Hybrid Allocator requires a deposit
             revert OnlyDepositsAllowed();
         }
@@ -125,10 +129,10 @@ contract HybridERC7683 is HybridAllocator, IERC7683Allocator {
 
     /// @inheritdoc IERC7683Allocator
     function getNonce(GaslessCrossChainOrder calldata order, address) external view returns (uint256 nonce) {
-        (, uint32 deposit) = ERC7683AL.decodeOrderData(order.orderData);
-        deposit = ERC7683AL.sanitizeBool(deposit);
+        (, uint32 additionalInput) = ERC7683AL.decodeOrderData(order.orderData);
+        bool deposit = ERC7683AL.sanitizeBool(additionalInput);
 
-        if (deposit == 0) {
+        if (!deposit) {
             // Hybrid Allocator requires a deposit
             revert OnlyDepositsAllowed();
         }

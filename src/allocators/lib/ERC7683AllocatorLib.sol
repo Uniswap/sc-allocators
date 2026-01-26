@@ -47,6 +47,8 @@ library ERC7683AllocatorLib {
     bytes32 public constant ORDERDATA_GASLESS_TYPEHASH =
         0xca948fccb29bd545dea3361927ce0b7d8b680a214439e24af475831131515b4c;
 
+    uint256 public constant ONE_E18 = 1e18;
+
     error InvalidRecipientCallbackLength();
     error InvalidOrderDataType(bytes32 orderDataType, bytes32 expectedOrderDataType);
     error InvalidOriginSettler(address originSettler, address expectedOriginSettler);
@@ -65,7 +67,7 @@ library ERC7683AllocatorLib {
         view
         returns (
             IERC7683Allocator.Order calldata orderData,
-            uint32 deposit,
+            bool deposit,
             bytes32 mandateHash,
             IOriginSettler.ResolvedCrossChainOrder memory resolvedOrder
         )
@@ -84,8 +86,9 @@ library ERC7683AllocatorLib {
         }
 
         // Decode the orderData
-        (orderData, deposit) = decodeOrderData(order.orderData);
-        deposit = sanitizeBool(deposit);
+        uint32 additionalInput;
+        (orderData, additionalInput) = decodeOrderData(order.orderData);
+        deposit = sanitizeBool(additionalInput);
 
         // Ensure a valid mandate is provided
         if (orderData.mandate.fills.length == 0 || order.fillDeadline != orderData.mandate.fills[0].expires) {
@@ -161,9 +164,7 @@ library ERC7683AllocatorLib {
 
             // Bounds check: s must be >= 0x20 (points after the first slot) and s + 0x20 within orderData.length
             // Also ensure no overflow on add(s, 0x20)
-            if or(lt(s, 0x20), gt(add(s, 0x20), orderData.length)) {
-                revert(0x00, 0x00)
-            }
+            if or(lt(s, 0x20), gt(add(s, 0x20), orderData.length)) { revert(0x00, 0x00) }
 
             // Compute pointer to nested Order (calldata pointer)
             order := add(orderData.offset, add(s, 0x20))
@@ -238,7 +239,7 @@ library ERC7683AllocatorLib {
     /// @return maxSpent The maximum spent Output array for the order.
     function createMaximumSpent(Fill memory mainFill, uint256 scalingFactor)
         internal
-        view
+        pure
         returns (IOriginSettler.Output[] memory)
     {
         uint256 amount = type(uint256).max;
@@ -289,15 +290,99 @@ library ERC7683AllocatorLib {
 
     function updateMinimumReceived(
         IOriginSettler.ResolvedCrossChainOrder memory resolvedOrder,
+        uint256 actualNonce,
         uint256[] memory registeredAmounts,
         uint256 scalingFactor
     ) internal pure returns (IOriginSettler.ResolvedCrossChainOrder memory) {
-        if (scalingFactor > 1e18) {
-            // For exact in, the minimum received is the commitments amounts
-            for (uint256 i = 0; i < registeredAmounts.length; i++) {
-                resolvedOrder.minReceived[i].amount = registeredAmounts[i];
+        // The function updates ensures the registered amounts and actual nonce are used for the
+        // minimum received amounts of the resolved order and the resolvedOrder.fillInstructions[0].originData.claim.compact.commitments.amounts
+        // The function will memory patch the resolvedOrder.fillInstructions[0].originData to avoid decoding and encoding the originData again.
+
+        assembly ("memory-safe") {
+            // originData pointer inside of ResolvedCrossChainOrder:
+            // 0x 00: user
+            // 0x 20: originChainId
+            // 0x 40: openDeadline
+            // 0x 60: fillDeadline
+            // 0x 80: orderId
+            // 0x a0: maxSpent.offset
+            // 0x c0: minReceived.offset
+            // 0x e0: fillInstructions.offset
+
+            let minReceivedPtr := mload(add(resolvedOrder, 0xc0))
+            let minReceivedFirstItemPtr := add(minReceivedPtr, 0x20) // skip length
+
+            // 0x xx FillInstructions.length
+            // 0x xx FillInstructions[0].offset
+            // 0x xx FillInstructions[0]
+            // We know that FillInstructions.length is 1, so we can use that to safely calculate the offset of the first item.
+
+            let fillInstructionsPtr := mload(add(resolvedOrder, 0xe0)) // fillInstructions pointer will be an absolute pointer
+            let fillInstructionsFirstItemPtr := mload(add(fillInstructionsPtr, 0x20)) // skip length and load FillInstructions[0].offset
+
+            // originData inside of fillInstructions:
+            // 0x 00: destinationChainId
+            // 0x 20: destinationSettler
+            // 0x 40: originData pointer (absolute memory address)
+            // 0x xx: originData.length
+            // 0x xx: originData
+
+            let originDataPtr := mload(add(fillInstructionsFirstItemPtr, 0x40))
+
+            // claim pointer inside of originData:
+            // 0x  00: originDataBytes.length
+            // 0x  20: claim.offset
+            // 0x  40: mainFill.offset
+            // 0x  60: adjuster
+            // 0x  80: fillHashes.offset
+            // 0x  a0: claim.chainId
+            // 0x  c0: claim.compact.offset
+            // 0x  e0: claim.sponsorSignature.offset
+            // 0x 100: claim.allocatorSignature.offset
+            // 0x 120: claim.compact.arbiter
+            // 0x 140: claim.compact.sponsor
+            // 0x 160: claim.compact.nonce (<- update to actualNonce)
+            // 0x 180: claim.compact.expires
+            // 0x 1a0: claim.compact.commitments.offset
+            // 0x 1c0: claim.compact.commitments.length
+            // 0x 1e0: claim.compact.commitments.lockTag[i]
+            // 0x 200: claim.compact.commitments.token[i]
+            // 0x 220: claim.compact.commitments.amount[i] (<- update to registeredAmounts[i])
+
+            // Memory patching of originData to include the actual nonce
+            mstore(add(originDataPtr, 0x160), actualNonce)
+
+            let originDataClaimCompactCommitmentsPtr := add(originDataPtr, 0x1e0)
+            let registeredAmountsLengthTotalWords := mul(mload(registeredAmounts), 0x20)
+            let registeredAmountsPtr := add(registeredAmounts, 0x20)
+
+            for { let i := 0x00 } lt(i, registeredAmountsLengthTotalWords) { i := add(i, 0x20) } {
+                // Lock struct is 0x60 (3 words), i increments by 0x20
+                // So multiply i by 3 to get the correct offset
+                let commitmentPtr := add(originDataClaimCompactCommitmentsPtr, mul(i, 3))
+                let commitmentAmountPtr := add(commitmentPtr, 0x40)
+
+                let registeredAmount := mload(add(registeredAmountsPtr, i))
+
+                // Update the amount of the commitment to the registered amount
+                mstore(commitmentAmountPtr, registeredAmount)
+
+                // Get the minimum received item pointer
+                let minReceived := mload(add(minReceivedFirstItemPtr, i))
+
+                // Output minReceived inside of ResolvedCrossChainOrder:
+                // 0x 00: token
+                // 0x 20: amount
+                // 0x 40: recipient
+                // 0x 60: chainId
+
+                let minReceivedAmountPtr := add(minReceived, 0x20)
+                // For exact in, update the the minimum received amounts to the registered amount
+                let updatedMinReceivedAmount := mul(registeredAmount, gt(scalingFactor, ONE_E18))
+                mstore(minReceivedAmountPtr, updatedMinReceivedAmount)
             }
         }
+
         return resolvedOrder;
     }
 
@@ -383,10 +468,10 @@ library ERC7683AllocatorLib {
         return value;
     }
 
-    function sanitizeBool(uint32 value) internal pure returns (uint32) {
+    function sanitizeBool(uint32 value) internal pure returns (bool sanitizedBoolean) {
         assembly ("memory-safe") {
-            value := iszero(iszero(value))
+            sanitizedBoolean := and(value, 1)
         }
-        return value;
+        return sanitizedBoolean;
     }
 }

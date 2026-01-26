@@ -35,18 +35,18 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
     function openFor(GaslessCrossChainOrder calldata order, bytes calldata sponsorSignature, bytes calldata) external {
         (
             IERC7683Allocator.Order calldata orderData,
-            uint32 deposit,
+            bool deposit,
             bytes32 mandateHash,
             IOriginSettler.ResolvedCrossChainOrder memory resolvedOrder
         ) = ERC7683AL.openForPreparation(order, sponsorSignature);
 
         // Early revert if the expected nonce is not the next nonce and the order does not include a deposit
-        if (deposit == 0 && order.nonce != _getNonce(address(0), order.user)) {
+        if (!deposit && order.nonce != _getNonce(address(0), order.user)) {
             revert InvalidNonce(order.nonce, _getNonce(address(0), order.user));
         }
 
         uint256 nonce;
-        if (deposit == 0) {
+        if (!deposit) {
             // Register the allocation on chain
             (, nonce) = allocateFor(
                 order.user,
@@ -74,7 +74,7 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
 
             // Update the resolved order with the registered amounts
             resolvedOrder = ERC7683AL.updateMinimumReceived(
-                resolvedOrder, registeredAmounts, orderData.mandate.fills[0].scalingFactor
+                resolvedOrder, nonce, registeredAmounts, orderData.mandate.fills[0].scalingFactor
             );
         }
         // Emit an open event
@@ -108,13 +108,13 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
         view
         returns (ResolvedCrossChainOrder memory)
     {
-        (, uint32 deposit,, IOriginSettler.ResolvedCrossChainOrder memory resolvedOrder) =
+        (, bool deposit,, IOriginSettler.ResolvedCrossChainOrder memory resolvedOrder) =
             ERC7683AL.openForPreparation(order, LibBytes.emptyCalldata());
 
         // Revert if the expected nonce is not the next nonce and the order does not include a deposit
-        if (deposit == 0 && order.nonce != _getNonce(address(0), order.user)) {
+        if (!deposit && order.nonce != _getNonce(address(0), order.user)) {
             revert InvalidNonce(order.nonce, _getNonce(address(0), order.user));
-        } else if (deposit == 1) {
+        } else if (deposit) {
             // We ignore the order.nonce and use the one assigned by the allocator
             resolvedOrder.orderId = bytes32(_getNonce(msg.sender, order.user));
         }
@@ -138,13 +138,19 @@ contract ERC7683Allocator is OnChainAllocator, IERC7683Allocator {
     }
 
     /// @inheritdoc IERC7683Allocator
-    function getNonce(GaslessCrossChainOrder calldata order, address caller) external view returns (uint256 nonce) {
-        (, uint32 deposit) = ERC7683AL.decodeOrderData(order.orderData);
-        deposit = ERC7683AL.sanitizeBool(deposit);
+    function getNonce(GaslessCrossChainOrder calldata order, address callerAddress)
+        external
+        view
+        returns (uint256 nonce)
+    {
+        (, uint32 additionalInput) = ERC7683AL.decodeOrderData(order.orderData);
+        bool deposit = ERC7683AL.sanitizeBool(additionalInput);
 
-        caller = address(uint160(deposit * uint160(caller))); // for a deposit, the nonce will be scoped to the caller + user
+        assembly ("memory-safe") {
+            callerAddress := mul(callerAddress, deposit)
+        }
 
-        return _getNonce(caller, order.user);
+        return _getNonce(callerAddress, order.user);
     }
 
     /// @inheritdoc IERC7683Allocator
