@@ -157,6 +157,10 @@ contract HybridAllocator is IHybridAllocator {
         bytes32 typehash,
         bytes32 witness
     ) public payable returns (bytes32, uint256[] memory, uint256) {
+        if (expires <= block.timestamp) {
+            revert InvalidExpiration(expires, block.timestamp);
+        }
+
         recipient = AL.getRecipient(recipient);
         idsAndAmounts = _actualIdsAndAmounts(idsAndAmounts);
 

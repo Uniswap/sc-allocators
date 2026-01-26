@@ -17,6 +17,7 @@ interface IHybridAllocator is IOnChainAllocation {
     error CallerNotSigner();
     error LastSigner();
     error InvalidValue(uint256 value, uint256 expectedValue);
+    error InvalidExpiration(uint256 expires, uint256 expectedExpiration);
 
     /**
      * @notice Add an offchain signer to the allocator.

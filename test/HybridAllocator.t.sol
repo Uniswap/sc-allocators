@@ -254,6 +254,14 @@ contract HybridAllocatorTest is Test, TestHelper {
         allocator.allocateAndRegister(user, new uint256[2][](0), arbiter, defaultExpiration, BATCH_COMPACT_TYPEHASH, '');
     }
 
+    function test_allocateAndRegister_revert_InvalidExpiration() public {
+        uint256 expiredExpiration = block.timestamp - 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(IHybridAllocator.InvalidExpiration.selector, expiredExpiration, block.timestamp)
+        );
+        allocator.allocateAndRegister(user, new uint256[2][](0), arbiter, expiredExpiration, BATCH_COMPACT_TYPEHASH, '');
+    }
+
     function test_allocateAndRegister_revert_InvalidAllocatorIdNative() public {
         uint256[2][] memory idsAndAmounts = new uint256[2][](1);
         idsAndAmounts[0][0] =
