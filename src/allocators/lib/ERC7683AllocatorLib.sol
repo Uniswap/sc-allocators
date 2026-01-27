@@ -91,7 +91,10 @@ library ERC7683AllocatorLib {
         deposit = sanitizeBool(additionalInput);
 
         // Ensure a valid mandate is provided
-        if (orderData.mandate.fills.length == 0 || order.fillDeadline != orderData.mandate.fills[0].expires) {
+        if (
+            orderData.mandate.fills.length == 0 || order.fillDeadline != orderData.mandate.fills[0].expires
+                || order.fillDeadline > order.openDeadline
+        ) {
             revert InvalidOrderData(order.orderData);
         }
         bytes32[] memory fillHashes;
@@ -126,7 +129,10 @@ library ERC7683AllocatorLib {
         expires = sanitizeUint32(expires);
 
         // Ensure a valid mandate is provided
-        if (orderData.mandate.fills.length == 0 || order.fillDeadline != orderData.mandate.fills[0].expires) {
+        if (
+            orderData.mandate.fills.length == 0 || order.fillDeadline != orderData.mandate.fills[0].expires
+                || order.fillDeadline > expires
+        ) {
             revert InvalidOrderData(order.orderData);
         }
 

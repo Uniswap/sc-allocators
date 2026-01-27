@@ -61,6 +61,55 @@ contract MockAllocator is GaslessCrossChainOrderData, OnChainCrossChainOrderData
 }
 
 contract ERC7683Allocator_open is MockAllocator {
+    function test_revert_FillDeadlineExceedsExpires() public {
+        // Deposit tokens
+        vm.startPrank(user);
+        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
+
+        BatchCompact memory compact_ = _getCompact();
+        Mandate memory mandate_ = _getMandate();
+
+        // Set fillDeadline to be greater than expires (openDeadline)
+        mandate_.fills[0].expires = compact_.expires + 1;
+
+        (bytes32 mandateHash,) = _hashMandate(mandate_);
+        bytes32 claimHash = _deriveClaimHash(compact_, mandateHash);
+        compactContract.register(claimHash, COMPACT_TYPEHASH_WITH_MANDATE);
+
+        vm.stopPrank();
+
+        IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_ =
+            _getOnChainCrossChainOrder(compact_, mandate_);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(ERC7683AL.InvalidOrderData.selector, onChainCrossChainOrder_.orderData));
+        erc7683Allocator.open(onChainCrossChainOrder_);
+    }
+
+    function test_successful_FillDeadlineEqualsExpires() public {
+        // Deposit tokens
+        vm.startPrank(user);
+        compactContract.depositERC20(address(usdc), usdcLockTag, defaultAmount, user);
+
+        BatchCompact memory compact_ = _getCompact();
+        Mandate memory mandate_ = _getMandate();
+
+        // Set fillDeadline equal to expires - this should succeed
+        mandate_.fills[0].expires = compact_.expires;
+
+        (bytes32 mandateHash,) = _hashMandate(mandate_);
+        bytes32 claimHash = _deriveClaimHash(compact_, mandateHash);
+        compactContract.register(claimHash, COMPACT_TYPEHASH_WITH_MANDATE);
+
+        vm.stopPrank();
+
+        IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_ =
+            _getOnChainCrossChainOrder(compact_, mandate_);
+
+        vm.prank(user);
+        erc7683Allocator.open(onChainCrossChainOrder_);
+    }
+
     function test_revert_ShortOrderData() public {
         // Build a valid order then truncate orderData to force decode revert
         IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_ = _getOnChainCrossChainOrder();
@@ -215,6 +264,21 @@ contract ERC7683Allocator_open is MockAllocator {
 }
 
 contract ERC7683Allocator_openFor is MockAllocator {
+    function test_revert_FillDeadlineExceedsOpenDeadline() public {
+        BatchCompact memory compact_ = _getCompact();
+        Mandate memory mandate_ = _getMandate();
+
+        // Set fillDeadline to exceed openDeadline
+        mandate_.fills[0].expires = compact_.expires + 1;
+
+        IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_ =
+            _getGaslessCrossChainOrder(compact_, mandate_, false);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(ERC7683AL.InvalidOrderData.selector, gaslessCrossChainOrder_.orderData));
+        erc7683Allocator.openFor(gaslessCrossChainOrder_, '', '');
+    }
+
     function test_revert_ShortOrderData() public {
         IOriginSettler.GaslessCrossChainOrder memory gasless = _getGaslessCrossChainOrder();
         bytes memory od = gasless.orderData;

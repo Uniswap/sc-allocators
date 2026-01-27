@@ -65,6 +65,25 @@ contract MockAllocator is GaslessCrossChainOrderData, OnChainCrossChainOrderData
 }
 
 contract HybridERC7683_open is MockAllocator {
+    function test_revert_FillDeadlineExceedsExpires() public {
+        // Provide tokens for allocation
+        vm.prank(user);
+        usdc.transfer(address(hybridERC7683Allocator), defaultAmount);
+
+        BatchCompact memory compact_ = _getCompact();
+        Mandate memory mandate_ = _getMandate();
+
+        // Set fillDeadline to exceed expires
+        mandate_.fills[0].expires = compact_.expires + 1;
+
+        IOriginSettler.OnchainCrossChainOrder memory onChainCrossChainOrder_ =
+            _getOnChainCrossChainOrder(compact_, mandate_);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(ERC7683AL.InvalidOrderData.selector, onChainCrossChainOrder_.orderData));
+        hybridERC7683Allocator.open(onChainCrossChainOrder_);
+    }
+
     function test_revert_InvalidOrderDataType() public {
         // Order data type is invalid
         bytes32 falseOrderDataType = keccak256('false');
@@ -176,6 +195,25 @@ contract HybridERC7683_open is MockAllocator {
 }
 
 contract HybridERC7683_openFor is MockAllocator {
+    function test_revert_FillDeadlineExceedsOpenDeadline() public {
+        // Provide tokens for allocation
+        vm.prank(user);
+        usdc.transfer(address(hybridERC7683Allocator), defaultAmount);
+
+        BatchCompact memory compact_ = _getCompact();
+        Mandate memory mandate_ = _getMandate();
+
+        // Set fillDeadline to exceed openDeadline
+        mandate_.fills[0].expires = compact_.expires + 1;
+
+        IOriginSettler.GaslessCrossChainOrder memory gaslessCrossChainOrder_ =
+            _getGaslessCrossChainOrder(compact_, mandate_, true);
+
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(ERC7683AL.InvalidOrderData.selector, gaslessCrossChainOrder_.orderData));
+        hybridERC7683Allocator.openFor(gaslessCrossChainOrder_, '', '');
+    }
+
     function test_revert_InvalidOrderDataType() public {
         // Order data type is invalid
         bytes32 falseOrderDataType = keccak256('false');
