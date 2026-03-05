@@ -50,12 +50,12 @@ For protocol details, read the [the full docs for The Compact](https://github.co
 
 ## Allocator Types
 
-| Contract | Role | Off-chain Logic | ERC-7683 | Notes |
-| --- | --- | --- | --- | --- |
-| `OnChainAllocator` | Pure on-chain allocator | ❌ | ❌ | Manages per-id allocations entirely on-chain; nonces scoped; exhaustively validated. |
-| `HybridAllocator` | Hybrid allocator | ✅ (signers) | ❌ | Accepts off-chain allocator signatures or on-chain allocations; simple signer management. |
-| `ERC7683Allocator` | On-chain allocator + origin settler | ❌ | ✅ | Implements `IOriginSettler` and opens/relays ERC-7683 orders tied to Compact claims. |
-| `HybridERC7683` | Hybrid allocator + origin settler | ✅ (signers) | ✅ | ERC-7683 origin settler requiring deposits (no signature path); combines Hybrid + ERC7683 flows. |
+| Contract           | Role                                | Off-chain Logic | ERC-7683 | Notes                                                                                            |
+| ------------------ | ----------------------------------- | --------------- | -------- | ------------------------------------------------------------------------------------------------ |
+| `OnChainAllocator` | Pure on-chain allocator             | ❌              | ❌       | Manages per-id allocations entirely on-chain; nonces scoped; exhaustively validated.             |
+| `HybridAllocator`  | Hybrid allocator                    | ✅ (signers)    | ❌       | Accepts off-chain allocator signatures or on-chain allocations; simple signer management.        |
+| `ERC7683Allocator` | On-chain allocator + origin settler | ❌              | ✅       | Implements `IOriginSettler` and opens/relays ERC-7683 orders tied to Compact claims.             |
+| `HybridERC7683`    | Hybrid allocator + origin settler   | ✅ (signers)    | ✅       | ERC-7683 origin settler requiring deposits (no signature path); combines Hybrid + ERC7683 flows. |
 
 ## Contract Overview
 
